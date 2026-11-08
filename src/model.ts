@@ -41,10 +41,18 @@ export interface TurnMovement {
   allowed: boolean;
   capacityVph?: number;
 }
+/** Path-specific OSM via-way prohibition/mandatory turn. A pairwise turn is insufficient. */
+export interface RouteRestriction {
+  osmRelationId:number;
+  kind:'no'|'only';
+  /** Exact directed edge sequence from from-way through via-way(s) to to-way. */
+  edgeIds:readonly string[];
+}
 export interface RoadNetwork {
   schemaVersion: 1;
   nodes: readonly RoadNode[];
   edges: readonly RoadEdge[];
   movements: readonly TurnMovement[];
+  routeRestrictions?: readonly RouteRestriction[];
 }
 export interface SpeedSample { edgeId: string; speedKmh: number; atMinute: number }
