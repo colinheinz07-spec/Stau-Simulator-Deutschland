@@ -60,7 +60,8 @@ export function planCorridorClosure(network: RoadNetwork, closure: CorridorClosu
   if (errors.length) throw new Error(errors.join('; '));
   const edges = new Map(network.edges.map(e => [e.id, e]));
   const main = new Map(network.edges
-    .filter(e => e.kind === 'mainline' && e.motorwayRef === closure.motorwayRef)
+    .filter(e => e.kind === 'mainline' &&
+      (e.motorwayRefs?.includes(closure.motorwayRef) ?? e.motorwayRef === closure.motorwayRef))
     .map(e => [e.id, e]));
   const next = new Map<string,string[]>(), reverse = new Map<string,string[]>();
   for (const movement of network.movements) {
