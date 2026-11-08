@@ -139,7 +139,9 @@ test('Fehlende Autobahnnummer wird nur durch reale gemeinsame Hauptfahrbahn-OSM-
   main.nodes=[1,2];
   const extension={type:'way',id:9102,nodes:[2,3],
     tags:{highway:'motorway',oneway:'yes',lanes:'3'}};
-  const {network,audit}=Strassennetz.importOsmNetwork([...elements,extension],{includePublicRoads:true});
+  const next={type:'way',id:9105,nodes:[3,4],
+    tags:{highway:'motorway',ref:'A7',oneway:'yes',lanes:'3'}};
+  const {network,audit}=Strassennetz.importOsmNetwork([...elements,extension,next],{includePublicRoads:true});
   const inferred=byWay(network,9102)[0];
   assert.equal(inferred.motorwayRef,'A7');
   assert.deepEqual(inferred.motorwayRefs,['A7']);
