@@ -38,8 +38,10 @@ export function validateNetwork(network: RoadNetwork): string[] {
     if (e.kind === 'public' && (e.osmClass === 'motorway' || e.osmClass === 'motorway_link'))
       errors.push('Autobahn versehentlich als öffentliche Straße klassifiziert ' + e.id);
     const refs=e.motorwayRefs??(e.motorwayRef?[e.motorwayRef]:[]);
-    if (e.kind==='mainline' && refs.length===0)
-      errors.push('Autobahnreferenz fehlt/ungültig ' + e.id);
+    // Highway=motorway has a real physical geometry even when no A-number
+    // is mapped (e.g. unnamed motorway-standard connectors). Preserve its
+    // road/traffic identity, never invent a motorwayRef. The OSM import
+    // audits each unassigned way separately.
     if (refs.some(ref=>!/^A\d{1,3}$/.test(ref)) ||
         (e.motorwayRef !== undefined && refs.length>0&&!refs.includes(e.motorwayRef)))
       errors.push('Ungültige oder widersprüchliche Autobahnreferenzen ' + e.id);
