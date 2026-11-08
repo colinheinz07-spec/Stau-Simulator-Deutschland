@@ -102,6 +102,27 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     if(el.tags?.highway==='motorway_junction')
       junctionNames.set(el.id,{ref:el.tags.ref,name:el.tags.name});
   }
+  const knownPublicOrMotorwayNodes=new Set<number>();
+  const serviceNodes=new Map<number,Set<number>>();
+  const motorwayAndRampNodes=new Map<number,Set<number>>();
+  for(const item of elements)if(item.type==='way'){
+    if(item.tags?.highway==='service')for(const id of item.nodes){
+      const neighbors=serviceNodes.get(id)??new Set<number>();
+      neighbors.add(item.id);
+      serviceNodes.set(id,neighbors);
+    }
+    if(item.tags?.highway==='motorway'||item.tags?.highway==='motorway_link')
+      for(const id of item.nodes){
+        const neighbors=motorwayAndRampNodes.get(id)??new Set<number>();
+        neighbors.add(item.id);
+        motorwayAndRampNodes.set(id,neighbors);
+      }
+    if(item.tags?.highway==='motorway'||PUBLIC.has(item.tags?.highway as RoadClass))
+      for(const id of item.nodes)knownPublicOrMotorwayNodes.add(id);
+  }
+  const serviceOnlyTerminal=(way:OsmWay,id:number):boolean =>
+    serviceNodes.has(id) && !knownPublicOrMotorwayNodes.has(id) &&
+    [...(motorwayAndRampNodes.get(id)??[])].every(other=>other===way.id);
   const accepted:AcceptedWay[]=[];
   for(const item of elements){
     if(item.type!=='way')continue;
@@ -117,6 +138,14 @@ export function importOsmNetwork(elements:readonly OsmElement[],
       tags.name,tags.destination,tags['destination:street'],tags.service,tags['motorway:service']
     ].join(' '))){
       excludedWays.push({id:item.id,reason:'explizite Rastplatz-/Service-Zufahrt'});continue;
+    }
+    // Service-area motorway_links are not normal AS. If the exact OSM-way
+    // endpoint touches ONLY highway=service and no public/mainline/ramp
+    // continuation, this is a service-only access; do not color it green.
+    // Never drop ramps that have an additional legal public/AS connection.
+    if(kind==='ramp'&&(serviceOnlyTerminal(item,item.nodes[0]!) ||
+                       serviceOnlyTerminal(item,item.nodes[item.nodes.length-1]!))){
+      excludedWays.push({id:item.id,reason:'Betriebs-/Rastplatz-Zufahrt an highway=service'});continue;
     }
     if(item.nodes.length<2){issues.push('OSM-Way ohne Fahrweg '+item.id);continue;}
     if(item.geometry && item.geometry.length!==item.nodes.length) {
