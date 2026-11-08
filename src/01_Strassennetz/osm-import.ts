@@ -5,6 +5,7 @@
 import {distanceM,polylineLengthM} from './geometry.js';
 import {validateNetwork} from '../01_Strassennetz.js';
 import {compileViaWayRestrictions,type ViaWayRule} from './via-way-restrictions.js';
+import {distanceToExtractBoundaryM} from './extract-boundary.js';
 import type {Point,RoadClass,RoadEdge,RoadNetwork,RoadNode,TurnMovement} from '../model.js';
 
 type OsmTags = Readonly<Record<string,string>>;
@@ -23,6 +24,10 @@ export interface OsmImportOptions {
   includePublicRoads?: boolean;
   /** Bei true fehlschlagen statt unklaren Abbiegeregeln nachzuraten (Standard). */
   strict?: boolean;
+  /** Exact .poly clipping boundary of the provided Geofabrik PBF. */
+  extractBoundaryRings?: readonly (readonly Point[])[];
+  /** Maximum distance to exact PBF clipping boundary; default 150 metres. */
+  boundaryToleranceM?: number;
 }
 export interface OsmImportAudit {
   importedWays:number;
@@ -43,7 +48,11 @@ export interface OsmImportAudit {
   unrepresentedSourceSegments:string[];
   /** Unbekannte Rampenenden werden gemeldet statt mit gezeichneten Geraden verbunden. */
   unconnectedRampEnds:{edgeId:string;nodeId:string;terminal:'start'|'end';
-    lat:number;lon:number;sourceNeighborWays:{wayId:number;highway:string;service?:string;access?:string}[]}[];
+    lat:number;lon:number;sourceNeighborWays:{
+      wayId:number;highway:string;service?:string;access?:string;oneway?:string;ref?:string
+    }[]}[];
+  /** Source-proven extract border entry/exit, never a fabricated connection. */
+  extractBoundaryRampEnds:{edgeId:string;nodeId:string;terminal:'start'|'end';distanceM:number}[];
   excludedWays:readonly {id:number;reason:string}[];
   issues:readonly string[];
 }
@@ -364,7 +373,9 @@ export function importOsmNetwork(elements:readonly OsmElement[],
   for(const way of elements)if(way.type==='way'){
     const detail={wayId:way.id,highway:way.tags?.highway??'',
       ...(way.tags?.service?{service:way.tags.service}:{}),
-      ...(way.tags?.access?{access:way.tags.access}:{})};
+      ...(way.tags?.access?{access:way.tags.access}:{}),
+      ...(way.tags?.oneway?{oneway:way.tags.oneway}:{}),
+      ...(way.tags?.ref?{ref:way.tags.ref}:{})};
     for(const id of new Set(way.nodes)){
       const entries=byOriginalNode.get(id)??[];
       entries.push(detail);
@@ -372,14 +383,22 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     }
   }
   const unconnectedRampEnds:OsmImportAudit['unconnectedRampEnds']=[];
+  const extractBoundaryRampEnds:OsmImportAudit['extractBoundaryRampEnds']=[];
   const reportEnd=(edge:RoadEdge, nodeId:string, terminal:'start'|'end')=>{
     const id=Number(nodeId.slice(9));
     const point=nodePositions.get(id);
     if(!point)throw Error('Unbekannter Originalknoten '+id);
+    const neighbors=(byOriginalNode.get(id)??[])
+      .filter(x=>!edge.osmWayIds.includes(x.wayId)).slice(0,20);
+    const boundaryDistance=options.extractBoundaryRings?.length?
+      distanceToExtractBoundaryM(point,options.extractBoundaryRings):Infinity;
+    if(!neighbors.length && boundaryDistance<= (options.boundaryToleranceM??150)){
+      extractBoundaryRampEnds.push({edgeId:edge.id,nodeId,terminal,
+        distanceM:Math.round(boundaryDistance*10)/10});
+      return;
+    }
     unconnectedRampEnds.push({edgeId:edge.id,nodeId,terminal,
-      lat:point[0],lon:point[1],
-      sourceNeighborWays:(byOriginalNode.get(id)??[]).filter(x=>!edge.osmWayIds.includes(x.wayId))
-        .slice(0,20)});
+      lat:point[0],lon:point[1],sourceNeighborWays:neighbors});
   };
   for(const e of edges)if(e.kind==='ramp'){
     const startId=Number(e.fromNodeId.slice(9)),endId=Number(e.toNodeId.slice(9));
@@ -436,7 +455,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     inferredMotorwayRefs,unassignedMotorwayWays,
     expectedDirectedSourceSegments:expectedCoverage.size,
     representedDirectedSourceSegments:segmentCoverage.size,
-    unrepresentedSourceSegments,unconnectedRampEnds,excludedWays,issues
+    unrepresentedSourceSegments,unconnectedRampEnds,extractBoundaryRampEnds,excludedWays,issues
   };
   if(strict&&issues.length)throw new Error('OSM-Netzimport unvollständig:\n'+issues.join('\n'));
   return {network,audit};
