@@ -23,6 +23,8 @@ export interface RoadEdge {
   kind: RoadKind;
   osmClass: RoadClass;
   motorwayRef?: string;
+  /** Physisch gemeinsam geführte Autobahnen (z. B. A3/A4) ohne doppelte Fahrbahnen. */
+  motorwayRefs?: readonly string[];
   lanes: number;
   lengthM: number;
   freeSpeedKmh: number;
