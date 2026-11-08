@@ -2,17 +2,21 @@
  * Noch keine dynamische Routenwahl / Fahrzeuggeneration: nur reines Routing.
  */
 import type {RoadNetwork} from './model.js';
-import {blockedForRouting, type SimEvent} from './04_Ereignisse.js';
+import {blockedForRouting, activeNetworkClosures, type SimEvent, type CorridorClosure} from './04_Ereignisse.js';
 
 export interface RouteResult {edgeIds: string[]; freeTravelMinutes: number}
 export function findRoute(
   network: RoadNetwork, startEdgeId: string, targetEdgeId: string,
-  events: readonly SimEvent[] = [], minute = 0
+  events: readonly SimEvent[] = [], minute = 0,
+  closures: readonly CorridorClosure[] = []
 ): RouteResult | null {
   const edges = new Map(network.edges.map(e => [e.id, e]));
+  const administrative = activeNetworkClosures(network,closures,minute);
   const start = edges.get(startEdgeId), target = edges.get(targetEdgeId);
   if (!start || !target || blockedForRouting(start,events,minute) ||
-      blockedForRouting(target,events,minute)) return null;
+      blockedForRouting(target,events,minute) ||
+      administrative.blockedEdgeIds.has(startEdgeId) ||
+      administrative.blockedEdgeIds.has(targetEdgeId)) return null;
   const travelMin = (id: string): number => {
     const e = edges.get(id)!;
     return e.lengthM / 1000 / e.freeSpeedKmh * 60;
@@ -34,9 +38,10 @@ export function findRoute(
       return {edgeIds:result,freeTravelMinutes:paths.get(current)!.minutes};
     }
     for (const movement of network.movements) {
-      if (!movement.allowed || movement.incomingEdgeId !== current) continue;
+      if (!movement.allowed || movement.incomingEdgeId !== current ||
+          administrative.blockedMovementKeys.has(movement.incomingEdgeId+'=>'+movement.outgoingEdgeId)) continue;
       const next = edges.get(movement.outgoingEdgeId);
-      if (!next || blockedForRouting(next,events,minute)) continue;
+      if (!next || administrative.blockedEdgeIds.has(next.id) || blockedForRouting(next,events,minute)) continue;
       const minutes = paths.get(current)!.minutes + travelMin(next.id);
       const known = paths.get(next.id);
       if (!known || minutes < known.minutes) {
