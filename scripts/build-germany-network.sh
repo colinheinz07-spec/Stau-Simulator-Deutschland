@@ -4,7 +4,7 @@ set -euo pipefail
 help() {
  cat <<'HELP'
 Deutschlandnetz erstellen (kein fest codiertes Autobahngebiet):
- bash scripts/build-germany-network.sh /path/to/germany-latest.osm.pbf /path/to/output-directory [--include-public]
+ bash scripts/build-germany-network.sh /path/to/germany-latest.osm.pbf /path/to/output-directory [--include-public] [--boundary-poly=country.poly]
 
 Source: https://download.geofabrik.de/europe/germany-latest.osm.pbf
 Requirements: osmium-tool, Python 3, Node 22+, npm install, npm run build.
@@ -14,13 +14,19 @@ Without that flag, public ways are only used to verify ramp termini.
 HELP
 }
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then help; exit 0; fi
-if [[ $# -lt 2 || $# -gt 3 ]]; then help >&2; exit 2; fi
+if [[ $# -lt 2 ]]; then help >&2; exit 2; fi
 PBF="$1"
 OUTPUT="$2"
-INCLUDE="${3:-}"
-if [[ -n "$INCLUDE" && "$INCLUDE" != "--include-public" ]]; then
- echo "Invalid flag: $INCLUDE" >&2; exit 2
-fi
+shift 2
+INCLUDE=""
+BOUNDARY=""
+for flag in "$@"; do
+ case "$flag" in
+   --include-public) INCLUDE="--include-public" ;;
+   --boundary-poly=*) BOUNDARY="$flag" ;;
+   *) echo "Invalid flag: $flag" >&2; exit 2 ;;
+ esac
+done
 for cmd in osmium python3 node sha256sum mktemp; do
  if ! command -v "$cmd" >/dev/null 2>&1; then
    echo "Missing command: $cmd" >&2; exit 1
@@ -48,6 +54,7 @@ osmium cat "$WORK/highways.osm.pbf" -f osm -o - |
 echo "Step 3/5: create directed network, audit every ramp endpoint and all source segments"
 IMPORT_FLAGS=()
 if [[ "$INCLUDE" == "--include-public" ]]; then IMPORT_FLAGS+=("--include-public"); fi
+if [[ -n "$BOUNDARY" ]]; then IMPORT_FLAGS+=("$BOUNDARY"); fi
 node --max-old-space-size=8192 scripts/import-osm.mjs "$WORK/elements.json.gz" \
  "${IMPORT_FLAGS[@]}" "--output=$OUTPUT/generated-network.json"
 echo "Step 4/5: build lazy-loaded stable-ID map tiles"
