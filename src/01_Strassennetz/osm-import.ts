@@ -53,6 +53,8 @@ export interface OsmImportAudit {
     }[]}[];
   /** Source-proven extract border entry/exit, never a fabricated connection. */
   extractBoundaryRampEnds:{edgeId:string;nodeId:string;terminal:'start'|'end';distanceM:number}[];
+  /** Shared OSM point from which both motorway and ramp start, with no modeled inbound leg. */
+  sourceStartRampEnds:{edgeId:string;nodeId:string;sharedMainlineIds:string[]}[];
   excludedWays:readonly {id:number;reason:string}[];
   issues:readonly string[];
 }
@@ -384,6 +386,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
   }
   const unconnectedRampEnds:OsmImportAudit['unconnectedRampEnds']=[];
   const extractBoundaryRampEnds:OsmImportAudit['extractBoundaryRampEnds']=[];
+  const sourceStartRampEnds:OsmImportAudit['sourceStartRampEnds']=[];
   const reportEnd=(edge:RoadEdge, nodeId:string, terminal:'start'|'end')=>{
     const id=Number(nodeId.slice(9));
     const point=nodePositions.get(id);
@@ -392,6 +395,17 @@ export function importOsmNetwork(elements:readonly OsmElement[],
       .filter(x=>!edge.osmWayIds.includes(x.wayId)).slice(0,20);
     const boundaryDistance=options.extractBoundaryRings?.length?
       distanceToExtractBoundaryM(point,options.extractBoundaryRings):Infinity;
+    // If a motorway and a slip road SHARE their start OSM node and no
+    // imported edge enters the node, it is a directed source of the selected
+    // graph (or an OSM snapshot cut). Do not call it a missing ramp and do
+    // not create a fictional inbound connection. Keep this as explicit audit
+    // metadata so national/full-graph validation can review the source.
+    const sharedMainlines=(byStart.get(nodeId)??[])
+      .filter(e=>e.kind==='mainline'&&e.id!==edge.id).map(e=>e.id);
+    if(terminal==='start'&&!byEnd.has(nodeId)&&sharedMainlines.length){
+      sourceStartRampEnds.push({edgeId:edge.id,nodeId,sharedMainlineIds:sharedMainlines});
+      return;
+    }
     if(!neighbors.length && boundaryDistance<= (options.boundaryToleranceM??150)){
       extractBoundaryRampEnds.push({edgeId:edge.id,nodeId,terminal,
         distanceM:Math.round(boundaryDistance*10)/10});
@@ -455,7 +469,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     inferredMotorwayRefs,unassignedMotorwayWays,
     expectedDirectedSourceSegments:expectedCoverage.size,
     representedDirectedSourceSegments:segmentCoverage.size,
-    unrepresentedSourceSegments,unconnectedRampEnds,extractBoundaryRampEnds,excludedWays,issues
+    unrepresentedSourceSegments,unconnectedRampEnds,extractBoundaryRampEnds,sourceStartRampEnds,excludedWays,issues
   };
   if(strict&&issues.length)throw new Error('OSM-Netzimport unvollständig:\n'+issues.join('\n'));
   return {network,audit};
