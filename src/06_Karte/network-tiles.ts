@@ -2,7 +2,7 @@
  * Source: scripts/shard-network.mjs; all tiles use original RoadEdge IDs.
  * This is viewport assembly ONLY, not a replacement for national routing.
  */
-import type {RoadNetwork,RoadEdge,RoadNode,TurnMovement} from '../model.js';
+import type {RoadNetwork,RoadEdge,RoadNode,TurnMovement,RouteRestriction} from '../model.js';
 
 export type Bounds = readonly [south:number,west:number,north:number,east:number];
 export interface TileManifestEntry {
@@ -13,7 +13,7 @@ export interface TileManifest {
   tileDegrees:number;
   attribution:string;
   attributionUrl:string;
-  counts:{uniqueEdges:number;nodes:number;movements:number;tiles:number};
+  counts:{uniqueEdges:number;nodes:number;movements:number;routeRestrictions?:number;tiles:number};
   tiles:readonly TileManifestEntry[];
 }
 export interface NetworkTile {
@@ -21,6 +21,7 @@ export interface NetworkTile {
   nodes:readonly RoadNode[];
   edges:readonly RoadEdge[];
   movements:readonly TurnMovement[];
+  routeRestrictions?:readonly RouteRestriction[];
   externalEdgeIds:readonly string[];
 }
 function overlaps(a:Bounds,b:Bounds):boolean {
@@ -36,6 +37,7 @@ export interface VisibleNetwork {
   network:RoadNetwork;
   /** Cross-tile routing references are NOT discarded or guessed. */
   pendingMovements:readonly TurnMovement[];
+  pendingRouteRestrictions:readonly RouteRestriction[];
   pendingEdgeIds:readonly string[];
 }
 /** Idempotent across overlapping tiles. Conflicting shared ID/geometries
@@ -44,6 +46,7 @@ export interface VisibleNetwork {
 export function assembleVisibleTiles(tiles:readonly NetworkTile[]):VisibleNetwork {
   const nodes=new Map<string,RoadNode>(),edges=new Map<string,RoadEdge>();
   const movements=new Map<string,TurnMovement>();
+  const restrictions=new Map<string,RouteRestriction>();
   for(const tile of tiles){
     if(tile.schemaVersion!==1)throw Error('Unexpected tile schema version');
     for(const n of tile.nodes){
@@ -65,6 +68,13 @@ export function assembleVisibleTiles(tiles:readonly NetworkTile[]):VisibleNetwor
         throw Error('Conflicting cross-tile movement '+key);
       movements.set(key,movement);
     }
+    for(const restriction of tile.routeRestrictions??[]){
+      const key=restriction.osmRelationId+':'+restriction.kind+':'+restriction.edgeIds.join('|');
+      const old=restrictions.get(key);
+      if(old&&JSON.stringify(old)!==JSON.stringify(restriction))
+        throw Error('Conflicting via-way restriction across tiles '+key);
+      restrictions.set(key,restriction);
+    }
   }
   const available:TurnMovement[]=[],pending:TurnMovement[]=[],missing=new Set<string>();
   for(const movement of movements.values()){
@@ -76,6 +86,14 @@ export function assembleVisibleTiles(tiles:readonly NetworkTile[]):VisibleNetwor
       if(!edges.has(movement.outgoingEdgeId))missing.add(movement.outgoingEdgeId);
     }
   }
+  const presentRestrictions:RouteRestriction[]=[],pendingRestrictions:RouteRestriction[]=[];
+  for(const restriction of restrictions.values()){
+    if(restriction.edgeIds.every(id=>edges.has(id)))presentRestrictions.push(restriction);
+    else{
+      pendingRestrictions.push(restriction);
+      for(const id of restriction.edgeIds)if(!edges.has(id))missing.add(id);
+    }
+  }
   const byId=(a:{id:string},b:{id:string})=>a.id.localeCompare(b.id);
   return {
     network:{
@@ -84,9 +102,11 @@ export function assembleVisibleTiles(tiles:readonly NetworkTile[]):VisibleNetwor
       edges:[...edges.values()].sort(byId),
       movements:available.sort((a,b)=>
         a.incomingEdgeId.localeCompare(b.incomingEdgeId)||
-        a.outgoingEdgeId.localeCompare(b.outgoingEdgeId))
+        a.outgoingEdgeId.localeCompare(b.outgoingEdgeId)),
+      ...(presentRestrictions.length?{routeRestrictions:presentRestrictions}:{})
     },
     pendingMovements:pending,
+    pendingRouteRestrictions:pendingRestrictions,
     pendingEdgeIds:[...missing].sort()
   };
 }
