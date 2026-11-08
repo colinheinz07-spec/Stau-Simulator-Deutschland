@@ -1,0 +1,43 @@
+name: Experimenteller Real-OSM-Netzimport
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/real-osm-import-smoke.yml'
+jobs:
+  real-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Osmium für echte PBF-Quelldaten installieren
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y osmium-tool
+      - name: Abhängigkeiten installieren und neue App bauen
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - name: Kleinen echten Deutschland-OSM-Datensatz herunterladen
+        run: |
+          curl -fLsS --retry 3 --max-time 240 \
+            -o /tmp/bremen-latest.osm.pbf \
+            https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
+          test -s /tmp/bremen-latest.osm.pbf
+      - name: Allgemeinen bundesweiten Import und Kachelbau mit echtem PBF prüfen
+        run: bash scripts/build-germany-network.sh /tmp/bremen-latest.osm.pbf /tmp/real-osm-smoke
+      - name: OSM-Audit und Kachelmanifest dokumentieren
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-osm-germany-smoke-audit
+          if-no-files-found: warn
+          path: |
+            /tmp/real-osm-smoke/generated-network.json.audit.json
+            /tmp/real-osm-smoke/generated-network.json.failed-audit.json
+            /tmp/real-osm-smoke/tiles/manifest.json
+            /tmp/real-osm-smoke/source-metadata.json
+          retention-days: 7
