@@ -8,7 +8,7 @@ jobs:
   real-data:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Live PBF smoke test. Ramp provenance diagnostics (v2).
+    # Live PBF smoke test: selective service-area exclusion and via-way routing (v3).
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,6 +44,10 @@ jobs:
               print('AUDIT DATEI:', name)
               print('Hauptfahrbahnen:', report.get('importedMotorwayWays'))
               print('Rampen:', report.get('importedRampWays'))
+              print('Servicezugänge bewusst ausgeschlossen:',sum('Betriebs' in x.get('reason','') for x in report.get('excludedWays',[])))
+              print('Via-Way-Abbiegeverbote:',report.get('compiledViaWayRestrictions'))
+              print('Aufgeschobene Via-Way-Relationen:',report.get('deferredViaWayRelations'))
+              print('Hauptfahrbahnen ohne A-Nummer:', report.get('unassignedMotorwayWays'))
               print('Eindeutig geerbte OSM-Nummern:',len(report.get('inferredMotorwayRefs',[])))
               for inherited in report.get('inferredMotorwayRefs',[])[:15]:
                   print('  geerbt:', inherited)
