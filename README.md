@@ -43,7 +43,9 @@ Dokumentiert und mit neutralen Netztests abgedeckt im [vollständigen Grundschem
 - `scripts/shard-network.mjs`: Karte in kleinere räumliche `.json.gz`-Kacheln aufteilen;
 - `src/06_Karte/network-tiles.ts`: Kartenkacheln anhand stabiler IDs zusammenführen, echte Cross-Tile-Fahrbeziehungen erhalten, Duplikate verhindern.
 
-Die echten Deutschland-Rohdaten sind mehrere GB groß und **nicht in GitHub gespeichert**. Der vollständige Import muss auf einem ausreichend leistungsfähigen Rechner/Build-Server laufen; die bisherigen CI-Tests nutzen kleine OSM-Testdaten. Die mobile Oberfläche und der bundesweite Echtbetrieb sind noch nicht fertig.
+**Echter OSM-Praxistest erfolgreich:** Ein Geofabrik-Bremen-Extrakt wurde mit der zugehörigen `.poly`-Gebietsgrenze verarbeitet: **415 Hauptfahrbahn-Ways, 411 Rampen-Ways, 850 gerichtete Fahrwege, 864 Fahrbeziehungen und null ungeklärte Rampenenden**. Die 13 service-only-Zugänge wurden ausgeschlossen und vier echte Kartenausschnitt-Grenzen separat protokolliert. [GitHub Actions: Real-OSM-Erfolg](https://github.com/colinheinz07-spec/Stau-Simulator-Deutschland/actions/runs/42531933452).
+
+Die echten Deutschland-Rohdaten sind mehrere GB groß und **nicht in GitHub gespeichert**. Der vollständige Import muss auf einem ausreichend leistungsfähigen Rechner/Build-Server laufen; die Standard-CI nutzt kleine OSM-Testdaten, zusätzlich ist ein echter regionaler PBF-Test eingerichtet. Die mobile Oberfläche und der bundesweite Echtbetrieb sind noch nicht fertig.
 
 ## Entwicklungsstand
 Das Projekt befindet sich in **Phase 1: Kernarchitektur und prüfbare Basismodule**. Es enthält aktuell **noch keine fertige interaktive Karte und kein deutschlandweites Straßennetz**. Tests nutzen absichtlich ein als *synthetisch* gekennzeichnetes kleines Prüfnetz. Eine echte Verkehrs-Engine mit Fahrzeugbewegung über alle Knoten folgt erst nach dem OSM-Netzimport.
