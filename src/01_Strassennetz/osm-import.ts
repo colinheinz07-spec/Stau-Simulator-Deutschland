@@ -2,7 +2,8 @@
  * Quell-Daten: Overpass/OSM-Snapshot mit nodes, ways und restriction-Relations.
  * Jeder Way-Vertex bleibt erhalten; an wirklichen geteilten OSM-Nodes wird gesplittet.
  */
-import {distanceM, polylineLengthM, validateNetwork} from '../01_Strassennetz.js';
+import {distanceM,polylineLengthM} from './geometry.js';
+import {validateNetwork} from '../01_Strassennetz.js';
 import type {Point,RoadClass,RoadEdge,RoadNetwork,RoadNode,TurnMovement} from '../model.js';
 
 type OsmTags = Readonly<Record<string,string>>;
