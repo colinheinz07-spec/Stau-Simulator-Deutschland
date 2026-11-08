@@ -20,7 +20,7 @@ const cache=new Map();
 const tileIndex=n=>Math.floor(Number((n/size).toFixed(10)));
 const tileKey=(lat,lon)=>tileIndex(lat)+'_'+tileIndex(lon);
 function addEdgeToTile(key,edge,nodes){
- const bucket=cache.get(key)??{edges:new Map(),nodes:new Map(),movements:[],externalEdgeIds:new Set()};
+ const bucket=cache.get(key)??{edges:new Map(),nodes:new Map(),movements:[],routeRestrictions:[],externalEdgeIds:new Set()};
  bucket.edges.set(edge.id,edge);
  for(const id of [edge.fromNodeId,edge.toNodeId]){
    const node=nodes.get(id);
@@ -59,13 +59,24 @@ for(const movement of graph.movements){
  tile.movements.push(movement);
  if(!tile.edges.has(movement.outgoingEdgeId))tile.externalEdgeIds.add(movement.outgoingEdgeId);
 }
+for(const restriction of graph.routeRestrictions??[]){
+ const first=restriction.edgeIds[0];
+ const home=owned.get(first);
+ if(!home)throw Error('Missing via-way restriction home '+restriction.osmRelationId);
+ const tile=cache.get(home);
+ tile.routeRestrictions.push(restriction);
+ for(const id of restriction.edgeIds)if(!tile.edges.has(id))
+   tile.externalEdgeIds.add(id);
+}
 const covered=new Set();
-let seenMoves=0;
+let seenMoves=0,seenRestrictions=0;
 for(const tile of cache.values()){
  for(const edgeId of tile.edges.keys())covered.add(edgeId);
  seenMoves+=tile.movements.length;
+ seenRestrictions+=tile.routeRestrictions.length;
 }
-if(covered.size!==graph.edges.length||seenMoves!==graph.movements.length)
+if(covered.size!==graph.edges.length||seenMoves!==graph.movements.length||
+   seenRestrictions!==(graph.routeRestrictions??[]).length)
  throw Error('Tiling lost edges or cross-tile movements');
 const destination=resolve(output);
 await mkdir(destination,{recursive:true});
@@ -74,7 +85,8 @@ const manifest={
  attribution:'© OpenStreetMap contributors, ODbL',
  attributionUrl:'https://www.openstreetmap.org/copyright',
  counts:{uniqueEdges:graph.edges.length,nodes:graph.nodes.length,
-  movements:graph.movements.length,tiles:cache.size},
+  movements:graph.movements.length,routeRestrictions:(graph.routeRestrictions??[]).length,
+  tiles:cache.size},
  tiles:[]
 };
 for(const [key,bucket] of [...cache].sort(([a],[b])=>a.localeCompare(b))){
@@ -85,6 +97,7 @@ for(const [key,bucket] of [...cache].sort(([a],[b])=>a.localeCompare(b))){
    nodes:[...bucket.nodes.values()],
    edges:[...bucket.edges.values()],
    movements:bucket.movements,
+   routeRestrictions:bucket.routeRestrictions,
    externalEdgeIds:[...bucket.externalEdgeIds].sort()
  };
  const bytes=gzipSync(JSON.stringify(tile),{level:6});
