@@ -2,3 +2,14 @@ node_modules/
 dist/
 .DS_Store
 *.tsbuildinfo
+
+# Deutschlandweite OSM-Rohdaten und generierte Netze gehören NICHT in Git.
+*.osm.pbf
+*.osm.xml
+data/generated-network*.json
+data/generated-network*.audit.json
+data/generated-network*.failed-audit.json
+data/source-metadata.json
+data/tiles/
+data/*.json.gz
+work/
