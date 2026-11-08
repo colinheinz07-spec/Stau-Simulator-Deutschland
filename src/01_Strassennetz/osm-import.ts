@@ -31,7 +31,7 @@ export interface OsmImportAudit {
   importedDirectedEdges:number;
   importedMovements:number;
   /** Sichere Referenzableitungen aus exakt gemeinsamen motorway-OSM-Nodes. */
-  inferredMotorwayRefs:{wayId:number;refs:string[];evidenceWayIds:number[]}[];
+  inferredMotorwayRefs:{wayId:number;refs:string[];evidenceWayIds:number[];evidenceRelationIds?:number[]}[];
   /** Alle direkt aus dem OSM-Snapshot erwarteten Kanten müssen enthalten sein. */
   expectedDirectedSourceSegments:number;
   representedDirectedSourceSegments:number;
@@ -143,10 +143,39 @@ export function importOsmNetwork(elements:readonly OsmElement[],
   }
   const inheritedRefs=new Map<number,string[]>();
   const references=new Map<number,string[]>();
-  const inferredMotorwayRefs:{wayId:number;refs:string[];evidenceWayIds:number[]}[]=[];
+  const inferredMotorwayRefs:{
+    wayId:number;refs:string[];evidenceWayIds:number[];evidenceRelationIds?:number[]
+  }[]=[];
+  // German motorway refs may be attached to OSM type=route, route=road
+  // relations rather than duplicated on every motorway Way. The actual
+  // way membership is an authoritative source - not coordinate snapping.
+  const relatedRefs=new Map<number,{refs:Set<string>;relationIds:Set<number>}>();
+  for(const relation of elements)if(relation.type==='relation'&&
+    relation.tags?.type==='route'&&relation.tags.route==='road'){
+    const refs=highwayRefs(relation.tags);
+    if(!refs.length)continue;
+    for(const member of relation.members)if(member.type==='way'){
+      const record=relatedRefs.get(member.ref)??{
+        refs:new Set<string>(),relationIds:new Set<number>()
+      };
+      refs.forEach(r=>record.refs.add(r));
+      record.relationIds.add(relation.id);
+      relatedRefs.set(member.ref,record);
+    }
+  }
   for(const {way,tags} of mainWays) {
     const exact=highwayRefs(tags);
-    if(exact.length)references.set(way.id,exact);
+    if(exact.length){references.set(way.id,exact);continue;}
+    const relation=relatedRefs.get(way.id);
+    if(relation?.refs.size){
+      const refs=[...relation.refs].sort();
+      references.set(way.id,refs);
+      inheritedRefs.set(way.id,refs);
+      inferredMotorwayRefs.push({
+        wayId:way.id,refs,evidenceWayIds:[],
+        evidenceRelationIds:[...relation.relationIds].sort((a,b)=>a-b)
+      });
+    }
   }
   for(let round=0;round<mainWays.length;round++){
     let changed=false;
