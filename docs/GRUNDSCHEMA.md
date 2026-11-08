@@ -57,18 +57,18 @@ Jedes gerichtete **RoadEdge** hat eine stabile ID, Anfangs-/Endknoten, OSM-Quell
 - alle enthaltenen zulässigen `motorway` und `motorway_link` automatisch gelesen, unabhängig vom Namen der Autobahn oder Anschlussstelle;
 - Fahrwege an wirklich gemeinsamen OSM-Knoten geteilt (einschließlich kurzer Auffahrts-/Abfahrtssegmente);
 - `oneway`, `oneway=-1`, ausdrücklich zweirichtungsfähige Wege und die Fahrstreifenzahl ausgewertet;
-- motorcar-Abbiegebeschränkungen vom OSM-Typ `from-way → via-node → to-way` angewendet;
+- motorcar-Abbiegebeschränkungen vom OSM-Typ `from-way → via-node → to-way` sowie unterstützte `no_*`/`only_*`-Folgen über `via-way` angewendet; dafür merkt sich das Routing den gefahrenen Wegverlauf;
 - gemeinsame Autobahnfahrbahnen mit mehreren Nummern (z. B. A3/A4) **einmal physisch** gespeichert, aber jeder zugehörigen Autobahnnummer zugeordnet;
 - echte Nicht-Autobahn-Straßen auf Wunsch als separate `public`-Fahrwege für Umleitungsnetze importiert, nicht als grüne Autobahn;
 - jedes erwartete originale OSM-Teilsegment mit den tatsächlich erzeugten gerichteten Segmenten verglichen;
 - ungeklärte Rampenenden als Fehler gemeldet, nicht mit geraden Verbindungsstücken überschrieben.
 
-**Fehler müssen sichtbar sein:** Fehlende Knoten, widersprüchliche Geometrie, unverbundene Rampen, fehlende eindeutige Hauptfahrbahnreferenzen und derzeit nicht implementierte komplizierte Abbiegerelationen (*via-way, conditional*) stoppen bei `strict=true` den Import. Diese Einschränkung ist absichtlich: Der neue Simulator darf seine Netzqualität nicht vortäuschen.
+**Fehler müssen sichtbar sein:** Fehlende Knoten, widersprüchliche Geometrie, tatsächlich unverbundene Rampen und nicht unterstützte bedingte oder mehrdeutige Abbiegerelationen stoppen bei `strict=true` den Import. Nicht nummerierte physische `motorway`-Ways werden mit Originalgeometrie übernommen und als unsicher zugeordnete Autobahn im Audit markiert. Betriebs-/Rastplatz-Zugänge, belegte Extraktgrenzen und gemeinsame gerichtete Quellknoten werden getrennt klassifiziert, ohne Verbindungsstraßen zu erfinden. Diese Einschränkung ist absichtlich: Der neue Simulator darf seine Netzqualität nicht vortäuschen.
 
-Der Import läuft offline mit Node.js 22+ nach `npm install` und `npm run build`:
+Der Import läuft offline mit Node.js 22+ nach `npm install` und `npm run build`. Der Workflow kann die passende originale Geofabrik-`.poly`-Grenze erhalten:
 
 ```bash
-node scripts/import-osm.mjs data/mein-osm-snapshot.json --include-public --output=data/generated-network.json
+node scripts/import-osm.mjs data/mein-osm-snapshot.json --include-public --boundary-poly=data/region.poly --output=data/generated-network.json
 ```
 
 Der Quellsnapshot muss alle benötigten Nodes, Ways und Restrictions des gewünschten Gebiets enthalten. Output sind `generated-network.json` und `generated-network.json.audit.json`. Ein neuer Autobahnabschnitt wird so über **Daten**, nicht über neue Regeln importiert. Ohne `--include-public` wird nur die Autobahn samt Rampen importiert; Anschlussstellen können trotzdem nachweislich an unmodellierte öffentliche OSM-Straßen enden. Für reale Umleitungen muss der separate öffentliche Straßengraph tatsächlich vorhanden sein.
@@ -86,4 +86,4 @@ Unter `src/04_Ereignisse/netzsperrungen.ts` gibt es eine **CorridorClosure** mit
 
 Das Verhalten hängt nie von Sonderfällen wie „Montabaur“ oder „Heumar“ ab. Die neutralen Tests prüfen A1, A3, A7, A61 und A100 mit denselben Regeln einschließlich paralleler Fahrbahnen, Ketten von Zufahrtsrampen, offenen Abzweigen und Sperrzeitraum.
 
-**Grenze der bisherigen Implementierung:** Die Graph- und Ereignis-Topologie ist vorbereitet. Vollständig dynamischer Durchgangsverkehr, bereits im gesperrten Abschnitt befindliche Fahrzeuge, Kapazitätsabhängigkeit von Kreuzungen, realistische Reisezeitumverteilung und das räumliche Zellmodell sind weiterhin eigene Ausbauschritte. Das Importskript lädt noch keinen kompletten Deutschland-OSM-Snapshot herunter und es gibt derzeit keine spielbare Deutschlandkarte.
+**Grenze der bisherigen Implementierung:** Der graphbasierte Vollsperrungsplan verwendet derzeit die belegten Autobahnnummern; unbekannte Autobahnreferenzen werden nicht erraten. Die Via-Way-Restriktionen sind beim Routing berücksichtigt, der Sperrplan ist aber noch nicht vollständig history-aware. Die Graph- und Ereignis-Topologie ist vorbereitet. Vollständig dynamischer Durchgangsverkehr, bereits im gesperrten Abschnitt befindliche Fahrzeuge, Kapazitätsabhängigkeit von Kreuzungen, realistische Reisezeitumverteilung und das räumliche Zellmodell sind weiterhin eigene Ausbauschritte. Das Importskript lädt noch keinen kompletten Deutschland-OSM-Snapshot herunter und es gibt derzeit keine spielbare Deutschlandkarte.
