@@ -44,7 +44,11 @@ jobs:
               print('Hauptfahrbahnen:', report.get('importedMotorwayWays'))
               print('Rampen:', report.get('importedRampWays'))
               print('Eindeutig geerbte OSM-Nummern:',len(report.get('inferredMotorwayRefs',[])))
+              for inherited in report.get('inferredMotorwayRefs',[])[:15]:
+                  print('  geerbt:', inherited)
               print('Ungeloeste Rampenenden:',len(report.get('unconnectedRampEnds',[])))
+              for ramp in report.get('unconnectedRampEnds',[])[:20]:
+                  print('  rampenende:', ramp)
               print('Fehler insgesamt:',len(report.get('issues',[])))
               for issue in report.get('issues',[])[:40]:
                   print('  -',issue)
