@@ -72,6 +72,18 @@ export function validateNetwork(network: RoadNetwork): string[] {
     if (m.capacityVph !== undefined && (!Number.isFinite(m.capacityVph) || m.capacityVph <= 0))
       errors.push('Ungültige Knoten-Kapazität ' + key);
   }
+  for(const rule of network.routeRestrictions??[]){
+    if(!Number.isSafeInteger(rule.osmRelationId)||rule.osmRelationId<=0 ||
+        !['no','only'].includes(rule.kind)||rule.edgeIds.length<3)
+      errors.push('Ungültige via-way-Abbiegerelation '+rule.osmRelationId);
+    for(const id of rule.edgeIds)if(!edges.has(id))
+      errors.push('Fehlender via-way-Fahrweg '+rule.osmRelationId+': '+id);
+    for(let i=1;i<rule.edgeIds.length;i++){
+      const from=rule.edgeIds[i-1]!,to=rule.edgeIds[i]!;
+      if(!turns.has(from+'=>'+to))
+        errors.push('via-way-Abbiegerelation ohne echten Knoten '+rule.osmRelationId+': '+from+'=>'+to);
+    }
+  }
   return errors;
 }
 export function outgoingMovements(network: RoadNetwork, edgeId: string): TurnMovement[] {
