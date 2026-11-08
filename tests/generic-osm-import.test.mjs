@@ -160,3 +160,19 @@ test('Zusammentreffen zweier Autobahnen ohne eindeutiges ref wird NIEMALS gerate
  assert.throws(()=>Strassennetz.importOsmNetwork([...elements,adjacent,ambiguous],{includePublicRoads:true}),
    /Autobahn ohne eindeutiges OSM-ref/);
 });
+
+test('Deutsche OSM-Autobahnrelation liefert ref ohne irgendeine Autobahn-Sonderliste',()=>{
+ const elements=example();
+ const motorway=elements.find(e=>e.type==='way'&&e.id===101);
+ delete motorway.tags.ref;
+ const routeRelation={
+   type:'relation',id:991000,
+   tags:{type:'route',route:'road',ref:'A 27',name:'Bundesautobahn 27'},
+   members:[{type:'way',ref:101,role:''}]
+ };
+ const {network,audit}=Strassennetz.importOsmNetwork([...elements,routeRelation],{includePublicRoads:true});
+ const way=byWay(network,101);
+ assert.ok(way.every(x=>x.motorwayRef==='A27'));
+ assert.ok(audit.inferredMotorwayRefs.some(x=>x.wayId===101&&
+   x.refs.includes('A27')&&x.evidenceRelationIds.includes(991000)));
+});
