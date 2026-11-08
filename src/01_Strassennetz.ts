@@ -1,16 +1,11 @@
 /** 01 STRASSENNETZ: Topologie und OSM-Qualitätsprüfung, keine Verkehrsberechnung. */
 import type {Point, RoadEdge, RoadNetwork, TurnMovement} from './model.js';
+import {distanceM,polylineLengthM} from './01_Strassennetz/geometry.js';
+export {distanceM,polylineLengthM} from './01_Strassennetz/geometry.js';
+export {importOsmNetwork} from './01_Strassennetz/osm-import.js';
+export type {OsmElement,OsmNode,OsmWay,OsmRelation,OsmImportOptions,OsmImportAudit} from './01_Strassennetz/osm-import.js';
 export type {RoadNode, RoadEdge, RoadNetwork, TurnMovement, RoadKind, RoadClass, Point} from './model.js';
 
-export function distanceM(a: Point, b: Point): number {
-  const lat = (a[0] + b[0]) * Math.PI / 360;
-  return 111195 * Math.hypot(a[0] - b[0], (a[1] - b[1]) * Math.cos(lat));
-}
-export function polylineLengthM(points: readonly Point[]): number {
-  let metres = 0;
-  for (let i = 1; i < points.length; i++) metres += distanceM(points[i - 1]!, points[i]!);
-  return metres;
-}
 function validPoint(p: Point): boolean {
   return Number.isFinite(p[0]) && Math.abs(p[0]) <= 90 &&
     Number.isFinite(p[1]) && Math.abs(p[1]) <= 180;
@@ -42,8 +37,9 @@ export function validateNetwork(network: RoadNetwork): string[] {
       errors.push('Rampe ist kein motorway_link ' + e.id);
     if (e.kind === 'public' && (e.osmClass === 'motorway' || e.osmClass === 'motorway_link'))
       errors.push('Autobahn versehentlich als öffentliche Straße klassifiziert ' + e.id);
-    if (e.kind !== 'public' && !/^A\d{1,3}$/.test(e.motorwayRef ?? ''))
-      errors.push('Autobahnreferenz fehlt ' + e.id);
+    if ((e.kind === 'mainline' || e.motorwayRef !== undefined) &&
+        !/^A\d{1,3}$/.test(e.motorwayRef ?? ''))
+      errors.push('Autobahnreferenz fehlt/ungültig ' + e.id);
     if (!Number.isInteger(e.lanes) || e.lanes < 1 || e.lanes > 8)
       errors.push('Ungültige Fahrstreifenanzahl ' + e.id);
     if (![e.lengthM, e.freeSpeedKmh, e.capacityPerLaneVph].every(Number.isFinite) ||
