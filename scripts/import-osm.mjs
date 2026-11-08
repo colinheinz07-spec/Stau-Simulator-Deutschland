@@ -13,6 +13,7 @@ const input=args.find(s=>!s.startsWith('--'));
 const outputArg=args.find(s=>s.startsWith('--output='));
 const output=outputArg?.slice('--output='.length)??'data/generated-network.json';
 const includePublicRoads=args.includes('--include-public');
+const boundaryFile=args.find(s=>s.startsWith('--boundary-poly='))?.slice('--boundary-poly='.length);
 if(!input){
   console.error('Verwendung: node scripts/import-osm.mjs SNAPSHOT.json [--include-public] [--output=DATEI.json]');
   process.exit(2);
@@ -24,7 +25,10 @@ try{
   if(!Array.isArray(elements))throw Error('Snapshot enthält kein elements-Array');
   // Always produce the detailed audit, even when strict import would fail.
   // Only publish the graph after ALL geometry and topology checks pass.
-  const {network,audit}=Strassennetz.importOsmNetwork(elements,{includePublicRoads,strict:false});
+  const extractBoundaryRings=boundaryFile?
+    Strassennetz.parseOsmosisPoly(await readFile(resolve(boundaryFile),'utf8')):undefined;
+  const {network,audit}=Strassennetz.importOsmNetwork(elements,{includePublicRoads,strict:false,
+    ...(extractBoundaryRings?{extractBoundaryRings}:{})});
   await mkdir(dirname(resolve(output)),{recursive:true});
   if (audit.issues.length) {
     const failed=resolve(output+'.failed-audit.json');
@@ -44,7 +48,8 @@ try{
     directedEdges:audit.importedDirectedEdges,
     movements:audit.importedMovements,
     unrepresentedEdges:audit.unrepresentedSourceSegments.length,
-    unresolvedRampEnds:audit.unconnectedRampEnds.length
+    unresolvedRampEnds:audit.unconnectedRampEnds.length,
+    verifiedExtractBoundaryRampEnds:audit.extractBoundaryRampEnds.length
   }));
 }catch(error){
   console.error('OSM-Import gestoppt – Daten nicht als vollständig veröffentlicht:',error);
