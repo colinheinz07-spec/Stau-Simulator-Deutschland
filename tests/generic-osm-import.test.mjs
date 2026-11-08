@@ -155,10 +155,11 @@ test('Zusammentreffen zweier Autobahnen ohne eindeutiges ref wird NIEMALS gerate
  const ambiguous={type:'way',id:9104,nodes:[2,3],tags:{highway:'motorway',oneway:'yes'}};
  const {network,audit}=Strassennetz.importOsmNetwork([...elements,adjacent,ambiguous],
    {includePublicRoads:true,strict:false});
- assert.ok(audit.issues.some(x=>x.includes('kein sicherer gemeinsamer motorway-Node')&&x.includes('9104')));
+ assert.ok(audit.unassignedMotorwayWays.includes(9104));
  assert.ok(byWay(network,9104).length>0,'physische Hauptfahrbahn darf nicht stillschweigend verschwinden');
- assert.throws(()=>Strassennetz.importOsmNetwork([...elements,adjacent,ambiguous],{includePublicRoads:true}),
-   /Autobahn ohne eindeutiges OSM-ref/);
+ const strict=Strassennetz.importOsmNetwork([...elements,adjacent,ambiguous],{includePublicRoads:true});
+ assert.equal(byWay(strict.network,9104)[0].motorwayRef,undefined,
+   'unbestimmte Nummer darf nicht aus benachbartem Autobahnkreuz geraten');
 });
 
 test('Deutsche OSM-Autobahnrelation liefert ref ohne irgendeine Autobahn-Sonderliste',()=>{
@@ -175,4 +176,18 @@ test('Deutsche OSM-Autobahnrelation liefert ref ohne irgendeine Autobahn-Sonderl
  assert.ok(way.every(x=>x.motorwayRef==='A27'));
  assert.ok(audit.inferredMotorwayRefs.some(x=>x.wayId===101&&
    x.refs.includes('A27')&&x.evidenceRelationIds.includes(991000)));
+});
+
+test('Rastplatz-/Betriebsrampen, die ausschließlich an highway=service enden, werden nicht als normale AS projiziert',()=>{
+  const elements=example();
+  const extra=[
+    {type:'node',id:501,lat:50.015,lon:7.040},
+    {type:'node',id:502,lat:50.017,lon:7.040},
+    {type:'way',id:901,nodes:[501,4],tags:{highway:'motorway_link',oneway:'yes'}},
+    {type:'way',id:902,nodes:[502,501],tags:{highway:'service',service:'parking_aisle'}}
+  ];
+  const {network,audit}=Strassennetz.importOsmNetwork([...elements,...extra],{includePublicRoads:true});
+  assert.equal(byWay(network,901).length,0);
+  assert.ok(audit.excludedWays.some(x=>x.id===901&&x.reason.includes('Betriebs')));
+  assert.equal(audit.unconnectedRampEnds.length,0);
 });
