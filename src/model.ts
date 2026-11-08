@@ -11,6 +11,9 @@ export interface RoadNode {
   id: string;
   point: Point;
   osmNodeId?: number;
+  /** Original highway=motorway_junction, selbst wenn Knoten von Way geteilt ist. */
+  junctionRef?: string;
+  junctionName?: string;
 }
 export interface RoadEdge {
   /** Ein gerichteter physischer Abschnitt. Keine Gegenrichtung implizit ergänzen. */
