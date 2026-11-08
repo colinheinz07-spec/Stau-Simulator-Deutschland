@@ -201,8 +201,14 @@ export function importOsmNetwork(elements:readonly OsmElement[],
   // via-way/bedingt/unbekannte Relations müssen vorher überprüft werden.
   const restrictions=elements.filter((el):el is OsmRelation=>el.type==='relation')
     .map(parseRestriction).filter((r):r is NonNullable<typeof r>=>r!==null);
+  // All Germany restriction relations are present in the source even when
+  // building motorway-only routing. Ignore ONLY restrictions whose from-way
+  // is not part of the imported graph. Relevant conditional/via-way rules
+  // must still stop the strict import instead of quietly being ignored.
+  const acceptedWayIds=new Set(accepted.map(x=>x.way.id));
   const nodeRestrictions=new Map<number,typeof restrictions>();
   for(const r of restrictions){
+    if(!r.from.some(m=>acceptedWayIds.has(m.ref)))continue;
     if(r.except.split(/[;, ]+/).some(v=>['motorcar','motor_vehicle','vehicle'].includes(v)))continue;
     if(r.conditional||r.from.length!==1||r.to.length!==1||r.via.length!==1||
       r.via[0]?.type!=='node'||(!r.code.startsWith('no_')&&!r.code.startsWith('only_'))){
