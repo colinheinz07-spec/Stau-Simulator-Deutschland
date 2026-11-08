@@ -94,7 +94,8 @@ test('Karte, Kapazität und Routing sehen dieselbe Sperrung; keine Phantomstaus'
   for(const id of ['between-a','between-b','parallel','closed-branch','direct-onramp']){
     const r=map.find(x=>x.edgeId===id);
     assert.ok(r.closures.length,'fehlende rot-weiße Sperrmarkierung '+id);
-    assert.equal(r.colour,'free','keine frei erfundenen stehenden Fahrzeuge');
+    assert.equal(r.source,'initial-free','ohne Verkehrsdaten keine erfundenen gemessenen Geschwindigkeiten');
+    assert.notEqual(r.colour,'standstill','eine Sperrung erzeugt nicht von sich aus stehende Fahrzeuge');
   }
   for(const id of ['feeder','open-branch','up','after','offramp'])
     assert.deepEqual(map.find(x=>x.edgeId===id).closures,[],'fälschlich gesperrt: '+id);
