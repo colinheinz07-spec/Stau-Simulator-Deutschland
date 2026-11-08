@@ -108,3 +108,14 @@ test('Ein Neubau mit anderer Autobahnnummer braucht keine Änderung an der Impor
   assert.deepEqual(first.network.edges.map(x=>x.id),second.network.edges.map(x=>x.id));
   assert.ok(second.network.edges.filter(x=>x.kind==='mainline').every(x=>x.motorwayRef==='A61'));
 });
+
+test('Gemeinsame Autobahnfahrbahn (z.B. A3/A4) wird EINMAL importiert, beide Nummern bleiben erhalten',()=>{
+  const elements=example('A3; A4');
+  const {network:n,audit}=Strassennetz.importOsmNetwork(elements,{includePublicRoads:true});
+  assert.equal(audit.importedMotorwayWays,1);
+  const main=byWay(n,101);
+  assert.ok(main.length>0);
+  assert.ok(main.every(e=>e.motorwayRef==='A3'&&
+    JSON.stringify(e.motorwayRefs)===JSON.stringify(['A3','A4'])));
+  assert.deepEqual(Strassennetz.validateNetwork(n),[]);
+});
