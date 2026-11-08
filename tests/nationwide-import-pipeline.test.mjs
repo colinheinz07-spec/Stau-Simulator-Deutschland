@@ -12,7 +12,8 @@ function smallXml() {
   return ['<?xml version="1.0" encoding="UTF-8"?>',
     '<osm version="0.6" generator="fixture">',
     '<node id="1" lat="50.0000" lon="7.0000"/>',
-    '<node id="2" lat="50.0000" lon="7.0010"/>',
+    '<node id="2" lat="50.0000" lon="7.0010"><tag k="highway" v="motorway_junction"/>',
+    '<tag k="ref" v="99"/><tag k="name" v="AS Test-Süd"/></node>',
     '<node id="3" lat="50.0000" lon="7.0030"/>',
     '<node id="4" lat="50.0010" lon="7.0010"/>',
     '<node id="5" lat="50.0020" lon="7.0010"/>',
@@ -51,12 +52,15 @@ test('XML -> compressed JSON -> directed motorway/ramp graph -> lazy tiles',()=>
     const decoded=JSON.parse(gunzipSync(readFileSync(json)).toString('utf8'));
     assert.equal(decoded.elements.length,9);
     assert.equal(decoded.elements.filter(e=>e.type==='relation').length,1);
+    assert.equal(decoded.elements.find(e=>e.type==='node'&&e.id===2).tags.ref,'99');
     const build=invoke(process.execPath,['scripts/import-osm.mjs',json,
       '--include-public','--output='+networkPath]);
     assert.match(build.stdout,/OSM Import erfolgreich/);
     const network=JSON.parse(readFileSync(networkPath,'utf8'));
     const audit=JSON.parse(readFileSync(networkPath+'.audit.json','utf8'));
     assert.deepEqual(Strassennetz.validateNetwork(network),[]);
+    assert.equal(network.nodes.find(n=>n.id==='osm-node:2')?.junctionRef,'99');
+    assert.equal(network.nodes.find(n=>n.id==='osm-node:2')?.junctionName,'AS Test-Süd');
     assert.equal(audit.importedMotorwayWays,1);
     assert.equal(audit.importedRampWays,1);
     assert.equal(audit.importedPublicWays,1);
