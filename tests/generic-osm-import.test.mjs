@@ -98,9 +98,9 @@ test('Unvollständige OSM-Snapshots oder komplexe via-way-Restrictions werden ni
     {type:'way',ref:101,role:'from'},{type:'way',ref:102,role:'via'},
     {type:'way',ref:103,role:'to'}
   ]};
-  assert.throws(()=>Strassennetz.importOsmNetwork([...example(),rel]),/Ungeprüfte OSM-Abbiegerelation/);
+  assert.throws(()=>Strassennetz.importOsmNetwork([...example(),rel]),/OSM via-way Relation/);
   const a=Strassennetz.importOsmNetwork([...example(),rel],{strict:false}).audit;
-  assert.ok(a.issues.some(x=>x.includes('Ungeprüfte OSM-Abbiegerelation')));
+  assert.ok(a.issues.some(x=>x.includes('OSM via-way Relation')));
 });
 test('Ein Neubau mit anderer Autobahnnummer braucht keine Änderung an der Importlogik',()=>{
   const first=Strassennetz.importOsmNetwork(example('A7'),{includePublicRoads:true});
@@ -157,8 +157,10 @@ test('Zusammentreffen zweier Autobahnen ohne eindeutiges ref wird NIEMALS gerate
    {includePublicRoads:true,strict:false});
  assert.ok(audit.unassignedMotorwayWays.includes(9104));
  assert.ok(byWay(network,9104).length>0,'physische Hauptfahrbahn darf nicht stillschweigend verschwinden');
- const strict=Strassennetz.importOsmNetwork([...elements,adjacent,ambiguous],{includePublicRoads:true});
- assert.equal(byWay(strict.network,9104)[0].motorwayRef,undefined,
+ const same=Strassennetz.importOsmNetwork([...elements,adjacent,ambiguous],{
+   includePublicRoads:true,strict:false
+ });
+ assert.equal(byWay(same.network,9104)[0].motorwayRef,undefined,
    'unbestimmte Nummer darf nicht aus benachbartem Autobahnkreuz geraten');
 });
 
