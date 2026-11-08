@@ -44,7 +44,7 @@ const PUBLIC = new Set<RoadClass>([
   'secondary','secondary_link','tertiary','tertiary_link',
   'residential','unclassified','living_street'
 ]);
-const REF = /(?:^|[;\s])A\s*(\d{1,3})(?=$|[;\s])/i;
+const REF = /(?:^|[;\s])A\s*(\d{1,3})(?=$|[;\s])/gi;
 const REST = /\b(?:rastst[aä]tte|rastplatz|rastanlage|autohof|service\s*area|pwc)\b/i;
 const BLOCKED = new Set(['no','private']);
 const asPoint = (p:{lat:number;lon:number}):Point => [p.lat,p.lon];
@@ -66,9 +66,9 @@ function wayClass(way:OsmWay,publicRoads:boolean):RoadEdge['kind']|null {
   if (publicRoads && k && PUBLIC.has(k as RoadClass)) return 'public';
   return null;
 }
-function highwayRef(tags:OsmTags):string|undefined {
-  const match=tags.ref?.match(REF);
-  return match?'A'+match[1]:undefined;
+function highwayRefs(tags:OsmTags):string[] {
+  const refs=[...(tags.ref??'').matchAll(REF)].map(x=>'A'+x[1]);
+  return [...new Set(refs)];
 }
 interface AcceptedWay {way:OsmWay;kind:RoadEdge['kind'];points:Point[];tags:OsmTags}
 function parseRestriction(rel:OsmRelation) {
@@ -126,7 +126,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
         issues.push('Widersprüchliche OSM-Geometrie bei Node '+item.nodes[i]);
       nodePositions.set(item.nodes[i]!,at);
     }
-    if(kind==='mainline'&&!highwayRef(tags)){
+    if(kind==='mainline'&&!highwayRefs(tags).length){
       issues.push('Autobahn ohne eindeutiges OSM-ref (nicht geraten): '+item.id);
       continue;
     }
@@ -170,13 +170,13 @@ export function importOsmNetwork(elements:readonly OsmElement[],
           issues.push('Null-/Ringsegment prüfen '+way.id+':'+left+'-'+right);
           continue;
         }
-        const source=highwayRef(tags);
+        const sources=highwayRefs(tags);
         const edge:RoadEdge={
           id:key(way.id,label,srcId,dstId),
           fromNodeId:'osm-node:'+srcId,toNodeId:'osm-node:'+dstId,
           geometry,osmWayIds:[way.id],kind,
           osmClass:tags.highway as RoadClass,
-          ...(source?{motorwayRef:source}:{}),
+          ...(sources.length?{motorwayRef:sources[0],motorwayRefs:sources}:{}),
           lanes:laneCount(tags,kind,label,twoWay),
           lengthM:polylineLengthM(geometry),
           freeSpeedKmh:kind==='mainline'?130:kind==='ramp'?80:50,
