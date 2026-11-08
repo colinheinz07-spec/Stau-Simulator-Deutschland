@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Strassennetz,Umleitungen} from '../dist/index.js';
+import {Strassennetz,Umleitungen,Karte} from '../dist/index.js';
+import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {spawnSync} from 'node:child_process';
+import {gunzipSync} from 'node:zlib';
 
 function example(kind='no_straight_on'){
   const coords=[
@@ -70,4 +75,28 @@ test('invalid or wrong-way via-way relation fails audibly instead of allowing an
  assert.ok(result.audit.issues.some(x=>x.includes('via-way Relation 2001')));
  assert.throws(()=>Strassennetz.importOsmNetwork(source.elements,{includePublicRoads:true}),
    /via-way Relation/);
+});
+
+test('OSM via-way rules survive the region-tile build and remain enforced',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'via-way-tiles-'));
+  try{
+    const original=Strassennetz.importOsmNetwork(example().elements,{includePublicRoads:true}).network;
+    const input=join(dir,'network.json'),output=join(dir,'tiles');
+    writeFileSync(input,JSON.stringify(original));
+    const result=spawnSync(process.execPath,['scripts/shard-network.mjs',input,
+      '--output-dir='+output,'--tile-degrees=.0006'],{cwd:process.cwd(),encoding:'utf8'});
+    assert.equal(result.status,0,result.stderr);
+    const manifest=JSON.parse(readFileSync(join(output,'manifest.json'),'utf8'));
+    assert.equal(manifest.counts.routeRestrictions,1);
+    const tiles=manifest.tiles.map(t=>JSON.parse(gunzipSync(readFileSync(join(output,t.file))).toString('utf8')));
+    const assembled=Karte.assembleVisibleTiles(tiles);
+    assert.deepEqual(assembled.pendingRouteRestrictions,[]);
+    assert.deepEqual(assembled.network.routeRestrictions,original.routeRestrictions);
+    const from=wayEdges(original,101)[0].id,to=wayEdges(original,103)[0].id;
+    assert.equal(Umleitungen.findRoute(assembled.network,from,to),null);
+    assert.deepEqual(Strassennetz.validateNetwork(assembled.network),[]);
+    const partial=Karte.assembleVisibleTiles(tiles.slice(0,1));
+    assert.equal(partial.network.routeRestrictions?.length??0,0,
+      'incomplete cross-region restriction must not masquerade as a fully loaded one');
+  }finally{rmSync(dir,{recursive:true,force:true});}
 });
