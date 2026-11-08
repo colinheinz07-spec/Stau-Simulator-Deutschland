@@ -32,6 +32,8 @@ export interface OsmImportAudit {
   importedMovements:number;
   /** Sichere Referenzableitungen aus exakt gemeinsamen motorway-OSM-Nodes. */
   inferredMotorwayRefs:{wayId:number;refs:string[];evidenceWayIds:number[];evidenceRelationIds?:number[]}[];
+  /** Real physical motorway Ways with no safe motorway number; not hidden. */
+  unassignedMotorwayWays:number[];
   /** Alle direkt aus dem OSM-Snapshot erwarteten Kanten müssen enthalten sein. */
   expectedDirectedSourceSegments:number;
   representedDirectedSourceSegments:number;
@@ -235,8 +237,11 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     }
     if(!changed)break;
   }
-  for(const {way} of mainWays)if(!references.has(way.id))
-    issues.push('Autobahn ohne eindeutiges OSM-ref (kein sicherer gemeinsamer motorway-Node): '+way.id);
+  // A missing A-number is metadata uncertainty, NOT a missing carriageway.
+  // Preserve these motorway-Ways in route graph and render them; do not
+  // silently treat them as a particular Autobahn during an A→B closure.
+  const unassignedMotorwayWays=mainWays.filter(({way})=>!references.has(way.id))
+    .map(({way})=>way.id).sort((a,b)=>a-b);
 
   // Jeder shared node trennt die Straßen, sonst können Auffahrten mitten
   // in einem langen Way keine eigene Kante erhalten.
@@ -406,7 +411,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     importedPublicWays:accepted.filter(w=>w.kind==='public').length,
     importedDirectedEdges:edges.length,
     importedMovements:movements.length,
-    inferredMotorwayRefs,
+    inferredMotorwayRefs,unassignedMotorwayWays,
     expectedDirectedSourceSegments:expectedCoverage.size,
     representedDirectedSourceSegments:segmentCoverage.size,
     unrepresentedSourceSegments,unconnectedRampEnds,excludedWays,issues
