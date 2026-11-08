@@ -2,6 +2,7 @@
 import type {Point, RoadEdge, RoadNetwork, TurnMovement} from './model.js';
 import {distanceM,polylineLengthM} from './01_Strassennetz/geometry.js';
 export {distanceM,polylineLengthM} from './01_Strassennetz/geometry.js';
+export {parseOsmosisPoly,distanceToExtractBoundaryM} from './01_Strassennetz/extract-boundary.js';
 export {importOsmNetwork} from './01_Strassennetz/osm-import.js';
 export type {OsmElement,OsmNode,OsmWay,OsmRelation,OsmImportOptions,OsmImportAudit} from './01_Strassennetz/osm-import.js';
 export type {RoadNode, RoadEdge, RoadNetwork, TurnMovement, RoadKind, RoadClass, Point} from './model.js';
