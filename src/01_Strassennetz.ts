@@ -37,9 +37,12 @@ export function validateNetwork(network: RoadNetwork): string[] {
       errors.push('Rampe ist kein motorway_link ' + e.id);
     if (e.kind === 'public' && (e.osmClass === 'motorway' || e.osmClass === 'motorway_link'))
       errors.push('Autobahn versehentlich als öffentliche Straße klassifiziert ' + e.id);
-    if ((e.kind === 'mainline' || e.motorwayRef !== undefined) &&
-        !/^A\d{1,3}$/.test(e.motorwayRef ?? ''))
+    const refs=e.motorwayRefs??(e.motorwayRef?[e.motorwayRef]:[]);
+    if (e.kind==='mainline' && refs.length===0)
       errors.push('Autobahnreferenz fehlt/ungültig ' + e.id);
+    if (refs.some(ref=>!/^A\d{1,3}$/.test(ref)) ||
+        (e.motorwayRef !== undefined && refs.length>0&&!refs.includes(e.motorwayRef)))
+      errors.push('Ungültige oder widersprüchliche Autobahnreferenzen ' + e.id);
     if (!Number.isInteger(e.lanes) || e.lanes < 1 || e.lanes > 8)
       errors.push('Ungültige Fahrstreifenanzahl ' + e.id);
     if (![e.lengthM, e.freeSpeedKmh, e.capacityPerLaneVph].every(Number.isFinite) ||
