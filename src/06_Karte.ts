@@ -1,6 +1,7 @@
 /** 06 KARTE: Darstellung allein – niemals Fahrzeugbestände oder Verbindungen erfinden. */
 import type {Point, RoadNetwork, RoadKind, SpeedSample} from './model.js';
-import type {SimEvent} from './04_Ereignisse.js';
+import type {SimEvent,CorridorClosure} from './04_Ereignisse.js';
+import {activeNetworkClosures} from './04_Ereignisse.js';
 import {activeEvent} from './04_Ereignisse.js';
 export type TrafficColour = 'free' | 'slow' | 'jam' | 'standstill';
 export function colourAtSpeed(kmh: number): TrafficColour {
@@ -25,9 +26,15 @@ export interface DrawableEdge {
  * Normale Straßen sind keine grünen Autobahnrampen. */
 export function motorwayMapEdges(
   network: RoadNetwork, speeds: readonly SpeedSample[] = [],
-  events: readonly SimEvent[] = [], minute = 0
+  events: readonly SimEvent[] = [], minute = 0,
+  corridors: readonly CorridorClosure[] = []
 ): DrawableEdge[] {
   const known = new Map(speeds.map(s => [s.edgeId,s.speedKmh]));
+  const networkClosures = activeNetworkClosures(network,corridors,minute);
+  const closedByEdge = new Map<string,{fromM:number;toM:number}[]>();
+  for (const span of networkClosures.spans) closedByEdge.set(span.edgeId,[
+    ...(closedByEdge.get(span.edgeId)??[]), {fromM:span.fromM,toM:span.toM}
+  ]);
   return network.edges.filter(e => e.kind !== 'public').map(edge => {
     const measured = known.get(edge.id);
     const speedKmh = measured ?? edge.freeSpeedKmh;
@@ -35,6 +42,7 @@ export function motorwayMapEdges(
       colour:colourAtSpeed(speedKmh),speedKmh,
       source: measured === undefined ? 'initial-free' as const : 'model' as const,
       closures:events.filter(e => e.edgeId === edge.id && e.kind === 'closure' &&
-        activeEvent(e,minute)).map(e => ({fromM:e.fromM,toM:e.toM}))};
+        activeEvent(e,minute)).map(e => ({fromM:e.fromM,toM:e.toM}))
+        .concat(closedByEdge.get(edge.id)??[])};
   });
 }
