@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {gunzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
-import {Strassennetz} from '../dist/index.js';
+import {Strassennetz,Karte} from '../dist/index.js';
 
 function smallXml() {
   return ['<?xml version="1.0" encoding="UTF-8"?>',
@@ -77,10 +77,12 @@ test('XML -> compressed JSON -> directed motorway/ramp graph -> lazy tiles',()=>
     assert.equal(manifest.counts.uniqueEdges,network.edges.length);
     const unique=new Map();
     const ownedMoves=new Map();
+    const tileObjects=[];
     for(const meta of manifest.tiles){
       const bytes=readFileSync(join(tilesDir,meta.file));
       assert.equal(meta.sha256,createHash('sha256').update(bytes).digest('hex'));
       const tile=JSON.parse(gunzipSync(bytes).toString('utf8'));
+      tileObjects.push(tile);
       for(const e of tile.edges){
         if(unique.has(e.id))assert.deepEqual(unique.get(e.id),e,
           'same edge ID cannot hold two conflicting geometries');
@@ -94,6 +96,14 @@ test('XML -> compressed JSON -> directed motorway/ramp graph -> lazy tiles',()=>
     }
     assert.equal(unique.size,network.edges.length);
     assert.equal(ownedMoves.size,network.movements.length);
+    const assembled=Karte.assembleVisibleTiles(tileObjects);
+    assert.deepEqual(Strassennetz.validateNetwork(assembled.network),[]);
+    assert.equal(assembled.pendingMovements.length,0);
+    assert.equal(assembled.network.edges.length,network.edges.length);
+    assert.equal(Karte.motorwayMapEdges(assembled.network).length,
+      network.edges.filter(e=>e.kind!=='public').length);
+    assert.ok(Karte.tilesForViewport(manifest,[49.999,6.999,50.003,7.004]).length>0);
+    assert.deepEqual(Karte.tilesForViewport(manifest,[10,10,11,11]),[]);
   } finally { rmSync(dir,{recursive:true,force:true}); }
 });
 test('Streaming OSM parser refuses untrusted malformed XML instead of producing incomplete graph',()=>{
