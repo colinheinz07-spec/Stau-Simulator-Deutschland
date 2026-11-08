@@ -33,6 +33,18 @@ Die [bundesweite A→B-Sperrlogik](src/04_Ereignisse/netzsperrungen.ts) sperrt d
 
 Dokumentiert und mit neutralen Netztests abgedeckt im [vollständigen Grundschema](docs/GRUNDSCHEMA.md). Ein tatsächliches komplettes OSM-Bundesnetz und die dynamische Fahrzeugausbreitung sind noch nicht importiert beziehungsweise umgesetzt.
 
+## Deutschlandweite OSM-Datenpipeline
+
+**Neu:** [Deutschland-Importanleitung](docs/OSM_DEUTSCHLAND_IMPORT.md) mit einem reproduzierbaren Ablauf für original Geofabrik-`germany-latest.osm.pbf`:
+
+- `scripts/build-germany-network.sh`: Netzaufbau aus dem deutschlandweiten PBF, keine A3/A48-Sonderfalllisten;
+- `scripts/osm-xml-to-json.py`: speicherschonende Umwandlung mit Original-OSM-Knoten und Abbiegerelationen;
+- `scripts/import-osm.mjs`: ursprüngliche Ways zu gerichteten Autobahnen und Rampen, automatisches Lücken-Audit; bei Fehlern bleibt ein `.failed-audit.json` zurück;
+- `scripts/shard-network.mjs`: Karte in kleinere räumliche `.json.gz`-Kacheln aufteilen;
+- `src/06_Karte/network-tiles.ts`: Kartenkacheln anhand stabiler IDs zusammenführen, echte Cross-Tile-Fahrbeziehungen erhalten, Duplikate verhindern.
+
+Die echten Deutschland-Rohdaten sind mehrere GB groß und **nicht in GitHub gespeichert**. Der vollständige Import muss auf einem ausreichend leistungsfähigen Rechner/Build-Server laufen; die bisherigen CI-Tests nutzen kleine OSM-Testdaten. Die mobile Oberfläche und der bundesweite Echtbetrieb sind noch nicht fertig.
+
 ## Entwicklungsstand
 Das Projekt befindet sich in **Phase 1: Kernarchitektur und prüfbare Basismodule**. Es enthält aktuell **noch keine fertige interaktive Karte und kein deutschlandweites Straßennetz**. Tests nutzen absichtlich ein als *synthetisch* gekennzeichnetes kleines Prüfnetz. Eine echte Verkehrs-Engine mit Fahrzeugbewegung über alle Knoten folgt erst nach dem OSM-Netzimport.
 
