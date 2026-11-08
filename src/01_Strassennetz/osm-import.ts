@@ -4,6 +4,7 @@
  */
 import {distanceM,polylineLengthM} from './geometry.js';
 import {validateNetwork} from '../01_Strassennetz.js';
+import {compileViaWayRestrictions,type ViaWayRule} from './via-way-restrictions.js';
 import type {Point,RoadClass,RoadEdge,RoadNetwork,RoadNode,TurnMovement} from '../model.js';
 
 type OsmTags = Readonly<Record<string,string>>;
@@ -30,6 +31,8 @@ export interface OsmImportAudit {
   importedPublicWays:number;
   importedDirectedEdges:number;
   importedMovements:number;
+  compiledViaWayRestrictions:number;
+  deferredViaWayRelations:number[];
   /** Sichere Referenzableitungen aus exakt gemeinsamen motorway-OSM-Nodes. */
   inferredMotorwayRefs:{wayId:number;refs:string[];evidenceWayIds:number[];evidenceRelationIds?:number[]}[];
   /** Real physical motorway Ways with no safe motorway number; not hidden. */
@@ -326,11 +329,21 @@ export function importOsmNetwork(elements:readonly OsmElement[],
   // must still stop the strict import instead of quietly being ignored.
   const acceptedWayIds=new Set(accepted.map(x=>x.way.id));
   const nodeRestrictions=new Map<number,NonNullable<ReturnType<typeof parseRestriction>>[]>();
+  const viaWaySources:ViaWayRule[]=[];
   for(const {id,parsed:r} of restrictions){
     if(!r.from.some(m=>acceptedWayIds.has(m.ref)))continue;
     if(r.except.split(/[;, ]+/).some(v=>['motorcar','motor_vehicle','vehicle'].includes(v)))continue;
-    if(r.conditional||r.from.length!==1||r.to.length!==1||r.via.length!==1||
-      r.via[0]?.type!=='node'||(!r.code.startsWith('no_')&&!r.code.startsWith('only_'))){
+    const commonShape=r.from.length===1&&r.to.length===1&&
+      (r.code.startsWith('no_')||r.code.startsWith('only_'));
+    if(!r.conditional&&commonShape&&r.via.length>0&&r.via.every(v=>v.type==='way')){
+      viaWaySources.push({
+        id,kind:r.code.startsWith('no_')?'no':'only',
+        fromWayId:r.from[0]!.ref,viaWayIds:r.via.map(v=>v.ref),
+        toWayId:r.to[0]!.ref
+      });
+      continue;
+    }
+    if(r.conditional||!commonShape||r.via.length!==1||r.via[0]?.type!=='node'){
       issues.push('Ungeprüfte OSM-Abbiegerelation '+id+' ('+r.code+', via='+
         r.via.map(v=>v.type+':'+v.ref).join(',')+', from='+r.from.map(v=>v.ref).join(',')+
         ', to='+r.to.map(v=>v.ref).join(',')+')');
@@ -395,11 +408,18 @@ export function importOsmNetwork(elements:readonly OsmElement[],
       });
     }
   }
+  const viaWay=compileViaWayRestrictions(viaWaySources,
+    accepted.map(({way})=>({
+      id:way.id,firstNodeId:way.nodes[0]!,lastNodeId:way.nodes[way.nodes.length-1]!
+    })),edges,movements);
+  issues.push(...viaWay.errors);
   const network:RoadNetwork={schemaVersion:1,
     nodes:[...nodes.values()].sort((a,b)=>a.id.localeCompare(b.id)),
     edges:edges.sort((a,b)=>a.id.localeCompare(b.id)),
     movements:movements.sort((a,b)=>a.incomingEdgeId.localeCompare(b.incomingEdgeId)||
-      a.outgoingEdgeId.localeCompare(b.outgoingEdgeId))};
+      a.outgoingEdgeId.localeCompare(b.outgoingEdgeId)),
+    ...(viaWay.restrictions.length?{routeRestrictions:viaWay.restrictions}:{})
+  };
   const unrepresentedSourceSegments=[...expectedCoverage].filter(k=>!segmentCoverage.has(k)).sort();
   if(unrepresentedSourceSegments.length)
     issues.push('Nicht gezeichnete motorway-/motorway_link-/Straßenstücke: '+unrepresentedSourceSegments.length);
@@ -411,6 +431,8 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     importedPublicWays:accepted.filter(w=>w.kind==='public').length,
     importedDirectedEdges:edges.length,
     importedMovements:movements.length,
+    compiledViaWayRestrictions:viaWay.restrictions.length,
+    deferredViaWayRelations:viaWay.deferredIds,
     inferredMotorwayRefs,unassignedMotorwayWays,
     expectedDirectedSourceSegments:expectedCoverage.size,
     representedDirectedSourceSegments:segmentCoverage.size,
