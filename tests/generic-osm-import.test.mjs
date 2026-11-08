@@ -18,8 +18,7 @@ function example(ref='A7'){
     {type:'way',id:105,nodes:[6,8],tags:{highway:'secondary',lanes:'2'}},
     {type:'way',id:106,nodes:[2,9],tags:{highway:'motorway_link',destination:'Raststätte Muster'}},
     {type:'way',id:107,nodes:[11,4],tags:{highway:'motorway_link',oneway:'-1'}},
-    // Kartenlinien berühren sich beinahe, aber OSM-Node 10 ist NICHT Node 3.
-    {type:'way',id:108,nodes:[10,9],tags:{highway:'motorway_link',oneway:'yes'}}
+    {type:'way',id:109,nodes:[11,8],tags:{highway:'secondary',lanes:'2'}}
   ];
   return [...nodes,...ways];
 }
@@ -29,8 +28,8 @@ test('Importer ist bundesweit und erfasst alle motorway_link-Wege mit originaler
     const {network:n,audit}=Strassennetz.importOsmNetwork(example(ref),{includePublicRoads:true});
     assert.deepEqual(Strassennetz.validateNetwork(n),[]);
     assert.equal(audit.importedMotorwayWays,1);
-    assert.equal(audit.importedRampWays,4);
-    assert.equal(audit.importedPublicWays,2);
+    assert.equal(audit.importedRampWays,3);
+    assert.equal(audit.importedPublicWays,3);
     assert.ok(audit.excludedWays.some(x=>x.id===106));
     assert.equal(audit.unrepresentedSourceSegments.length,0);
     assert.equal(audit.representedDirectedSourceSegments,audit.expectedDirectedSourceSegments);
@@ -38,7 +37,7 @@ test('Importer ist bundesweit und erfasst alle motorway_link-Wege mit originaler
     assert.equal(byWay(n,102).length,1);
     assert.equal(byWay(n,103).length,1);
     assert.equal(byWay(n,107).length,1);
-    assert.equal(byWay(n,108).length,1,'auch nicht ans Netz angeschlossene Quellrampen werden erfasst');
+    assert.equal(audit.unconnectedRampEnds.length,0,'echte Zufahrten müssen bis zur Ortsstraße verbunden sein');
     assert.equal(byWay(n,102)[0].motorwayRef,undefined,'keine Autobahn-Nummer auf OSM-Link erfinden');
     assert.equal(byWay(n,107)[0].fromNodeId,'osm-node:4','oneway=-1 muss umkehren');
     assert.deepEqual(new Set(Karte.motorwayMapEdges(n).map(x=>x.edgeId)),
@@ -46,10 +45,17 @@ test('Importer ist bundesweit und erfasst alle motorway_link-Wege mit originaler
   }
 });
 test('OSM Node ist Anschluss, nicht allein die geografische Nähe oder pinke Kartenfarbe',()=>{
-  const {network:n}=Strassennetz.importOsmNetwork(example(),{includePublicRoads:true});
+  const disconnected={type:'way',id:108,nodes:[10,9],tags:{highway:'motorway_link',oneway:'yes'}};
+  const input=[...example(),disconnected];
+  assert.throws(()=>Strassennetz.importOsmNetwork(input,{includePublicRoads:true}),
+    /Rampenenden ohne nachgewiesene/,'ein fehlendes Rampenstück darf den Import nicht bestehen');
+  const {network:n,audit}=Strassennetz.importOsmNetwork(input,{
+    includePublicRoads:true,strict:false
+  });
   const from=byWay(n,101).find(e=>e.toNodeId==='osm-node:3');
   const near=byWay(n,108)[0];
   assert.ok(from && near);
+  assert.equal(audit.unconnectedRampEnds.length,2);
   assert.ok(!n.movements.some(m=>m.incomingEdgeId===from.id&&m.outgoingEdgeId===near.id));
   assert.equal(Umleitungen.findRoute(n,from.id,near.id),null);
 });
