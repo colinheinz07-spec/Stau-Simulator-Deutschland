@@ -34,6 +34,8 @@ export interface OsmImportAudit {
   expectedDirectedSourceSegments:number;
   representedDirectedSourceSegments:number;
   unrepresentedSourceSegments:string[];
+  /** Unbekannte Rampenenden werden gemeldet statt mit gezeichneten Geraden verbunden. */
+  unconnectedRampEnds:{edgeId:string;nodeId:string;terminal:'start'|'end'}[];
   excludedWays:readonly {id:number;reason:string}[];
   issues:readonly string[];
 }
@@ -210,6 +212,24 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     const nodeId=r.via[0]!.ref;
     nodeRestrictions.set(nodeId,[...(nodeRestrictions.get(nodeId)??[]),r]);
   }
+  // Prüfe echte Enden, nicht nur Way-IDs. Ein Rampenende darf auf der
+  // normalen Ortsstraße liegen, auch wenn deren Graph noch nicht geladen ist.
+  // Ohne solche belegten Kontakte ist der OSM-Snapshot unvollständig.
+  const externalPublicNodes=new Set<number>();
+  for(const item of elements)if(item.type==='way'&&
+    PUBLIC.has(item.tags?.highway as RoadClass)&&
+    !['access','vehicle','motor_vehicle','motorcar'].some(t=>BLOCKED.has(item.tags?.[t]??'')))
+    for(const nodeId of item.nodes)externalPublicNodes.add(nodeId);
+  const unconnectedRampEnds:{edgeId:string;nodeId:string;terminal:'start'|'end'}[]=[];
+  for(const e of edges)if(e.kind==='ramp'){
+    const startId=Number(e.fromNodeId.slice(9)),endId=Number(e.toNodeId.slice(9));
+    if(!(byEnd.get(e.fromNodeId)?.length)&&!externalPublicNodes.has(startId))
+      unconnectedRampEnds.push({edgeId:e.id,nodeId:e.fromNodeId,terminal:'start'});
+    if(!(byStart.get(e.toNodeId)?.length)&&!externalPublicNodes.has(endId))
+      unconnectedRampEnds.push({edgeId:e.id,nodeId:e.toNodeId,terminal:'end'});
+  }
+  if(unconnectedRampEnds.length)
+    issues.push('Rampenenden ohne nachgewiesene Netz-/Ortsstraßenverbindung: '+unconnectedRampEnds.length);
   const movements:TurnMovement[]=[];
   for(const [nodeId,incoming] of byEnd){
     const next=byStart.get(nodeId)??[];
@@ -246,7 +266,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     importedMovements:movements.length,
     expectedDirectedSourceSegments:expectedCoverage.size,
     representedDirectedSourceSegments:segmentCoverage.size,
-    unrepresentedSourceSegments,excludedWays,issues
+    unrepresentedSourceSegments,unconnectedRampEnds,excludedWays,issues
   };
   if(strict&&issues.length)throw new Error('OSM-Netzimport unvollständig:\n'+issues.join('\n'));
   return {network,audit};
