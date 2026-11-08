@@ -132,3 +132,29 @@ test('Bundesweite fremde Abbiegerelationen dürfen den Autobahn-only-Import nich
   const {audit}=Strassennetz.importOsmNetwork([...example(),irrelevant]);
   assert.deepEqual(audit.issues,[]);
 });
+
+test('Fehlende Autobahnnummer wird nur durch reale gemeinsame Hauptfahrbahn-OSM-Nodes bestimmt',()=>{
+  const elements=example();
+  const main=elements.find(e=>e.type==='way'&&e.id===101);
+  main.nodes=[1,2];
+  const extension={type:'way',id:9102,nodes:[2,3],
+    tags:{highway:'motorway',oneway:'yes',lanes:'3'}};
+  const {network,audit}=Strassennetz.importOsmNetwork([...elements,extension],{includePublicRoads:true});
+  const inferred=byWay(network,9102)[0];
+  assert.equal(inferred.motorwayRef,'A7');
+  assert.deepEqual(inferred.motorwayRefs,['A7']);
+  assert.ok(audit.inferredMotorwayRefs.some(x=>x.wayId===9102&&x.evidenceWayIds.includes(101)));
+});
+test('Zusammentreffen zweier Autobahnen ohne eindeutiges ref wird NIEMALS geraten',()=>{
+ const elements=example();
+ const main=elements.find(e=>e.type==='way'&&e.id===101);
+ main.nodes=[1,2];
+ const adjacent={type:'way',id:9103,nodes:[2,9],tags:{highway:'motorway',ref:'A4',oneway:'yes'}};
+ const ambiguous={type:'way',id:9104,nodes:[2,3],tags:{highway:'motorway',oneway:'yes'}};
+ const {network,audit}=Strassennetz.importOsmNetwork([...elements,adjacent,ambiguous],
+   {includePublicRoads:true,strict:false});
+ assert.ok(audit.issues.some(x=>x.includes('kein sicherer gemeinsamer motorway-Node')&&x.includes('9104')));
+ assert.ok(byWay(network,9104).length>0,'physische Hauptfahrbahn darf nicht stillschweigend verschwinden');
+ assert.throws(()=>Strassennetz.importOsmNetwork([...elements,adjacent,ambiguous],{includePublicRoads:true}),
+   /Autobahn ohne eindeutiges OSM-ref/);
+});
