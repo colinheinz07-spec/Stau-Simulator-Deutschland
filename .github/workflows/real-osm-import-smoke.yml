@@ -29,6 +29,26 @@ jobs:
           test -s /tmp/bremen-latest.osm.pbf
       - name: Allgemeinen bundesweiten Import und Kachelbau mit echtem PBF prüfen
         run: bash scripts/build-germany-network.sh /tmp/bremen-latest.osm.pbf /tmp/real-osm-smoke
+      - name: Gefundene Netzprobleme oder übernommene Ref-Nummern zusammenfassen
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          for name in ('generated-network.json.failed-audit.json',
+                       'generated-network.json.audit.json'):
+              path=pathlib.Path('/tmp/real-osm-smoke')/name
+              if not path.exists():
+                  continue
+              report=json.loads(path.read_text())
+              print('AUDIT DATEI:', name)
+              print('Hauptfahrbahnen:', report.get('importedMotorwayWays'))
+              print('Rampen:', report.get('importedRampWays'))
+              print('Eindeutig geerbte OSM-Nummern:',len(report.get('inferredMotorwayRefs',[])))
+              print('Ungeloeste Rampenenden:',len(report.get('unconnectedRampEnds',[])))
+              print('Fehler insgesamt:',len(report.get('issues',[])))
+              for issue in report.get('issues',[])[:40]:
+                  print('  -',issue)
+          PY
       - name: OSM-Audit und Kachelmanifest dokumentieren
         if: always()
         uses: actions/upload-artifact@v4
