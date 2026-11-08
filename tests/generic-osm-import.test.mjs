@@ -119,3 +119,16 @@ test('Gemeinsame Autobahnfahrbahn (z.B. A3/A4) wird EINMAL importiert, beide Num
     JSON.stringify(e.motorwayRefs)===JSON.stringify(['A3','A4'])));
   assert.deepEqual(Strassennetz.validateNetwork(n),[]);
 });
+
+test('Bundesweite fremde Abbiegerelationen dürfen den Autobahn-only-Import nicht blockieren',()=>{
+  const irrelevant={type:'relation',id:9001,
+    tags:{type:'restriction',restriction:'no_left_turn:conditional'},
+    members:[
+      {type:'way',ref:50000000,role:'from'},
+      {type:'way',ref:50000001,role:'via'},
+      {type:'way',ref:50000002,role:'to'}
+    ]
+  };
+  const {audit}=Strassennetz.importOsmNetwork([...example(),irrelevant]);
+  assert.deepEqual(audit.issues,[]);
+});
