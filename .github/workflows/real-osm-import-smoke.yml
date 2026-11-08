@@ -28,8 +28,12 @@ jobs:
             -o /tmp/bremen-latest.osm.pbf \
             https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
           test -s /tmp/bremen-latest.osm.pbf
+          curl -fLsS --retry 3 --max-time 60 \
+            -o /tmp/bremen.poly \
+            https://download.geofabrik.de/europe/germany/bremen.poly
+          test -s /tmp/bremen.poly
       - name: Allgemeinen bundesweiten Import und Kachelbau mit echtem PBF prüfen
-        run: bash scripts/build-germany-network.sh /tmp/bremen-latest.osm.pbf /tmp/real-osm-smoke
+        run: bash scripts/build-germany-network.sh /tmp/bremen-latest.osm.pbf /tmp/real-osm-smoke --boundary-poly=/tmp/bremen.poly
       - name: Gefundene Netzprobleme oder übernommene Ref-Nummern zusammenfassen
         if: always()
         run: |
@@ -51,6 +55,7 @@ jobs:
               print('Eindeutig geerbte OSM-Nummern:',len(report.get('inferredMotorwayRefs',[])))
               for inherited in report.get('inferredMotorwayRefs',[])[:15]:
                   print('  geerbt:', inherited)
+              print('Bestätigte Extraktgrenzen:', report.get('extractBoundaryRampEnds'))
               print('Ungeloeste Rampenenden:',len(report.get('unconnectedRampEnds',[])))
               for ramp in report.get('unconnectedRampEnds',[])[:20]:
                   print('  rampenende:', ramp)
