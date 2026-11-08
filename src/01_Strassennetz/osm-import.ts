@@ -7,7 +7,7 @@ import {validateNetwork} from '../01_Strassennetz.js';
 import type {Point,RoadClass,RoadEdge,RoadNetwork,RoadNode,TurnMovement} from '../model.js';
 
 type OsmTags = Readonly<Record<string,string>>;
-export interface OsmNode {type:'node';id:number;lat:number;lon:number}
+export interface OsmNode {type:'node';id:number;lat:number;lon:number;tags?:OsmTags}
 export interface OsmWay {
   type:'way';id:number;nodes:readonly number[];tags?:OsmTags;
   geometry?:readonly {lat:number;lon:number}[];
@@ -92,11 +92,14 @@ export function importOsmNetwork(elements:readonly OsmElement[],
   const strict=options.strict!==false;
   const issues:string[]=[], excludedWays:{id:number;reason:string}[]=[];
   const nodePositions=new Map<number,Point>();
+  const junctionNames=new Map<number,{ref?:string;name?:string}>();
   const wayIds=new Set<number>();
   for(const el of elements)if(el.type==='node'){
     const old=nodePositions.get(el.id),at=asPoint(el);
     if(old && distanceM(old,at)>.5) issues.push('Widersprüchliche OSM-Node-Koordinate '+el.id);
     nodePositions.set(el.id,at);
+    if(el.tags?.highway==='motorway_junction')
+      junctionNames.set(el.id,{ref:el.tags.ref,name:el.tags.name});
   }
   const accepted:AcceptedWay[]=[];
   for(const item of elements){
@@ -196,7 +199,8 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     const directions:(readonly ['f'|'b',boolean])[]=
       twoWay?[['f',false],['b',true]]:[reversed?['b',true]:['f',false]];
     const cuts=[0];
-    for(let i=1;i<way.nodes.length-1;i++)if(shared.has(way.nodes[i]!))cuts.push(i);
+    for(let i=1;i<way.nodes.length-1;i++)
+      if(shared.has(way.nodes[i]!) || junctionNames.has(way.nodes[i]!))cuts.push(i);
     cuts.push(way.nodes.length-1);
     for(const [label,reverse] of directions){
       for(let i=1;i<way.nodes.length;i++){
@@ -227,8 +231,14 @@ export function importOsmNetwork(elements:readonly OsmElement[],
           capacityPerLaneVph:kind==='mainline'?2100:kind==='ramp'?1500:900
         };
         edges.push(edge);
-        nodes.set(srcId,{id:edge.fromNodeId,point:points[first]!,osmNodeId:srcId});
-        nodes.set(dstId,{id:edge.toNodeId,point:points[last]!,osmNodeId:dstId});
+        const startJunction=junctionNames.get(srcId);
+        const endJunction=junctionNames.get(dstId);
+        nodes.set(srcId,{id:edge.fromNodeId,point:points[first]!,osmNodeId:srcId,
+          ...(startJunction?.ref?{junctionRef:startJunction.ref}:{}),
+          ...(startJunction?.name?{junctionName:startJunction.name}:{})});
+        nodes.set(dstId,{id:edge.toNodeId,point:points[last]!,osmNodeId:dstId,
+          ...(endJunction?.ref?{junctionRef:endJunction.ref}:{}),
+          ...(endJunction?.name?{junctionName:endJunction.name}:{})});
         for(let j=1;j<order.length;j++){
           const a=way.nodes[order[j-1]!]!,b=way.nodes[order[j]!]!;
           segmentCoverage.add(way.id+':'+label+':'+a+'>'+b);
