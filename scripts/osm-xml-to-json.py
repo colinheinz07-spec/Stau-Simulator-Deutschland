@@ -35,6 +35,9 @@ def xml_objects(stream):
         if element.tag == "node":
             item["lat"] = float(element.attrib["lat"])
             item["lon"] = float(element.attrib["lon"])
+            node_tags = {tag.attrib["k"]: tag.attrib["v"] for tag in element.findall("tag")}
+            if node_tags:
+                item["tags"] = node_tags
         else:
             tags = {el.attrib["k"]: el.attrib["v"] for el in element.findall("tag")}
             if tags:
