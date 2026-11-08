@@ -37,3 +37,26 @@ test('Only a genuinely proven PBF clipping-border ramp is allowed to terminate e
  });
  assert.equal(tooTight.audit.unconnectedRampEnds.length,1);
 });
+
+test('Physical motorway/ramp fork with SAME OSM start node is a verified graph source, not a phantom gap',()=>{
+  const points=[
+   {type:'node',id:1,lat:50.1,lon:7.1},
+   {type:'node',id:2,lat:50.1,lon:7.11},
+   {type:'node',id:3,lat:50.11,lon:7.11},
+   {type:'node',id:4,lat:50.12,lon:7.11}
+  ];
+  const ways=[
+   {type:'way',id:100,nodes:[1,2],tags:{highway:'motorway',ref:'A61',oneway:'yes'}},
+   {type:'way',id:101,nodes:[1,3],tags:{highway:'motorway_link',oneway:'yes'}},
+   {type:'way',id:102,nodes:[3,4],tags:{highway:'secondary',oneway:'yes'}}
+  ];
+  const {network,audit}=Strassennetz.importOsmNetwork([...points,...ways],{includePublicRoads:true});
+  assert.equal(audit.unconnectedRampEnds.length,0);
+  assert.equal(audit.sourceStartRampEnds.length,1);
+  assert.equal(audit.sourceStartRampEnds[0].nodeId,'osm-node:1');
+  const ramp=network.edges.find(e=>e.osmWayIds.includes(101));
+  assert.ok(ramp);
+  assert.ok(!network.movements.some(m=>m.outgoingEdgeId===ramp.id&&
+    network.edges.find(e=>e.id===m.incomingEdgeId)?.osmWayIds.includes(100)),
+    'a common BEGINNING is not a real transfer from motorway to ramp');
+});
