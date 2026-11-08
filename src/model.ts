@@ -4,7 +4,7 @@ export type RoadKind = 'mainline' | 'ramp' | 'public';
 export type RoadClass =
   | 'motorway' | 'motorway_link' | 'trunk' | 'trunk_link'
   | 'primary' | 'primary_link' | 'secondary' | 'secondary_link'
-  | 'tertiary' | 'tertiary_link' | 'residential' | 'unclassified';
+  | 'tertiary' | 'tertiary_link' | 'residential' | 'unclassified' | 'living_street';
 
 export interface RoadNode {
   /** Stabile ID aus dem OSM-Datensatz oder eigene, eindeutig markierte Grenz-ID. */
