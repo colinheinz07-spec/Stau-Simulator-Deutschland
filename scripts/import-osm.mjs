@@ -3,7 +3,7 @@
  * Erwartet OSM-JSON (elements:[node/way/relation...]) mit allen Knoten und
  * Abbiegerelationen des gewählten Gebietes. Niemals geometrische Lücken raten.
  */
-import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import {dirname,resolve} from 'node:path';
 import {gunzipSync} from 'node:zlib';
 import {Strassennetz} from '../dist/index.js';
@@ -22,11 +22,21 @@ try{
   const raw=JSON.parse(input.endsWith('.gz')?gunzipSync(bytes).toString('utf8'):bytes.toString('utf8'));
   const elements=Array.isArray(raw)?raw:raw.elements;
   if(!Array.isArray(elements))throw Error('Snapshot enthält kein elements-Array');
-  // strict=true: unvollständige OSM-Knoten, Rampenenden oder Restriktionen
-  // dürfen nicht als vollständig gezeichnetes Netz veröffentlicht werden.
-  const {network,audit}=Strassennetz.importOsmNetwork(elements,{includePublicRoads,strict:true});
+  // Always produce the detailed audit, even when strict import would fail.
+  // Only publish the graph after ALL geometry and topology checks pass.
+  const {network,audit}=Strassennetz.importOsmNetwork(elements,{includePublicRoads,strict:false});
   await mkdir(dirname(resolve(output)),{recursive:true});
-  await writeFile(resolve(output),JSON.stringify(network)+'\n');
+  if (audit.issues.length) {
+    const failed=resolve(output+'.failed-audit.json');
+    await writeFile(failed,JSON.stringify(audit,null,2)+'\n');
+    throw Error('OSM-Netzimport nicht veröffentlichbar: '+audit.issues.length+
+      ' Geometrie-/Topologiefehler. Prüfbericht: '+failed+
+      '\n'+audit.issues.slice(0,8).join('\n'));
+  }
+  // Atomic replacement: no half-written graph if disk IO is interrupted.
+  const temporary=resolve(output+'.tmp');
+  await writeFile(temporary,JSON.stringify(network)+'\n');
+  await rename(temporary,resolve(output));
   await writeFile(resolve(output+'.audit.json'),JSON.stringify(audit,null,2)+'\n');
   console.log('OSM Import erfolgreich:',JSON.stringify({
     mainlineWays:audit.importedMotorwayWays,
