@@ -95,38 +95,44 @@ export function planCorridorClosure(network: RoadNetwork, closure: CorridorClosu
   if (!closedMainline.size)
     throw new Error('Keine gerichtete Autobahnverbindung zwischen den gewählten Sperrgrenzen');
 
-  // Rampen sind ausschließlich dann komplett geschlossen, wenn sie IN die
-  // Sperrung führen und kein erreichbarer legaler offener Ast existiert.
-  // Eine gemeinsame Zufahrt mit offener Alternative bleibt bis zur Gabel offen.
+  // Rückwärts alle gerichteten Vorgänger bis zu den geschlossenen Haupt-
+  // fahrbahnen ablaufen. Auch eine Rampe, die zunächst auf eine OFFENE
+  // Autobahn führt, kann tatsächlich nur noch an A in die Sperrung führen.
   const back = reverseIndex(network.movements);
   const movementNext = new Map<string,string[]>();
   for (const m of network.movements) if (m.allowed) {
     const arr = movementNext.get(m.incomingEdgeId) ?? [];
     arr.push(m.outgoingEdgeId);
-    movementNext.set(m.incomingEdgeId, arr);
+    movementNext.set(m.incomingEdgeId,arr);
   }
-  const reachableUpstreamRamps = (sources: Iterable<string>): Set<string> => {
-    const found = new Set<string>(), seen = new Set<string>(), q = [...sources];
-    while (q.length) {
-      const edgeId = q.pop()!;
-      if (seen.has(edgeId)) continue;
-      seen.add(edgeId);
-      for (const parent of back.get(edgeId) ?? []) {
-        const edge = edges.get(parent);
-        if (!edge || edge.kind !== 'ramp') continue;
-        found.add(parent);
-        q.push(parent);
+  const upstreamWithoutPublicRoads = (sources: Iterable<string>): Set<string> => {
+    const seen = new Set<string>(), pending = [...sources];
+    while (pending.length) {
+      const current = pending.pop()!;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const previous of back.get(current) ?? []) {
+        const edge = edges.get(previous);
+        if (edge && edge.kind !== 'public' && !closedMainline.has(previous))
+          pending.push(previous);
       }
     }
-    return found;
+    return seen;
   };
-  const towardsClosure = reachableUpstreamRamps(closedMainline);
-  const safeTerminals = network.edges
-    .filter(e => !closedMainline.has(e.id) && (
-      e.kind !== 'ramp' || !(movementNext.get(e.id)?.length)
-    )).map(e => e.id);
-  const canEscape = reachableUpstreamRamps(safeTerminals);
-  const closedRamps = new Set([...towardsClosure].filter(id => !canEscape.has(id)));
+  const towardsClosure = upstreamWithoutPublicRoads(closedMainline);
+  // Öffentliche Straßen sowie echte offene Netzgrenzen sind zulässige
+  // Rettungs-/Alternativziele. Eine vor A liegende Hauptfahrbahn, die
+  // ausschliesslich in die Sperrung führt, ist dagegen KEIN offener
+  // Ausweichweg (dort darf sich nur vorhandener Verkehr stauen).
+  const openTerminals = network.edges.filter(edge =>
+    !closedMainline.has(edge.id) && (
+      edge.kind === 'public' || (movementNext.get(edge.id)?.length??0)===0
+    )).map(edge=>edge.id);
+  const hasLegalEscape = upstreamWithoutPublicRoads(openTerminals);
+  const closedRamps = new Set(network.edges.filter(edge =>
+    edge.kind === 'ramp' && towardsClosure.has(edge.id) &&
+    !hasLegalEscape.has(edge.id)
+  ).map(edge=>edge.id));
   const closedEdges = new Set([...closedMainline, ...closedRamps]);
   const blocked = network.movements.filter(m => m.allowed &&
     closedEdges.has(m.outgoingEdgeId) && !closedEdges.has(m.incomingEdgeId));
