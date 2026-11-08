@@ -1,4 +1,4 @@
-/** 06 KARTE: Darstellung בלבד – niemals Fahrzeugbestände oder Verbindungen erfinden. */
+/** 06 KARTE: Darstellung allein – niemals Fahrzeugbestände oder Verbindungen erfinden. */
 import type {Point, RoadNetwork, RoadKind, SpeedSample} from './model.js';
 import type {SimEvent} from './04_Ereignisse.js';
 import {activeEvent} from './04_Ereignisse.js';
