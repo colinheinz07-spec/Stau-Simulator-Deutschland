@@ -49,3 +49,41 @@ Jedes gerichtete **RoadEdge** hat eine stabile ID, Anfangs-/Endknoten, OSM-Quell
 4. Ereignisse, echte Umleitungsentscheidungen, Ausfahrtsnachfrage und Sperrpfade.
 5. Von denselben Segment-IDs gespeiste Karte, Zoom- und Stauanzeige.
 6. Regionale Ausweitung bis deutschlandweit; danach Performance-/Lasttests und Play-Store-Reife.
+
+## Phase 2 – bundesweit gleicher OSM-Netzimport (bereits im Repository)
+
+**Wichtig:** Der Importer ist *generisch*, das Bundesnetz ist noch nicht geladen. Er verarbeitet jeden passenden **vollständigen OSM-Snapshot**, nicht nur A3/A48. Originalknoten-/Way-IDs und die Weg-Geometrie sind die einzige Grundlage. Unter `src/01_Strassennetz/osm-import.ts` werden:
+
+- alle enthaltenen zulässigen `motorway` und `motorway_link` automatisch gelesen, unabhängig vom Namen der Autobahn oder Anschlussstelle;
+- Fahrwege an wirklich gemeinsamen OSM-Knoten geteilt (einschließlich kurzer Auffahrts-/Abfahrtssegmente);
+- `oneway`, `oneway=-1`, ausdrücklich zweirichtungsfähige Wege und die Fahrstreifenzahl ausgewertet;
+- motorcar-Abbiegebeschränkungen vom OSM-Typ `from-way → via-node → to-way` angewendet;
+- gemeinsame Autobahnfahrbahnen mit mehreren Nummern (z. B. A3/A4) **einmal physisch** gespeichert, aber jeder zugehörigen Autobahnnummer zugeordnet;
+- echte Nicht-Autobahn-Straßen auf Wunsch als separate `public`-Fahrwege für Umleitungsnetze importiert, nicht als grüne Autobahn;
+- jedes erwartete originale OSM-Teilsegment mit den tatsächlich erzeugten gerichteten Segmenten verglichen;
+- ungeklärte Rampenenden als Fehler gemeldet, nicht mit geraden Verbindungsstücken überschrieben.
+
+**Fehler müssen sichtbar sein:** Fehlende Knoten, widersprüchliche Geometrie, unverbundene Rampen, fehlende eindeutige Hauptfahrbahnreferenzen und derzeit nicht implementierte komplizierte Abbiegerelationen (*via-way, conditional*) stoppen bei `strict=true` den Import. Diese Einschränkung ist absichtlich: Der neue Simulator darf seine Netzqualität nicht vortäuschen.
+
+Der Import läuft offline mit Node.js 22+ nach `npm install` und `npm run build`:
+
+```bash
+node scripts/import-osm.mjs data/mein-osm-snapshot.json --include-public --output=data/generated-network.json
+```
+
+Der Quellsnapshot muss alle benötigten Nodes, Ways und Restrictions des gewünschten Gebiets enthalten. Output sind `generated-network.json` und `generated-network.json.audit.json`. Ein neuer Autobahnabschnitt wird so über **Daten**, nicht über neue Regeln importiert. Ohne `--include-public` wird nur die Autobahn samt Rampen importiert; Anschlussstellen können trotzdem nachweislich an unmodellierte öffentliche OSM-Straßen enden. Für reale Umleitungen muss der separate öffentliche Straßengraph tatsächlich vorhanden sein.
+
+## Phase 2 – bundesweit einheitliche Sperrung A→B (bereits implementierter Topologiekern)
+
+Unter `src/04_Ereignisse/netzsperrungen.ts` gibt es eine **CorridorClosure** mit `motorwayRef`, `fromNodeId`, `toNodeId` und Zeitplan. Die Knoten müssen im gerichteten Netz vorhanden sein; bei Positionsklicks zwischen Knoten muss der Importer später die betroffene Fahrbahn passend aufteilen.
+
+1. Alle gerichteten Hauptfahrbahnsegmente auf legal erreichbaren Wegen zwischen A und B werden gesperrt, auch parallele Fahrbahnzweige. Die Gegenrichtung bleibt offen.
+2. Das System läuft rückwärts über die **tatsächlich erlaubten** Rampen-/Autobahn-Beziehungen: Zufahrtsketten, die nur in den gesperrten Bereich führen, werden vollständig geschlossen.
+3. Eine gemeinsame vorgelagerte Zufahrt bleibt **nur dann** offen, wenn eine weiterführende, legale Route zu einem echten offenen Ausweg besteht. Ein offener Autobahnabschnitt, der ausschließlich am Sperrgatter endet, gilt nicht als Ausweichroute.
+4. Eine offene Ausfahrt vor A oder ein offener Flucht-/Evakuierungsast wird nicht blind mitgesperrt. Hauptfahrbahnen vor A werden nicht unnötig rot-weiß eingefärbt; deren Fahrzeuge können sich trotzdem bis zum Sperrpunkt stauen.
+5. Die Markierung für eine administrative Sperrung ist **rot-weiß**. Die tatsächliche Staufarbe ist getrennt und folgt ausschließlich der berechneten Geschwindigkeit.
+6. `src/05_Umleitungen.ts` darf keine Fahrwege/Moves in gesperrte Kanten benutzen. `src/04_Ereignisse.ts` berechnet dort Nullkapazität. `src/06_Karte.ts` erhält **dieselben Edge-IDs** für die Sperrmarkierung.
+
+Das Verhalten hängt nie von Sonderfällen wie „Montabaur“ oder „Heumar“ ab. Die neutralen Tests prüfen A1, A3, A7, A61 und A100 mit denselben Regeln einschließlich paralleler Fahrbahnen, Ketten von Zufahrtsrampen, offenen Abzweigen und Sperrzeitraum.
+
+**Grenze der bisherigen Implementierung:** Die Graph- und Ereignis-Topologie ist vorbereitet. Vollständig dynamischer Durchgangsverkehr, bereits im gesperrten Abschnitt befindliche Fahrzeuge, Kapazitätsabhängigkeit von Kreuzungen, realistische Reisezeitumverteilung und das räumliche Zellmodell sind weiterhin eigene Ausbauschritte. Das Importskript lädt noch keinen kompletten Deutschland-OSM-Snapshot herunter und es gibt derzeit keine spielbare Deutschlandkarte.
