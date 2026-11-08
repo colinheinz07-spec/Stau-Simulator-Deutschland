@@ -46,3 +46,6 @@ export function motorwayMapEdges(
         .concat(closedByEdge.get(edge.id)??[])};
   });
 }
+
+export {tilesForViewport,assembleVisibleTiles} from './06_Karte/network-tiles.js';
+export type {TileManifest,TileManifestEntry,NetworkTile,Bounds,VisibleNetwork} from './06_Karte/network-tiles.js';
