@@ -30,6 +30,8 @@ export interface OsmImportAudit {
   importedPublicWays:number;
   importedDirectedEdges:number;
   importedMovements:number;
+  /** Sichere Referenzableitungen aus exakt gemeinsamen motorway-OSM-Nodes. */
+  inferredMotorwayRefs:{wayId:number;refs:string[];evidenceWayIds:number[]}[];
   /** Alle direkt aus dem OSM-Snapshot erwarteten Kanten müssen enthalten sein. */
   expectedDirectedSourceSegments:number;
   representedDirectedSourceSegments:number;
@@ -126,12 +128,54 @@ export function importOsmNetwork(elements:readonly OsmElement[],
         issues.push('Widersprüchliche OSM-Geometrie bei Node '+item.nodes[i]);
       nodePositions.set(item.nodes[i]!,at);
     }
-    if(kind==='mainline'&&!highwayRefs(tags).length){
-      issues.push('Autobahn ohne eindeutiges OSM-ref (nicht geraten): '+item.id);
-      continue;
-    }
     accepted.push({way:item,kind,points:concrete,tags});
   }
+  // OSM motorway Ways sind mitunter ohne ref getaggt. Jede echte
+  // Hauptfahrbahn bleibt im Netz. Wir erben ihre Ref(s) nur von eindeutig
+  // gemeinsamen motorway-OSM-Knoten, niemals von nahen Linien/Landstraßen.
+  const mainWays=accepted.filter(f=>f.kind==='mainline');
+  const mainByNode=new Map<number,number[]>();
+  for(const {way} of mainWays)for(const id of way.nodes) {
+    mainByNode.set(id,[...(mainByNode.get(id)??[]),way.id]);
+  }
+  const inheritedRefs=new Map<number,string[]>();
+  const references=new Map<number,string[]>();
+  const inferredMotorwayRefs:{wayId:number;refs:string[];evidenceWayIds:number[]}[]=[];
+  for(const {way,tags} of mainWays) {
+    const exact=highwayRefs(tags);
+    if(exact.length)references.set(way.id,exact);
+  }
+  for(let round=0;round<mainWays.length;round++){
+    let changed=false;
+    for(const {way} of mainWays) {
+      if(references.has(way.id))continue;
+      const evidence=new Set<number>();
+      const candidates:string[][]=[];
+      for(const nodeId of way.nodes)for(const neighbor of mainByNode.get(nodeId)??[]) {
+        if(neighbor===way.id)continue;
+        const neighborRefs=references.get(neighbor);
+        if(!neighborRefs?.length)continue;
+        evidence.add(neighbor);
+        candidates.push(neighborRefs);
+      }
+      if(!candidates.length)continue;
+      // All neighboring motorway tags must agree or have one common ref.
+      // An ambiguous AK fork is never guessed into one Autobahn.
+      const same=candidates.every(x=>x.length===candidates[0]!.length&&
+        x.every(r=>candidates[0]!.includes(r)));
+      const intersection=candidates[0]!.filter(r=>candidates.every(x=>x.includes(r)));
+      const inferred=same?candidates[0]!:intersection.length===1?intersection:[];
+      if(!inferred.length)continue;
+      references.set(way.id,[...inferred]);
+      inheritedRefs.set(way.id,[...inferred]);
+      inferredMotorwayRefs.push({wayId:way.id,refs:[...inferred],evidenceWayIds:[...evidence].sort((a,b)=>a-b)});
+      changed=true;
+    }
+    if(!changed)break;
+  }
+  for(const {way} of mainWays)if(!references.has(way.id))
+    issues.push('Autobahn ohne eindeutiges OSM-ref (kein sicherer gemeinsamer motorway-Node): '+way.id);
+
   // Jeder shared node trennt die Straßen, sonst können Auffahrten mitten
   // in einem langen Way keine eigene Kante erhalten.
   const occurrence=new Map<number,Set<number>>();
@@ -170,7 +214,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
           issues.push('Null-/Ringsegment prüfen '+way.id+':'+left+'-'+right);
           continue;
         }
-        const sources=highwayRefs(tags);
+        const sources=inheritedRefs.get(way.id)??highwayRefs(tags);
         const edge:RoadEdge={
           id:key(way.id,label,srcId,dstId),
           fromNodeId:'osm-node:'+srcId,toNodeId:'osm-node:'+dstId,
@@ -270,6 +314,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     importedPublicWays:accepted.filter(w=>w.kind==='public').length,
     importedDirectedEdges:edges.length,
     importedMovements:movements.length,
+    inferredMotorwayRefs,
     expectedDirectedSourceSegments:expectedCoverage.size,
     representedDirectedSourceSegments:segmentCoverage.size,
     unrepresentedSourceSegments,unconnectedRampEnds,excludedWays,issues
