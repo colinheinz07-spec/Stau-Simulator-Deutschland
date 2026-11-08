@@ -40,6 +40,7 @@ osmium tags-filter "$PBF" \
  'w/highway=motorway,motorway_link' \
  'w/highway=trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,unclassified,residential,living_street,service' \
  'r/type=restriction' \
+ 'r/route=road' \
  -o "$WORK/highways.osm.pbf"
 echo "Step 2/5: convert selected source to compressed node/way/restriction JSON"
 osmium cat "$WORK/highways.osm.pbf" -f osm -o - |
