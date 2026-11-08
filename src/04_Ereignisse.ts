@@ -1,5 +1,8 @@
 /** 04 EREIGNISSE: Eingriffe in gerichtete Abschnitte, unabhängig von der Karte. */
-import type {RoadEdge} from './model.js';
+import type {RoadEdge,RoadNetwork} from './model.js';
+import {activeNetworkClosures, type CorridorClosure} from './04_Ereignisse/netzsperrungen.js';
+export {planCorridorClosure,activeNetworkClosures,validateCorridorClosure,activeCorridorClosure} from './04_Ereignisse/netzsperrungen.js';
+export type {CorridorClosure,NetworkClosurePlan} from './04_Ereignisse/netzsperrungen.js';
 import {physicalCapacityVph} from './03_Stauphysik.js';
 export type EventKind = 'accident' | 'roadworks' | 'breakdown' | 'closure';
 export interface SimEvent {
@@ -44,4 +47,15 @@ export function capacityAtPosition(
 export function blockedForRouting(edge: RoadEdge, events: readonly SimEvent[], minute: number): boolean {
   return events.some(e => e.edgeId === edge.id && activeEvent(e,minute) &&
     (e.kind === 'closure' || new Set(e.closedLanes).size === edge.lanes));
+}
+
+/** Eine gesetzte A→B-Sperrung wirkt auf JEDE tatsächlich betroffene Rampe.
+ * Kapazität und Kartenmarkierung beruhen auf derselben Sperr-Topologie. */
+export function capacityWithCorridorClosures(
+  network: RoadNetwork, edge: RoadEdge, metre: number, minute: number,
+  events: readonly SimEvent[] = [], corridors: readonly CorridorClosure[] = []
+): number {
+  const standard = capacityAtPosition(edge,metre,minute,events);
+  const networkClosure = activeNetworkClosures(network,corridors,minute);
+  return networkClosure.blockedEdgeIds.has(edge.id) ? 0 : standard;
 }
