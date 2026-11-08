@@ -9,7 +9,7 @@ function network(ref='A7'){
   const coords={
     p0:[50,7],p1:[50,7.01],p2:[50,7.02],p3:[50,7.03],p4:[50,7.04],
     q0:[50.005,7.015],f:[50.005,7.020],x:[50.006,7.023],
-    town:[50.01,7.03],outside:[50.015,7.03]
+    town:[50.01,7.03],outside:[50.015,7.03],escape:[50.002,7.003]
   };
   const nodes=Object.entries(coords).map(([id,point])=>({id,point}));
   let way=100;
@@ -33,6 +33,7 @@ function network(ref='A7'){
     create('direct-onramp','x','p2','ramp'),
     create('offramp','p2','town','ramp'),
     create('public-road','town','outside','public'),
+    create('escape-road','p0','escape','public'),
     create('opposite-direction','p4','p3')
   ];
   const movementPairs=[
@@ -40,7 +41,7 @@ function network(ref='A7'){
     ['between-b','after'],['parallel','after'],
     ['feeder','closed-branch'],['feeder','open-branch'],
     ['closed-branch','between-b'],['closed-branch','parallel'],
-    ['open-branch','up'],['direct-onramp','between-b'],
+    ['open-branch','up'],['open-branch','escape-road'],['direct-onramp','between-b'],
     ['between-a','offramp'],['offramp','public-road']
   ];
   const movements=movementPairs.map(([incomingEdgeId,outgoingEdgeId])=>
@@ -72,6 +73,14 @@ test('Zufahrtsrampen bis zur Sperrung; gemeinsame Zufahrt vor freier Gabel bleib
     m.incomingEdgeId==='feeder'&&m.outgoingEdgeId==='closed-branch'));
   assert.ok(!plan.blockedMovements.some(m=>
     m.incomingEdgeId==='feeder'&&m.outgoingEdgeId==='open-branch'));
+});
+test('Offene Autobahn vor A ist kein freier Ausweg, wenn sie allein in die Sperrung führt',()=>{
+  const n=network();
+  n.movements=n.movements.filter(m=>!(m.incomingEdgeId==='open-branch'&&m.outgoingEdgeId==='escape-road'));
+  const plan=Ereignisse.planCorridorClosure(n,closure());
+  assert.ok(plan.rampEdgeIds.includes('feeder'));
+  assert.ok(plan.rampEdgeIds.includes('open-branch'));
+  assert.ok(!plan.closedEdgeIds.includes('up'),'offene Hauptfahrbahn bleibt für bestehenden Verkehr offen');
 });
 test('Fehlt eine offene Abzweigbeziehung, muss auch die komplette vorgelagerte Rampe geschlossen werden',()=>{
   const n=network();
