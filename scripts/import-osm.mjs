@@ -5,6 +5,7 @@
  */
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {dirname,resolve} from 'node:path';
+import {gunzipSync} from 'node:zlib';
 import {Strassennetz} from '../dist/index.js';
 
 const args=process.argv.slice(2);
@@ -17,14 +18,15 @@ if(!input){
   process.exit(2);
 }
 try{
-  const raw=JSON.parse(await readFile(resolve(input),'utf8'));
+  const bytes=await readFile(resolve(input));
+  const raw=JSON.parse(input.endsWith('.gz')?gunzipSync(bytes).toString('utf8'):bytes.toString('utf8'));
   const elements=Array.isArray(raw)?raw:raw.elements;
   if(!Array.isArray(elements))throw Error('Snapshot enthält kein elements-Array');
   // strict=true: unvollständige OSM-Knoten, Rampenenden oder Restriktionen
   // dürfen nicht als vollständig gezeichnetes Netz veröffentlicht werden.
   const {network,audit}=Strassennetz.importOsmNetwork(elements,{includePublicRoads,strict:true});
   await mkdir(dirname(resolve(output)),{recursive:true});
-  await writeFile(resolve(output),JSON.stringify(network,null,2)+'\n');
+  await writeFile(resolve(output),JSON.stringify(network)+'\n');
   await writeFile(resolve(output+'.audit.json'),JSON.stringify(audit,null,2)+'\n');
   console.log('OSM Import erfolgreich:',JSON.stringify({
     mainlineWays:audit.importedMotorwayWays,
