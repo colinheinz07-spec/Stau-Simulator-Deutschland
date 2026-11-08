@@ -37,7 +37,8 @@ export interface OsmImportAudit {
   representedDirectedSourceSegments:number;
   unrepresentedSourceSegments:string[];
   /** Unbekannte Rampenenden werden gemeldet statt mit gezeichneten Geraden verbunden. */
-  unconnectedRampEnds:{edgeId:string;nodeId:string;terminal:'start'|'end'}[];
+  unconnectedRampEnds:{edgeId:string;nodeId:string;terminal:'start'|'end';
+    lat:number;lon:number;sourceNeighborWays:{wayId:number;highway:string;service?:string;access?:string}[]}[];
   excludedWays:readonly {id:number;reason:string}[];
   issues:readonly string[];
 }
@@ -283,19 +284,22 @@ export function importOsmNetwork(elements:readonly OsmElement[],
   // Abbiegebeschränkungen (from-way, via-node, to-way) beachten.
   // via-way/bedingt/unbekannte Relations müssen vorher überprüft werden.
   const restrictions=elements.filter((el):el is OsmRelation=>el.type==='relation')
-    .map(parseRestriction).filter((r):r is NonNullable<typeof r>=>r!==null);
+    .map(rel=>({id:rel.id,parsed:parseRestriction(rel)}))
+    .filter((r):r is {id:number;parsed:NonNullable<ReturnType<typeof parseRestriction>>}=>r.parsed!==null);
   // All Germany restriction relations are present in the source even when
   // building motorway-only routing. Ignore ONLY restrictions whose from-way
   // is not part of the imported graph. Relevant conditional/via-way rules
   // must still stop the strict import instead of quietly being ignored.
   const acceptedWayIds=new Set(accepted.map(x=>x.way.id));
-  const nodeRestrictions=new Map<number,typeof restrictions>();
-  for(const r of restrictions){
+  const nodeRestrictions=new Map<number,NonNullable<ReturnType<typeof parseRestriction>>[]>();
+  for(const {id,parsed:r} of restrictions){
     if(!r.from.some(m=>acceptedWayIds.has(m.ref)))continue;
     if(r.except.split(/[;, ]+/).some(v=>['motorcar','motor_vehicle','vehicle'].includes(v)))continue;
     if(r.conditional||r.from.length!==1||r.to.length!==1||r.via.length!==1||
       r.via[0]?.type!=='node'||(!r.code.startsWith('no_')&&!r.code.startsWith('only_'))){
-      issues.push('Ungeprüfte OSM-Abbiegerelation (Import muss geprüft werden)');
+      issues.push('Ungeprüfte OSM-Abbiegerelation '+id+' ('+r.code+', via='+
+        r.via.map(v=>v.type+':'+v.ref).join(',')+', from='+r.from.map(v=>v.ref).join(',')+
+        ', to='+r.to.map(v=>v.ref).join(',')+')');
       continue;
     }
     const nodeId=r.via[0]!.ref;
@@ -309,13 +313,33 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     PUBLIC.has(item.tags?.highway as RoadClass)&&
     !['access','vehicle','motor_vehicle','motorcar'].some(t=>BLOCKED.has(item.tags?.[t]??'')))
     for(const nodeId of item.nodes)externalPublicNodes.add(nodeId);
-  const unconnectedRampEnds:{edgeId:string;nodeId:string;terminal:'start'|'end'}[]=[];
+  const byOriginalNode=new Map<number,{wayId:number;highway:string;service?:string;access?:string}[]>();
+  for(const way of elements)if(way.type==='way'){
+    const detail={wayId:way.id,highway:way.tags?.highway??'',
+      ...(way.tags?.service?{service:way.tags.service}:{}),
+      ...(way.tags?.access?{access:way.tags.access}:{})};
+    for(const id of new Set(way.nodes)){
+      const entries=byOriginalNode.get(id)??[];
+      entries.push(detail);
+      byOriginalNode.set(id,entries);
+    }
+  }
+  const unconnectedRampEnds:OsmImportAudit['unconnectedRampEnds']=[];
+  const reportEnd=(edge:RoadEdge, nodeId:string, terminal:'start'|'end')=>{
+    const id=Number(nodeId.slice(9));
+    const point=nodePositions.get(id);
+    if(!point)throw Error('Unbekannter Originalknoten '+id);
+    unconnectedRampEnds.push({edgeId:edge.id,nodeId,terminal,
+      lat:point[0],lon:point[1],
+      sourceNeighborWays:(byOriginalNode.get(id)??[]).filter(x=>!edge.osmWayIds.includes(x.wayId))
+        .slice(0,20)});
+  };
   for(const e of edges)if(e.kind==='ramp'){
     const startId=Number(e.fromNodeId.slice(9)),endId=Number(e.toNodeId.slice(9));
     if(!(byEnd.get(e.fromNodeId)?.length)&&!externalPublicNodes.has(startId))
-      unconnectedRampEnds.push({edgeId:e.id,nodeId:e.fromNodeId,terminal:'start'});
+      reportEnd(e,e.fromNodeId,'start');
     if(!(byStart.get(e.toNodeId)?.length)&&!externalPublicNodes.has(endId))
-      unconnectedRampEnds.push({edgeId:e.id,nodeId:e.toNodeId,terminal:'end'});
+      reportEnd(e,e.toNodeId,'end');
   }
   if(unconnectedRampEnds.length)
     issues.push('Rampenenden ohne nachgewiesene Netz-/Ortsstraßenverbindung: '+unconnectedRampEnds.length);
