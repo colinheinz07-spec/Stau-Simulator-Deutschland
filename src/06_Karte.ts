@@ -1,0 +1,40 @@
+/** 06 KARTE: Darstellung בלבד – niemals Fahrzeugbestände oder Verbindungen erfinden. */
+import type {Point, RoadNetwork, RoadKind, SpeedSample} from './model.js';
+import type {SimEvent} from './04_Ereignisse.js';
+import {activeEvent} from './04_Ereignisse.js';
+export type TrafficColour = 'free' | 'slow' | 'jam' | 'standstill';
+export function colourAtSpeed(kmh: number): TrafficColour {
+  if (!Number.isFinite(kmh) || kmh < 0) throw Error('Ungültige Geschwindigkeit');
+  if (kmh <= 10) return 'standstill';
+  if (kmh <= 30) return 'jam';
+  if (kmh <= 65) return 'slow';
+  return 'free';
+}
+export interface DrawableEdge {
+  edgeId: string;
+  kind: RoadKind;
+  geometry: readonly Point[];
+  colour: TrafficColour;
+  speedKmh: number;
+  /** Vorsimulations-Zustand = angenommene freie Geschwindigkeit, keine Messung. */
+  source: 'model' | 'initial-free';
+  /** Abschnitte zur gesonderten rot-weißen Sperrmarkierung. */
+  closures: readonly {fromM:number;toM:number}[];
+}
+/** Jede importierte motorway/motorway_link-Geometrie erscheint GENAU einmal.
+ * Normale Straßen sind keine grünen Autobahnrampen. */
+export function motorwayMapEdges(
+  network: RoadNetwork, speeds: readonly SpeedSample[] = [],
+  events: readonly SimEvent[] = [], minute = 0
+): DrawableEdge[] {
+  const known = new Map(speeds.map(s => [s.edgeId,s.speedKmh]));
+  return network.edges.filter(e => e.kind !== 'public').map(edge => {
+    const measured = known.get(edge.id);
+    const speedKmh = measured ?? edge.freeSpeedKmh;
+    return {edgeId:edge.id,kind:edge.kind,geometry:edge.geometry,
+      colour:colourAtSpeed(speedKmh),speedKmh,
+      source: measured === undefined ? 'initial-free' as const : 'model' as const,
+      closures:events.filter(e => e.edgeId === edge.id && e.kind === 'closure' &&
+        activeEvent(e,minute)).map(e => ({fromM:e.fromM,toM:e.toM}))};
+  });
+}
