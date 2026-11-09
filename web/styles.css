@@ -36,3 +36,12 @@
 
 /* Mobile users see the working simulation controls first; the map remains above. */
 @media(max-width:850px){.sidebar .simulation-controls{order:-1}}
+
+
+/* SPCK source preview: do not present disabled simulation as working features. */
+.preview-only .simulation-controls,.preview-only .demo-box{display:none}
+.preview-only .map-bottom-info{max-width:290px}
+@media(max-width:850px){
+  .preview-only .map-bottom-info{bottom:207px}
+  .preview-only .sidebar{max-height:180px}
+}
