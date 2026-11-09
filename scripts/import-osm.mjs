@@ -13,6 +13,9 @@ const input=args.find(s=>!s.startsWith('--'));
 const outputArg=args.find(s=>s.startsWith('--output='));
 const output=outputArg?.slice('--output='.length)??'data/generated-network.json';
 const includePublicRoads=args.includes('--include-public');
+// Map-only preview: preserve unresolved snapshot audit, but NEVER allow invalid
+// graph structure, invented coordinates or missing rendered source segments.
+const mapPreview=args.includes('--map-preview');
 const boundaryFile=args.find(s=>s.startsWith('--boundary-poly='))?.slice('--boundary-poly='.length);
 if(!input){
   console.error('Verwendung: node scripts/import-osm.mjs SNAPSHOT.json [--include-public] [--output=DATEI.json]');
@@ -30,7 +33,8 @@ try{
   const {network,audit}=Strassennetz.importOsmNetwork(elements,{includePublicRoads,strict:false,
     ...(extractBoundaryRings?{extractBoundaryRings}:{})});
   await mkdir(dirname(resolve(output)),{recursive:true});
-  if (audit.issues.length) {
+  const fatal=Strassennetz.validateNetwork(network);
+  if (fatal.length || audit.unrepresentedSourceSegments.length || (audit.issues.length && !mapPreview)) {
     const failed=resolve(output+'.failed-audit.json');
     await writeFile(failed,JSON.stringify(audit,null,2)+'\n');
     throw Error('OSM-Netzimport nicht veröffentlichbar: '+audit.issues.length+
@@ -49,7 +53,8 @@ try{
     movements:audit.importedMovements,
     unrepresentedEdges:audit.unrepresentedSourceSegments.length,
     unresolvedRampEnds:audit.unconnectedRampEnds.length,
-    verifiedExtractBoundaryRampEnds:audit.extractBoundaryRampEnds.length
+    verifiedExtractBoundaryRampEnds:audit.extractBoundaryRampEnds.length,
+    mapPreview,previewWarnings:audit.issues.length
   }));
 }catch(error){
   console.error('OSM-Import gestoppt – Daten nicht als vollständig veröffentlicht:',error);
