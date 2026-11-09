@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {gzipSync} from 'node:zlib';
+import {runInNewContext} from 'node:vm';
 import {chooseMapTiles,createTileRepository,edgeSummary} from '../web/network-loader.js';
 
 const manifest={schemaVersion:1,tiles:[
@@ -15,7 +16,7 @@ test('Map HTML and its production imports exist; UI remains a real touch-enabled
   const style=await readFile('web/styles.css','utf8');
   assert.match(page,/<div id="map"/);
   assert.match(page,/viewport-fit=cover/);
-  assert.match(page,/leaflet@1\.9\.4/);
+  assert.match(page,/src="\.\/bootstrap\.js"/);
   assert.match(page,/Simulationsstrecken/);
   assert.match(page,/A3 \/ A48/);
   assert.match(app,/motorwayMapEdges/);
@@ -52,27 +53,44 @@ test('Network tile fetch uses gzip, validates the stable key and caches by physi
   }finally{globalThis.fetch=original;}
 });
 
-test('SPCK source preview renders original OSM motorway geometry without generated dist or tiles',async()=>{
+test('SPCK source preview reuses local geometry and loads without Leaflet or Overpass',async()=>{
   const page=await readFile('web/index.html','utf8');
   const bootstrap=await readFile('web/bootstrap.js','utf8');
-  const preview=await readFile('web/local-preview.js','utf8');
+  const canvas=await readFile('web/legacy-canvas.js','utf8');
+  const geometry=await readFile('web/legacy-geometry.js','utf8');
   const full=await readFile('web/app.js','utf8');
   assert.match(page,/src="\.\/bootstrap\.js"/);
-  assert.match(page,/src="\.\/local-preview\.js"/);
+  assert.ok(!page.includes('src="https://unpkg.com/leaflet'),
+    'SPCK must not block on CDN Leaflet');
   assert.match(bootstrap,/location\.protocol==="file:"/);
+  assert.match(bootstrap,/startLegacyFallback/);
+  assert.match(bootstrap,/\.\/legacy-geometry\.js/);
+  assert.match(bootstrap,/\.\/legacy-canvas\.js/);
   assert.match(bootstrap,/\.\/data\/tiles\/manifest\.json/);
   assert.match(bootstrap,/\.\/dist\/06_Karte\.js/);
-  assert.match(bootstrap,/startLocalPreview/);
-  assert.match(preview,/highway.*motorway_link/);
-  assert.match(preview,/out geom/);
-  assert.match(preview,/window\.startLocalPreview/);
-  assert.ok(!preview.includes('Math.random('),'preview must never invent roads');
-  assert.match(full,/startLocalPreview\(map\)/);
+  assert.match(canvas,/window\.startLegacyCanvas/);
+  assert.match(canvas,/pointerdown/);
+  assert.match(canvas,/ResizeObserver/);
+  assert.match(canvas,/requestAnimationFrame/);
+  assert.match(canvas,/startLegacyCanvas\(existingMap/);
+  assert.ok(!canvas.includes('Math.random('),'must never invent roads');
+  assert.ok(!canvas.includes('overpass'),'Canvas geometry must work offline');
+  assert.match(full,/startLegacyFallback\(map\)/);
+  const sandbox={window:{}};
+  runInNewContext(geometry,sandbox);
+  const data=sandbox.window.STAU_LEGACY_GEOMETRY;
+  assert.equal(data.roads.length,1929);
+  assert.equal(data.roads.filter(x=>x[1]==='ramp').length,943);
+  assert.equal(data.junctions.length,73);
+  assert.ok(data.roads.some(x=>x[2]==='A3'));
+  assert.ok(data.roads.some(x=>x[2]==='A48'));
+  assert.ok(data.roads.every(x=>Array.isArray(x[4])&&x[4].length>=2));
+  assert.ok(data.roads.every(x=>x[4].every(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]))));
   for(const workflowPath of [
     '.github/workflows/publish-map.yml',
     '.github/workflows/quick-map-preview.yml'
   ]){
     const workflow=await readFile(workflowPath,'utf8');
-    assert.match(workflow,/web\/bootstrap\.js web\/local-preview\.js/);
+    assert.match(workflow,/web\/bootstrap\.js web\/legacy-canvas\.js web\/legacy-geometry\.js/);
   }
 });
