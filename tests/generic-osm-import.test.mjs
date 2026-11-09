@@ -214,3 +214,26 @@ test('Closed OSM roundabouts and motorway loops preserve every source segment wi
  assert.ok(arcs.every(e=>e.fromNodeId!==e.toNodeId));
  assert.deepEqual(Strassennetz.validateNetwork(network),[]);
 });
+
+test('Ein geschlossener OSM-Teilabschnitt mitten in einem Way wird an realem OSM-Knoten gesplittet',()=>{
+ const elements=example();
+ const additional=[
+   {type:'node',id:701,lat:50.05,lon:7.05},
+   {type:'node',id:702,lat:50.05,lon:7.051},
+   {type:'node',id:703,lat:50.051,lon:7.052},
+   {type:'node',id:704,lat:50.052,lon:7.051},
+   {type:'node',id:705,lat:50.053,lon:7.05},
+   {type:'way',id:710,nodes:[701,702,703,704,702,705],
+     tags:{highway:'secondary',oneway:'no'}},
+   {type:'way',id:711,nodes:[702,710],tags:{highway:'secondary',oneway:'yes'}}
+ ];
+ // Fix fixture for shared-node anchor using an existing real OSM node.
+ additional[6].nodes=[702,701];
+ const {network,audit}=Strassennetz.importOsmNetwork([...elements,...additional],{
+   includePublicRoads:true,strict:false
+ });
+ assert.deepEqual(audit.unrepresentedSourceSegments,[]);
+ assert.ok(!audit.issues.some(issue=>issue.includes('Ringsegment prüfen 710')));
+ assert.ok(network.edges.some(edge=>edge.osmWayIds.includes(710)));
+ assert.deepEqual(Strassennetz.validateNetwork(network),[]);
+});
