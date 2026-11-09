@@ -280,6 +280,14 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     for(let i=1;i<way.nodes.length-1;i++)
       if(shared.has(way.nodes[i]!) || junctionNames.has(way.nodes[i]!))cuts.push(i);
     cuts.push(way.nodes.length-1);
+    // A closed OSM Way (roundabout, turning circle, service loop) has
+    // identical start/end node IDs. Model it as TWO real directed arcs
+    // split at an EXISTING internal OSM vertex, not a zero-length
+    // self-loop and never an invented shortcut.
+    if(way.nodes[0]===way.nodes[way.nodes.length-1] && cuts.length===2 &&
+       way.nodes.length>=4){
+      cuts.splice(1,0,Math.floor((way.nodes.length-1)/2));
+    }
     for(const [label,reverse] of directions){
       for(let i=1;i<way.nodes.length;i++){
         const a=way.nodes[reverse?i:i-1]!,b=way.nodes[reverse?i-1:i]!;
