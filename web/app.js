@@ -30,7 +30,6 @@ const closedLayer=L.layerGroup().addTo(map);
 const junctionLayer=L.layerGroup().addTo(map);
 const coverageLayer=L.layerGroup().addTo(map);
 let viewportTimer=0;
-let loading=false;
 
 const setStatus=(text)=>{status.textContent=text};
 const setError=(text)=>{
@@ -124,16 +123,15 @@ function drawNetwork(){
       if(!node.junctionName&&!node.junctionRef)continue;
       if(shown>=120)break;
       const name=[node.junctionRef,node.junctionName].filter(Boolean).join(" · ");
+      const tooltipText=document.createElement("span");
+      tooltipText.textContent=name; // OSM labels are untrusted source data, never HTML.
       L.circleMarker(node.point,{radius:3,weight:1,color:"#fff",fillColor:"#16374a",
-        fillOpacity:.95,interactive:false}).bindTooltip(document.createTextNode(name).textContent,{
+        fillOpacity:.95,interactive:false}).bindTooltip(tooltipText,{
           permanent:true,direction:"top",className:"junction-label",offset:[0,-4]
         }).addTo(junctionLayer);
       shown++;
     }
   }
-}
-function renderDefaultDetails(){
-  $("map-bottom-info").hidden=false;
 }
 function openDetails(edge,item){
   state.selected=edge;
