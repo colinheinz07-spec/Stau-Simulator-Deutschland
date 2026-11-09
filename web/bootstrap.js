@@ -1,32 +1,70 @@
-/* Classic-script entry point for SPCK / local source previews.
- * Load production modules only when the generated build AND net manifest exist.
+/* SPCK boots from plain local files. Avoid module imports, Overpass, or Leaflet
+ * until a compiled network build is actually present on an HTTP server.
  */
-(async()=>{
-  const status=document.getElementById("map-status");
-  async function preview(reason){
-    console.info("OSM-Vorschau statt Build:",reason);
-    try{
-      if(typeof window.startLocalPreview!=="function")throw Error("OSM-Vorschau fehlt");
-      await window.startLocalPreview(window.__stauMap||null);
-    }catch(error){
-      console.error(error);
-      status.textContent="Karte konnte nicht initialisiert werden";
-      const message=document.getElementById("map-message");
-      message.hidden=false;
-      message.textContent="Kartenstart fehlgeschlagen: "+error.message;
-    }
-  }
+(function(){
+"use strict";
+const status=document.getElementById("map-status");
+function loadScript(src){
+  return new Promise((resolve,reject)=>{
+    const element=document.createElement("script");
+    element.src=src;
+    element.onload=resolve;
+    element.onerror=()=>reject(Error("Skript fehlt: "+src));
+    document.head.append(element);
+  });
+}
+function loadStyle(href){
+  return new Promise((resolve,reject)=>{
+    const element=document.createElement("link");
+    element.rel="stylesheet";
+    element.href=href;
+    element.onload=resolve;
+    element.onerror=()=>reject(Error("Kartenstil fehlt: "+href));
+    document.head.append(element);
+  });
+}
+window.startLegacyFallback=async function(existingMap=null){
+  if(!window.STAU_LEGACY_GEOMETRY)
+    await loadScript("./legacy-geometry.js");
+  if(typeof window.startLegacyCanvas!=="function")
+    await loadScript("./legacy-canvas.js");
+  await window.startLegacyCanvas(existingMap);
+};
+async function run(){
   if(location.protocol==="file:"){
-    await preview("Lokale Datei ohne HTTP-Server");
+    try{await window.startLegacyFallback();}
+    catch(error){fail(error);}
     return;
   }
   try{
-    const [compiled,network]=await Promise.all([
+    const [modules,manifest]=await Promise.all([
       fetch("./dist/06_Karte.js",{method:"HEAD",cache:"no-cache"}),
       fetch("./data/tiles/manifest.json",{cache:"no-cache"})
     ]);
-    if(!compiled.ok||!network.ok)
-      throw Error("Quellcode ohne erstellte dist-Module oder Netzdateien");
+    if(!modules.ok||!manifest.ok)
+      throw Error("Gebautes Netzpaket fehlt – lokale Karte verwenden");
+    const json=await manifest.json();
+    if(!Array.isArray(json.tiles)||!json.tiles.length)
+      throw Error("Netzmanifest ist leer");
+    await Promise.all([
+      loadStyle("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"),
+      loadScript("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js")
+    ]);
     await import("./app.js");
-  }catch(error){await preview(error.message);}
+  }catch(error){
+    console.warn("Starte lokale Canvas-Karte:",error);
+    try{await window.startLegacyFallback(window.__stauMap||null);}
+    catch(other){fail(other);}
+  }
+}
+function fail(error){
+  console.error(error);
+  if(status)status.textContent="Kartendarstellung nicht verfügbar";
+  const message=document.getElementById("map-message");
+  if(message){
+    message.hidden=false;
+    message.textContent="Die lokale Karte konnte nicht geladen werden: "+error.message;
+  }
+}
+run();
 })();
