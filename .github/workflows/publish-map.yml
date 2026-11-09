@@ -1,0 +1,81 @@
+name: Interaktive Deutschlandkarte veröffentlichen
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages-map
+  cancel-in-progress: true
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Projekt auschecken
+        uses: actions/checkout@v4
+      - name: Node.js vorbereiten
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: OSM-Werkzeuge installieren
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y osmium-tool
+      - name: Architekturtests und Browsermodule prüfen
+        run: |
+          npm install --no-audit --no-fund
+          npm run check
+          node --check web/app.js
+          node --check web/network-loader.js
+      - name: Echtes, kleines OSM-Testnetz herunterladen
+        run: |
+          curl -fLsS --retry 3 --max-time 240 \
+            -o /tmp/bremen-latest.osm.pbf \
+            https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
+          curl -fLsS --retry 3 --max-time 60 \
+            -o /tmp/bremen.poly \
+            https://download.geofabrik.de/europe/germany/bremen.poly
+          test -s /tmp/bremen-latest.osm.pbf
+          test -s /tmp/bremen.poly
+      - name: Originale Autobahnen, Rampen und Kartendaten erzeugen
+        run: |
+          bash scripts/build-germany-network.sh \
+            /tmp/bremen-latest.osm.pbf /tmp/map-build \
+            --boundary-poly=/tmp/bremen.poly
+      - name: Karte und echte Daten als statische Webseite zusammenstellen
+        run: |
+          mkdir -p _site/data
+          cp web/index.html web/styles.css web/app.js web/network-loader.js _site/
+          cp -R dist _site/dist
+          cp -R /tmp/map-build/tiles _site/data/tiles
+          cp /tmp/map-build/source-metadata.json _site/data/source-metadata.json
+          touch _site/.nojekyll
+          python3 - <<'PY'
+          import json,pathlib
+          site=pathlib.Path('_site')
+          manifest=json.loads((site/'data/tiles/manifest.json').read_text())
+          assert manifest['counts']['uniqueEdges']>0
+          assert manifest['counts']['tiles']>0
+          assert (site/'dist/06_Karte.js').is_file()
+          for tile in manifest['tiles']:
+              assert (site/'data/tiles'/tile['file']).stat().st_size>0
+          print('Karte bereit:',manifest['counts'])
+          PY
+      - name: GitHub Pages konfigurieren
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Kartenseite bereitstellen
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - name: Karte veröffentlichen
+        id: deployment
+        uses: actions/deploy-pages@v4
