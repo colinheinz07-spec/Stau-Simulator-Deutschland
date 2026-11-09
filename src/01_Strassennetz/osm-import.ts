@@ -280,13 +280,22 @@ export function importOsmNetwork(elements:readonly OsmElement[],
     for(let i=1;i<way.nodes.length-1;i++)
       if(shared.has(way.nodes[i]!) || junctionNames.has(way.nodes[i]!))cuts.push(i);
     cuts.push(way.nodes.length-1);
-    // A closed OSM Way (roundabout, turning circle, service loop) has
-    // identical start/end node IDs. Model it as TWO real directed arcs
-    // split at an EXISTING internal OSM vertex, not a zero-length
-    // self-loop and never an invented shortcut.
-    if(way.nodes[0]===way.nodes[way.nodes.length-1] && cuts.length===2 &&
-       way.nodes.length>=4){
-      cuts.splice(1,0,Math.floor((way.nodes.length-1)/2));
+    // Closed ways can occur not only at the original start/end, but
+    // BETWEEN shared junction nodes (e.g. a roundabout tagged as a
+    // single Way with an entry node repeated halfway through). Split
+    // every such closed arc at a REAL interior OSM node. This retains
+    // every source segment without creating a synthetic connection.
+    for(let ci=1;ci<cuts.length;ci++){
+      const left=cuts[ci-1]!,right=cuts[ci]!;
+      if(way.nodes[left]!==way.nodes[right] || right-left<2)continue;
+      let split=left+Math.floor((right-left)/2);
+      if(way.nodes[split]===way.nodes[left]){
+        split=-1;
+        for(let k=left+1;k<right;k++){
+          if(way.nodes[k]!==way.nodes[left]){split=k;break;}
+        }
+      }
+      if(split>left&&split<right){cuts.splice(ci,0,split);ci--;}
     }
     for(const [label,reverse] of directions){
       for(let i=1;i<way.nodes.length;i++){
