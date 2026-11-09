@@ -164,9 +164,9 @@ export class NetworkFlowEngine {
       for(let i=0;i<out.length-1;i++){
         const moved=Math.min(out[i]!,ins[i+1]!);
         if(moved<=0)continue;
-        changes[i]-=moved;
-        changes[i+1]+=moved;
-        out[i]-=moved; ins[i+1]-=moved;
+        changes[i]=changes[i]!-moved;
+        changes[i+1]=changes[i+1]!+moved;
+        out[i]=out[i]!-moved; ins[i+1]=ins[i+1]!-moved;
       }
     }
     // Junction transfers respect actual OSM turns, receiving storage, and
@@ -202,10 +202,11 @@ export class NetworkFlowEngine {
       for(const p of list){
         const amount=p.amount*scale;
         const fromChanges=delta.get(p.fromId)!;
-        fromChanges[fromChanges.length-1]-=amount;
+        fromChanges[fromChanges.length-1]=fromChanges[fromChanges.length-1]!-amount;
         total+=amount;
       }
-      delta.get(toId)![0]+=total;
+      const receivedChanges=delta.get(toId)!;
+      receivedChanges[0]=receivedChanges[0]!+total;
     }
     // Leave the simulated network only at an actual directed graph sink.
     // If an outgoing ramp is blocked, this is NOT an exit.
@@ -213,7 +214,9 @@ export class NetworkFlowEngine {
       if((this.moves.get(id)?.length??0)>0)continue;
       const outgoing=send.get(id)!;
       const discharged=outgoing[outgoing.length-1]!;
-      delta.get(id)![state.vehicles.length-1]-=discharged;
+      const dischargeChanges=delta.get(id)!;
+      const last=state.vehicles.length-1;
+      dischargeChanges[last]=dischargeChanges[last]!-discharged;
       this.exited+=discharged;
     }
     // Enter demand at external nodes only; space/capacity may keep arrivals
@@ -225,7 +228,8 @@ export class NetworkFlowEngine {
       this.generated+=created;
       const waiting=(this.sourceBacklog.get(id)??0)+created;
       const admitted=Math.min(waiting,receive.get(id)![0]!);
-      delta.get(id)![0]+=admitted;
+      const admissionChanges=delta.get(id)!;
+      admissionChanges[0]=admissionChanges[0]!+admitted;
       this.sourceBacklog.set(id,waiting-admitted);
     }
     // Atomically apply all previously allocated, storage-safe transfers.
