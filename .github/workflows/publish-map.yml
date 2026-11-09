@@ -37,6 +37,17 @@ jobs:
       - name: Echte A3/A48 vollständig aus Rheinland-Pfalz, NRW und Hessen aufbauen
         run: |
           bash scripts/build-a3-a48-map.sh /tmp/map-build
+      - name: OSM-Prüfbericht auch bei fehlgeschlagenem Streckenimport sichern
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a3-a48-netzimport-diagnose
+          path: |
+            /tmp/map-build/corridor-source.json.failed-audit.json
+            /tmp/map-build/corridor-source.json.audit.json
+            /tmp/map-build/selected-network.json.audit.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Karte und echte Daten als statische Webseite zusammenstellen
         run: |
           mkdir -p _site/data
