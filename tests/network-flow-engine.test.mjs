@@ -61,7 +61,8 @@ test('Eine nur einspurige Unfallstelle wirkt auf den konkreten Fahrweg statt auf
   const samples=engine.speedSamples();
   assert.ok(Math.abs(engine.snapshot().conservationResidual)<1e-6);
   assert.equal(Ereignisse.capacityAtPosition(graph.edges[2],5,0,[event]),1500);
-  assert.ok(samples.find(x=>x.edgeId==='a3-east').speedKmh<130);
+  assert.ok(samples.find(x=>x.edgeId==='a3-west').speedKmh<130,
+    'die reduzierte Kapazität erzeugt Rückstau VOR dem Engpass, nicht zwangsläufig in ihm');
 });
 test('Nur reale Netzgrenzen erzeugen neue Nachfrage, niemals innere Autobahnabschnitte',()=>{
   const graph=sampleNetwork();
