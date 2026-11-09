@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#101a2d">
-  <meta name="description" content="Stau-Simulator Deutschland – interaktive Autobahnkarte mit geprüftem OSM-Testnetz.">
+  <meta name="description" content="Stau-Simulator Deutschland – interaktive Autobahnkarte mit echten A3/A48-Fahrbahnen und Rampen.">
   <title>Stau-Simulator Deutschland | Karte</title>
   <link rel="preconnect" href="https://tile.openstreetmap.org">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -31,7 +31,7 @@
           <h2>Ansicht</h2>
           <div class="control-grid">
             <button id="btn-germany" type="button" class="option-btn"><span aria-hidden="true">▦</span> Deutschland</button>
-            <button id="btn-test-region" type="button" class="option-btn selected"><span aria-hidden="true">◎</span> Testgebiet</button>
+            <button id="btn-test-region" type="button" class="option-btn selected"><span aria-hidden="true">◎</span> A3 / A48</button>
           </div>
           <label class="switch-row"><span>Simulationsstrecken</span><input id="toggle-network" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
           <label class="switch-row"><span>AS-Bezeichnungen</span><input id="toggle-junctions" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
@@ -59,7 +59,7 @@
         <div class="map-top">
           <div class="coverage" id="coverage">
             <span class="coverage-dot"></span>
-            <span><b>Echtes Testnetz: Bremen</b><small>Deutschlandkarte sichtbar · weitere Simulationsgebiete folgen</small></span>
+            <span><b>A3 Limburg-Nord – Siegburg · A48 Vulkaneifel – Dernbach</b><small>Originale OSM-Hauptfahrbahnen und Rampen · Kartenvorschau</small></span>
           </div>
           <div class="map-chips"><span id="chip-roads">— Fahrwege</span><span id="chip-ramps">— Rampen</span></div>
         </div>
