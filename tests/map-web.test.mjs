@@ -20,7 +20,7 @@ test('Map HTML and its production imports exist; UI remains a real touch-enabled
   assert.match(page,/A3 \/ A48/);
   assert.match(app,/motorwayMapEdges/);
   assert.match(app,/assembleVisibleTiles/);
-  assert.match(app,/map\.flyTo/);
+  assert.match(app,/map\.fitBounds/);
   assert.match(style,/@media\(max-width:850px\)/);
   assert.ok(!app.includes('Math.random('),'Karte darf keine Fake-Straßen erzeugen');
 });
