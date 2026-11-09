@@ -351,8 +351,8 @@ async function init(){
   }catch(error){
     console.warn("Importiertes A3/A48-Netz nicht verfügbar; OSM-Vorschau statt leerer Karte:",error);
     try{
-      if(typeof window.startLocalPreview!=="function")throw Error("OSM-Vorschau fehlt");
-      await window.startLocalPreview(map);
+      if(typeof window.startLegacyFallback!=="function")throw Error("Lokale Canvas-Karte fehlt");
+      await window.startLegacyFallback(map);
     }catch(previewError){
       setError("Die Autobahn-Kartendaten fehlen. Der Deutschland-Import muss zuerst veröffentlicht werden. "+
         error.message+"; OSM-Vorschau: "+previewError.message);
