@@ -348,7 +348,14 @@ async function init(){
       " Hauptfahrbahnen, "+audit.motorwayRampCount+
       " Rampen · räumliches Verkehrsmodell startbereit");
   }catch(error){
-    setError("Die Autobahn-Kartendaten fehlen. Der Deutschland-Import muss zuerst veröffentlicht werden. "+error.message);
+    console.warn("Importiertes A3/A48-Netz nicht verfügbar; OSM-Vorschau statt leerer Karte:",error);
+    try{
+      const {startLocalPreview}=await import("./local-preview.js");
+      await startLocalPreview(map);
+    }catch(previewError){
+      setError("Die Autobahn-Kartendaten fehlen. Der Deutschland-Import muss zuerst veröffentlicht werden. "+
+        error.message+"; OSM-Vorschau: "+previewError.message);
+    }
   }
 }
 init();
