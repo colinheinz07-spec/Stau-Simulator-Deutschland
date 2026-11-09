@@ -1,0 +1,52 @@
+name: A3 A48 Karten-Vorschau ohne erneuten OSM-Download
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/quick-map-preview.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  quick-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Softwaretests inklusive echter Simulation
+        run: |
+          npm install --no-audit --no-fund
+          npm run check
+      - name: Bereits geprüftes A3/A48-OSM-Kartenpaket aus früherem Workflow übernehmen
+        uses: actions/download-artifact@v4
+        with:
+          name: stau-simulator-deutschland-web-vorschau
+          run-id: 42568764429
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: _site
+      - name: Aktualisierte Kartensteuerung und echte Verkehrsphysik einsetzen
+        run: |
+          test -s _site/data/tiles/manifest.json
+          cp web/index.html web/app.js web/network-loader.js web/simulation-controller.js web/styles.css _site/
+          rm -rf _site/dist
+          cp -R dist _site/dist
+          touch _site/.nojekyll
+          node --input-type=module <<'NODE'
+          import {readFile,access} from 'node:fs/promises';
+          const manifest=JSON.parse(await readFile('_site/data/tiles/manifest.json','utf8'));
+          if(manifest.counts.uniqueEdges<1500||manifest.counts.tiles<10)
+            throw Error('Der echte A3/A48-OSM-Netzstand ist unvollständig');
+          await access('_site/dist/03_Stauphysik/netzfluss.js');
+          await access('_site/simulation-controller.js');
+          console.log('Realer A3/A48-Netzstand:',manifest.counts);
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a3-a48-karte-mit-stauphysik
+          path: _site/
+          retention-days: 30
+          if-no-files-found: error
