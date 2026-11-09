@@ -31,7 +31,7 @@ jobs:
       - name: Aktualisierte Kartensteuerung und echte Verkehrsphysik einsetzen
         run: |
           test -s _site/data/tiles/manifest.json
-          cp web/index.html web/app.js web/network-loader.js web/simulation-controller.js web/styles.css _site/
+          cp web/index.html web/app.js web/network-loader.js web/simulation-controller.js web/styles.css web/bootstrap.js web/local-preview.js _site/
           rm -rf _site/dist
           cp -R dist _site/dist
           touch _site/.nojekyll
