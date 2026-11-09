@@ -13,3 +13,6 @@ data/source-metadata.json
 data/tiles/
 data/*.json.gz
 work/
+
+# Compiled browser module staging for tests; GitHub Pages builds from dist/.
+web/dist/
