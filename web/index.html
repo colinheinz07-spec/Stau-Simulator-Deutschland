@@ -36,6 +36,19 @@
           <label class="switch-row"><span>Simulationsstrecken</span><input id="toggle-network" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
           <label class="switch-row"><span>AS-Bezeichnungen</span><input id="toggle-junctions" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
         </section>
+        <section class="controls simulation-controls" aria-label="Verkehrssimulation">
+          <div class="rowline"><h2>Verkehrssimulation</h2><span class="tag">MODELL</span></div>
+          <p class="disclaimer">Experimenteller Netzfluss auf echten A3/A48-Fahrwegen. Alle Zuflüsse sind Annahmen, keine Live-Daten.</p>
+          <button type="button" class="sim-start" id="sim-toggle">▶ Simulation starten</button>
+          <label class="demand-input" for="sim-demand">Verkehrsbelastung <strong id="sim-demand-value">100 %</strong></label>
+          <input type="range" id="sim-demand" min="0" max="200" step="10" value="100">
+          <div class="simulation-stats" aria-live="polite">
+            <span>Simulationszeit <b id="sim-clock">0:00</b></span>
+            <span>Fahrzeuge im Netz <b id="sim-vehicles">0</b></span>
+            <span>Externe Warteschlange <b id="sim-outside">0</b></span>
+          </div>
+          <button type="button" class="subtle-btn" id="sim-reset">Simulation neu starten</button>
+        </section>
         <section class="controls">
           <h2>Darstellung</h2>
           <div class="legend">
@@ -49,7 +62,7 @@
         </section>
         <section class="controls demo-box">
           <div class="rowline"><h2>Darstellung testen</h2><span class="tag">DEMO</span></div>
-          <p>Klicke auf eine grüne Strecke und wähle eine Anzeige. Das verändert keine echten Verkehrsdaten.</p>
+          <p>Tippe eine Strecke an und setze einen Unfall, eine Baustelle oder eine Sperrung. Die Simulationsfarben folgen danach berechneten Fahrzeugbeständen.</p>
           <button id="reset-events" class="subtle-btn" type="button">Demonstration zurücksetzen</button>
         </section>
         <div class="sidebar-footer">© OpenStreetMap-Mitwirkende · ODbL<br>Netz und Sperrregeln werden deutschlandweit identisch verarbeitet.</div>
@@ -85,12 +98,12 @@
       <div><dt>OSM-Way</dt><dd id="detail-osm">—</dd></div>
     </dl>
     <div class="event-actions">
-      <h3>Test-Ereignis auf diesem Abschnitt</h3>
-      <p>Nur Kartendarstellung – noch kein berechneter Rückstau.</p>
+      <h3>Ereignis für die Simulation</h3>
+      <p>Reduziert die tatsächliche Modellkapazität. Die Rückstauentstehung wird berechnet, nicht einfach rot eingefärbt.</p>
       <div class="events-grid">
         <button type="button" data-event="none">Zurücksetzen</button>
-        <button type="button" data-event="slow">Stockend</button>
-        <button type="button" data-event="jam">Stau</button>
+        <button type="button" data-event="roadworks">Baustelle</button>
+        <button type="button" data-event="accident">Unfall</button>
         <button type="button" data-event="closure">Vollsperrung</button>
       </div>
     </div>
