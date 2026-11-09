@@ -9,7 +9,8 @@ const state={
   demo:new Map(),visible:true,junctions:true,requestId:0
 };
 const COLOURS={free:"#24c688",slow:"#f2af4e",jam:"#df4a55",standstill:"#792341"};
-const TEST_CENTER=[53.081,8.924], GERMANY_BOUNDS=[[47.1,5.65],[55.15,15.35]];
+const TEST_CENTER=[50.46,7.56], CORRIDOR_BOUNDS=[[50.155,6.86],[50.855,8.17]],
+  GERMANY_BOUNDS=[[47.1,5.65],[55.15,15.35]];
 const L=window.L;
 if(!L){
   status.textContent="Kartendarstellung nicht geladen (Leaflet-Bibliothek fehlt).";
@@ -19,7 +20,7 @@ if(!L){
 }
 
 const map=L.map("map",{zoomControl:false,preferCanvas:true,attributionControl:true,
-  wheelPxPerZoomLevel:70,minZoom:5,maxZoom:19}).setView(TEST_CENTER,11);
+  wheelPxPerZoomLevel:70,minZoom:5,maxZoom:19}).fitBounds(CORRIDOR_BOUNDS,{padding:[16,16]});
 L.control.zoom({position:"bottomright"}).addTo(map);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
   maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-Mitwirkende</a>',
@@ -39,7 +40,7 @@ const setError=(text)=>{
 const hideError=()=>{message.hidden=true};
 
 function updateButtons(){
-  const germany=map.getZoom()<9;
+  const germany=map.getZoom()<7;
   $("btn-germany").classList.toggle("selected",germany);
   $("btn-test-region").classList.toggle("selected",!germany);
 }
@@ -56,11 +57,11 @@ function coverageMark(){
   if(!state.manifest)return;
   if(map.getZoom()>=10)return;
   const icon=L.divIcon({
-    html:'<div class="coverage-marker"><b>● Bremen</b><small>Geprüftes Testnetz</small></div>',
+    html:'<div class="coverage-marker"><b>● A3 / A48</b><small>OSM-Streckennetz</small></div>',
     className:"coverage-pin",iconSize:[0,0]
   });
-  L.marker(TEST_CENTER,{icon,title:"OSM-Testnetz Bremen öffnen"})
-    .on("click",()=>map.flyTo(TEST_CENTER,11,{duration:.7}))
+  L.marker(TEST_CENTER,{icon,title:"OSM-Netz A3/A48 öffnen"})
+    .on("click",()=>map.fitBounds(CORRIDOR_BOUNDS,{padding:[16,16]}))
     .addTo(coverageLayer);
 }
 function styling(edge){
@@ -76,7 +77,7 @@ function drawNetwork(){
   roadsLayer.clearLayers();
   closedLayer.clearLayers();
   junctionLayer.clearLayers();
-  if(!state.visible||!state.network||map.getZoom()<9)return;
+  if(!state.visible||!state.network||map.getZoom()<7)return;
   const samples=[];
   const events=[];
   for(const edge of state.network.edges){
@@ -164,11 +165,11 @@ async function updateViewport(){
   updateButtons();
   coverageMark();
   if(!state.manifest){return}
-  if(map.getZoom()<9){
+  if(map.getZoom()<7){
     state.network=null;
     roadsLayer.clearLayers();closedLayer.clearLayers();junctionLayer.clearLayers();
     showCounts({roads:0,ramps:0});
-    setStatus("Deutschlandkarte · für Simulationsstrecken hineinzoomen");
+    setStatus("Deutschlandkarte · A3/A48 mit Schaltfläche auswählen");
     hideError();return;
   }
   try{
@@ -188,7 +189,7 @@ async function updateViewport(){
     const counts=edgeSummary(tiles);
     showCounts(counts);
     const unresolved=assembled.pendingEdgeIds.length;
-    setStatus(abbreviateN(counts.roads)+" geprüfte Strecken · "+
+    setStatus(abbreviateN(counts.roads)+" OSM-Fahrwege · "+
       (unresolved?unresolved+" Anschlüsse außerhalb der geladenen Kacheln":"geladen"));
     hideError();
     drawNetwork();
@@ -206,7 +207,7 @@ function queueViewport(){
 }
 map.on("moveend zoomend",queueViewport);
 $("btn-germany").addEventListener("click",()=>{closeDrawer();map.fitBounds(GERMANY_BOUNDS,{padding:[18,18]})});
-$("btn-test-region").addEventListener("click",()=>{closeDrawer();map.flyTo(TEST_CENTER,11,{duration:.7})});
+$("btn-test-region").addEventListener("click",()=>{closeDrawer();map.fitBounds(CORRIDOR_BOUNDS,{padding:[16,16]})});
 $("toggle-network").addEventListener("change",e=>{
   state.visible=e.target.checked;updateMapDisplay();
 });
@@ -235,7 +236,7 @@ async function init(){
     const manifest=await response.json();
     if(manifest.schemaVersion!==1||!Array.isArray(manifest.tiles))throw Error("Ungültiges Netzmanifest");
     state.manifest=manifest;
-    $("coverage").querySelector("b").textContent="Echtes Testnetz: Bremen";
+    $("coverage").querySelector("b").textContent="A3 Limburg-Nord – Siegburg · A48 Vulkaneifel – Dernbach";
     await updateViewport();
   }catch(error){
     setError("Die Autobahn-Kartendaten fehlen. Der Deutschland-Import muss zuerst veröffentlicht werden. "+error.message);
