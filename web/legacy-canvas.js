@@ -165,17 +165,24 @@ async function startLegacyCanvas(existingMap=null){
     const b=center[1]+(height/2+35)/scale;
     return s.bbox[0]<=r&&s.bbox[2]>=l&&s.bbox[1]<=b&&s.bbox[3]>=t;
   }
-  function strokeRoad(s,weight,color){
-    const scale=2**zoom;
+  function appendRoad(s,scale){
     const points=s.points;
-    context.beginPath();
     for(let i=0;i<points.length;i++){
       const x=(points[i][0]-center[0])*scale+width/2;
       const y=(points[i][1]-center[1])*scale+height/2;
       if(i===0)context.moveTo(x,y);else context.lineTo(x,y);
     }
-    context.lineWidth=weight;
-    context.strokeStyle=color;
+  }
+  function strokeGroup(roads,line,scale){
+    context.beginPath();
+    for(const road of roads){
+      if(road!==selected&&inView(road,scale))appendRoad(road,scale);
+    }
+    context.lineWidth=line+2;
+    context.strokeStyle="#132c3a";
+    context.stroke();
+    context.lineWidth=line;
+    context.strokeStyle="#19b979";
     context.stroke();
   }
   function drawLabels(){
@@ -212,11 +219,14 @@ async function startLegacyCanvas(existingMap=null){
         if(group===ramps&&zoom<7.6)continue;
         const line=group===ramps?clamp(1.5+(zoom-10)*.25,1,3.8):
           clamp(3.5+(zoom-10)*.65,2.2,7);
-        // Two passes preserve readable opposing directions at all scales.
-        for(const road of group){
-          if(!inView(road,scale))continue;
-          strokeRoad(road,line+2, "#132c3a");
-          strokeRoad(road,line,road===selected?"#ffe37c":"#19b979");
+        // Batch hundreds of OSM segments into just two Canvas strokes,
+        // so drag/pinch stays responsive even on older iPhones.
+        strokeGroup(group,line,scale);
+        if(selected&&group.includes(selected)&&inView(selected,scale)){
+          context.beginPath();
+          appendRoad(selected,scale);
+          context.lineWidth=line+2;context.strokeStyle="#132c3a";context.stroke();
+          context.lineWidth=line;context.strokeStyle="#ffe37c";context.stroke();
         }
       }
       drawLabels();
