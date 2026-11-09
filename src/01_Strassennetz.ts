@@ -90,3 +90,6 @@ export function validateNetwork(network: RoadNetwork): string[] {
 export function outgoingMovements(network: RoadNetwork, edgeId: string): TurnMovement[] {
   return network.movements.filter(m => m.allowed && m.incomingEdgeId === edgeId);
 }
+
+export {auditConnections} from './01_Strassennetz/connectivity-audit.js';
+export type {NetworkConnectionAudit,RampConnectionFinding} from './01_Strassennetz/connectivity-audit.js';
