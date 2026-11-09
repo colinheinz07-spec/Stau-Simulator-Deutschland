@@ -17,7 +17,7 @@ test('Map HTML and its production imports exist; UI remains a real touch-enabled
   assert.match(page,/viewport-fit=cover/);
   assert.match(page,/leaflet@1\.9\.4/);
   assert.match(page,/Simulationsstrecken/);
-  assert.match(page,/Testgebiet/);
+  assert.match(page,/A3 \/ A48/);
   assert.match(app,/motorwayMapEdges/);
   assert.match(app,/assembleVisibleTiles/);
   assert.match(app,/map\.flyTo/);
@@ -29,6 +29,8 @@ test('Only visible zoomed-in tiles are loaded and high area requests are rejecte
   assert.deepEqual(chooseMapTiles(manifest,[53.22,8.9,53.35,9.1],11).map(t=>t.key),
     ['212_35','213_35','213_36']);
   assert.deepEqual(chooseMapTiles(manifest,[47,6,55,15],6),[]);
+  assert.ok(chooseMapTiles(manifest,[53.02,8.81,53.19,8.95],7).length>0,
+    'Phone overview zoom must already draw the real motorway overlay');
   assert.throws(()=>chooseMapTiles(manifest,[47,6,55,15],11,1),/hineinzoomen/);
 });
 test('Network tile fetch uses gzip, validates the stable key and caches by physical tile',async()=>{
