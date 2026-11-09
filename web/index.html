@@ -110,22 +110,7 @@
   </aside>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module">
-    // In SPCK the repository contains source code, but not generated dist/ or OSM tiles.
-    // Import failures must never leave the user staring at a blank map.
-    import("./app.js").catch(async error => {
-      console.warn("Vollständige Karte nicht verfügbar; starte OSM-Vorschau:", error);
-      try {
-        const {startLocalPreview}=await import("./local-preview.js");
-        await startLocalPreview();
-      } catch(previewError) {
-        console.error(previewError);
-        document.getElementById("map-status").textContent="Karte konnte nicht geladen werden";
-        const message=document.getElementById("map-message");
-        message.hidden=false;
-        message.textContent="Karten-Vorschau nicht verfügbar: "+previewError.message;
-      }
-    });
-  </script>
+  <script src="./local-preview.js"></script>
+  <script src="./bootstrap.js"></script>
 </body>
 </html>
