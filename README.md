@@ -47,8 +47,13 @@ Dokumentiert und mit neutralen Netztests abgedeckt im [vollständigen Grundschem
 
 Die echten Deutschland-Rohdaten sind mehrere GB groß und **nicht in GitHub gespeichert**. Der vollständige Import muss auf einem ausreichend leistungsfähigen Rechner/Build-Server laufen; die Standard-CI nutzt kleine OSM-Testdaten, zusätzlich ist ein echter regionaler PBF-Test eingerichtet. Die mobile Oberfläche und der bundesweite Echtbetrieb sind noch nicht fertig.
 
+## Aktuelle Kartenansichten (SPCK / vollständiger Build)
+- **SPCK direkt aus `web/index.html`:** lokale touchfähige Canvas-Karte. Dafür sind die **1.929 OSM-Geometrien, darunter 943 Rampen**, aus der alten [Traffic-Sinulator-App](https://github.com/colinheinz07-spec/Traffic-Sinulator) im Repository unter `web/legacy-geometry.js` übernommen. Der Original-Ansatz aus dem alten Canvas-Kartenmodul lebt in `web/legacy-canvas.js` weiter. Die Karte funktioniert auch ohne Overpass und ohne Leaflet-Bibliothek; OSM-Kacheln sind ein optionaler Hintergrund. Tippen, Verschieben, Zoomen und Fahrstreifeninformationen funktionieren. **Das ist keine laufende Verkehrssimulation.**
+- **Vollständiger GitHub-Workflow-Build:** Enthält kompiliertes `dist/` und importierte `data/tiles/`-Dateien; hier arbeitet die experimentelle Fahrzeug-Engine mit den frisch importierten gerichteten A3/A48-OSM-Strecken. Auch sie ist noch nicht deutschlandweit fertig.
+- **Nicht verwechseln:** Die lokale Legacy-Karte zeigt zusätzlich Autobahnen aus dem Altprojekt; das ist noch kein vollständig validiertes bundesweites Simulationsnetz. Rampenlücken aus der alten App können weiterhin bestehen und werden nicht automatisch als behoben ausgegeben.
+
 ## Entwicklungsstand
-Das Projekt befindet sich in **Phase 1: Kernarchitektur und prüfbare Basismodule**. Es enthält aktuell **noch keine fertige interaktive Karte und kein deutschlandweites Straßennetz**. Tests nutzen absichtlich ein als *synthetisch* gekennzeichnetes kleines Prüfnetz. Eine echte Verkehrs-Engine mit Fahrzeugbewegung über alle Knoten folgt erst nach dem OSM-Netzimport.
+Das Projekt befindet sich in der Aufbau- und Testphase. Die lokale SPCK-Karte ist jetzt ohne separates Build sichtbar. Die vollständige Stauphysik, Rampen-, Sperr- und Umleitungslogik befindet sich in den sechs Fachmodulen und wird weiter validiert. Deutschlandweite OSM-Daten sind noch nicht vollständig importiert.
 
 ## Lokal testen (Node.js 22+)
 ```bash
