@@ -44,3 +44,6 @@ export function approximateQueueLengthM(waitingVehicles: number, openLanes: numb
       !Number.isInteger(openLanes) || openLanes < 1) throw Error('Ungültiger Rückstau');
   return waitingVehicles / (JAM_DENSITY_VEH_PER_KM_PER_LANE * openLanes) * 1000;
 }
+
+export {NetworkFlowEngine} from './03_Stauphysik/netzfluss.js';
+export type {FlowSettings,FlowStatistics} from './03_Stauphysik/netzfluss.js';
