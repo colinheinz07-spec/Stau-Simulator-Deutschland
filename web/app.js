@@ -350,8 +350,8 @@ async function init(){
   }catch(error){
     console.warn("Importiertes A3/A48-Netz nicht verfügbar; OSM-Vorschau statt leerer Karte:",error);
     try{
-      const {startLocalPreview}=await import("./local-preview.js");
-      await startLocalPreview(map);
+      if(typeof window.startLocalPreview!=="function")throw Error("OSM-Vorschau fehlt");
+      await window.startLocalPreview(map);
     }catch(previewError){
       setError("Die Autobahn-Kartendaten fehlen. Der Deutschland-Import muss zuerst veröffentlicht werden. "+
         error.message+"; OSM-Vorschau: "+previewError.message);
