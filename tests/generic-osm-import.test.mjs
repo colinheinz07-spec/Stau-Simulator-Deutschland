@@ -193,3 +193,24 @@ test('Rastplatz-/Betriebsrampen, die ausschließlich an highway=service enden, w
   assert.ok(audit.excludedWays.some(x=>x.id===901&&x.reason.includes('Betriebs')));
   assert.equal(audit.unconnectedRampEnds.length,0);
 });
+
+test('Closed OSM roundabouts and motorway loops preserve every source segment without any fake self-loop',()=>{
+ const source=example();
+ source.push(
+  {type:'node',id:601,lat:50.020,lon:7.050},
+  {type:'node',id:602,lat:50.021,lon:7.051},
+  {type:'node',id:603,lat:50.020,lon:7.052},
+  {type:'node',id:604,lat:50.019,lon:7.051},
+  {type:'way',id:605,nodes:[601,602,603,604,601],
+    tags:{highway:'secondary',junction:'roundabout',oneway:'yes'}}
+ );
+ const {network,audit}=Strassennetz.importOsmNetwork(source,{
+   includePublicRoads:true,strict:false
+ });
+ assert.equal(audit.unrepresentedSourceSegments.length,0);
+ assert.ok(!audit.issues.some(i=>i.includes('Null-/Ringsegment prüfen 605')));
+ const arcs=network.edges.filter(e=>e.osmWayIds.includes(605));
+ assert.equal(arcs.length,2);
+ assert.ok(arcs.every(e=>e.fromNodeId!==e.toNodeId));
+ assert.deepEqual(Strassennetz.validateNetwork(network),[]);
+});
