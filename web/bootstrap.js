@@ -7,7 +7,7 @@
     console.info("OSM-Vorschau statt Build:",reason);
     try{
       if(typeof window.startLocalPreview!=="function")throw Error("OSM-Vorschau fehlt");
-      await window.startLocalPreview();
+      await window.startLocalPreview(window.__stauMap||null);
     }catch(error){
       console.error(error);
       status.textContent="Karte konnte nicht initialisiert werden";
