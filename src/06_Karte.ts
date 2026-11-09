@@ -49,3 +49,6 @@ export function motorwayMapEdges(
 
 export {tilesForViewport,assembleVisibleTiles} from './06_Karte/network-tiles.js';
 export type {TileManifest,TileManifestEntry,NetworkTile,Bounds,VisibleNetwork} from './06_Karte/network-tiles.js';
+
+export {layoutJunctionLabels,overlapsLabel} from './06_Karte/label-layout.js';
+export type {JunctionLayoutOptions,LabelPlacement,ScreenBox,ScreenPoint} from './06_Karte/label-layout.js';
