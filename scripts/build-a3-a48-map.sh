@@ -27,10 +27,14 @@ END
 END
 POLY
 
-for state in rheinland-pfalz nordrhein-westfalen hessen; do
+for state in rheinland-pfalz koeln-regbez hessen; do
   echo "Download OSM: $state"
+  # Köln/Bonn/Siegburg lies in Regierungsbezirk Köln. Download only this
+  # genuine NRW sub-region (about 215MB instead of NRW's ~874MB).
+  region="$state"
+  if [[ "$state" == "koeln-regbez" ]]; then region="nordrhein-westfalen/koeln-regbez"; fi
   curl -fLsS --retry 3 --retry-delay 4 --connect-timeout 25 --max-time 1200 \
-    "https://download.geofabrik.de/europe/germany/$state-latest.osm.pbf" \
+    "https://download.geofabrik.de/europe/germany/$region-latest.osm.pbf" \
     -o "$WORK/$state.osm.pbf"
   test -s "$WORK/$state.osm.pbf"
   # Retain ORIGINAL motorway, ramp, connecting road and restriction data.
@@ -46,7 +50,7 @@ done
 echo "OSM: Merge original state boundaries and duplicate node IDs"
 osmium merge \
   "$WORK/rheinland-pfalz-roads.osm.pbf" \
-  "$WORK/nordrhein-westfalen-roads.osm.pbf" \
+  "$WORK/koeln-regbez-roads.osm.pbf" \
   "$WORK/hessen-roads.osm.pbf" \
   -o "$WORK/merged.osm.pbf"
 
