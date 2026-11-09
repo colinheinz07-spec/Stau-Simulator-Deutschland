@@ -17,6 +17,8 @@ test('Map HTML and its production imports exist; UI remains a real touch-enabled
   assert.match(page,/<div id="map"/);
   assert.match(page,/viewport-fit=cover/);
   assert.match(page,/src="\.\/bootstrap\.js"/);
+  assert.match(page,/src="\.\/legacy-geometry\.js"/);
+  assert.match(page,/src="\.\/legacy-canvas\.js"/);
   assert.match(page,/Simulationsstrecken/);
   assert.match(page,/A3 \/ A48/);
   assert.match(app,/motorwayMapEdges/);
