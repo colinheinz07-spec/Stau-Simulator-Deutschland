@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101a2d">
+  <meta name="description" content="Stau-Simulator Deutschland – interaktive Autobahnkarte mit geprüftem OSM-Testnetz.">
+  <title>Stau-Simulator Deutschland | Karte</title>
+  <link rel="preconnect" href="https://tile.openstreetmap.org">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzxK9LwRnxmHuOef7rAGQmS80A=" crossorigin="">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <div><strong>STAU SIMULATOR <span>DEUTSCHLAND</span></strong><small>Digitale Verkehrsmodellierung · Kartenprototyp</small></div>
+      </div>
+      <span class="version">PROTOTYP <b>0.2</b></span>
+    </header>
+    <main class="workspace">
+      <aside class="sidebar" aria-label="Kartensteuerung">
+        <section class="intro">
+          <span class="eyebrow">INTERAKTIVE KARTE</span>
+          <h1>Deutschlands<br>Autobahnen.</h1>
+          <p>Eine Karte für das ganze Bundesgebiet. Die farbigen Simulationsstrecken stammen nur aus dem tatsächlich importierten Autobahnnetz.</p>
+        </section>
+        <section class="controls" aria-label="Kartenausschnitt">
+          <h2>Ansicht</h2>
+          <div class="control-grid">
+            <button id="btn-germany" type="button" class="option-btn"><span aria-hidden="true">▦</span> Deutschland</button>
+            <button id="btn-test-region" type="button" class="option-btn selected"><span aria-hidden="true">◎</span> Testgebiet</button>
+          </div>
+          <label class="switch-row"><span>Simulationsstrecken</span><input id="toggle-network" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
+          <label class="switch-row"><span>AS-Bezeichnungen</span><input id="toggle-junctions" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
+        </section>
+        <section class="controls">
+          <h2>Darstellung</h2>
+          <div class="legend">
+            <div><span class="legend-swatch free"></span> <span>Freie Fahrt</span><small>&gt; 65 km/h</small></div>
+            <div><span class="legend-swatch slow"></span> <span>Stockend</span><small>31–65 km/h</small></div>
+            <div><span class="legend-swatch jam"></span> <span>Stau</span><small>11–30 km/h</small></div>
+            <div><span class="legend-swatch standstill"></span> <span>Stillstand</span><small>0–10 km/h</small></div>
+            <div><span class="legend-stripes"></span> <span>Vollsperrung</span><small>separat markiert</small></div>
+          </div>
+          <p class="disclaimer">Aktuell zeigt die App freie Modellgeschwindigkeiten. Keine Live-Staudaten und noch keine berechnete Rückstauphysik.</p>
+        </section>
+        <section class="controls demo-box">
+          <div class="rowline"><h2>Darstellung testen</h2><span class="tag">DEMO</span></div>
+          <p>Klicke auf eine grüne Strecke und wähle eine Anzeige. Das verändert keine echten Verkehrsdaten.</p>
+          <button id="reset-events" class="subtle-btn" type="button">Demonstration zurücksetzen</button>
+        </section>
+        <div class="sidebar-footer">© OpenStreetMap-Mitwirkende · ODbL<br>Netz und Sperrregeln werden deutschlandweit identisch verarbeitet.</div>
+      </aside>
+      <section class="map-pane" aria-label="Interaktive Deutschlandkarte">
+        <div id="map" role="application" aria-label="Zoombare Karte mit Autobahnen und importierten Simulationsstrecken"></div>
+        <div class="map-top">
+          <div class="coverage" id="coverage">
+            <span class="coverage-dot"></span>
+            <span><b>Echtes Testnetz: Bremen</b><small>Deutschlandkarte sichtbar · weitere Simulationsgebiete folgen</small></span>
+          </div>
+          <div class="map-chips"><span id="chip-roads">— Fahrwege</span><span id="chip-ramps">— Rampen</span></div>
+        </div>
+        <div class="map-center-message" id="map-message" role="status" aria-live="polite" hidden></div>
+        <div class="map-bottom-info" id="map-bottom-info">
+          <strong>Tippe auf einen grünen Straßenabschnitt</strong>
+          <span>Details, Fahrstreifen und Test-Ereignisse anzeigen.</span>
+        </div>
+        <div class="map-status" id="map-status" role="status" aria-live="polite">Karte wird vorbereitet …</div>
+      </section>
+    </main>
+  </div>
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <aside class="detail-drawer" id="detail-drawer" aria-label="Streckeninformationen" aria-hidden="true">
+    <div class="drawer-handle" aria-hidden="true"></div>
+    <div class="drawer-top"><span class="eyebrow">STRECKENDETAILS</span><button id="close-drawer" type="button" aria-label="Details schließen">✕</button></div>
+    <h2 id="detail-heading">Abschnitt</h2>
+    <p id="detail-type">—</p>
+    <dl class="details">
+      <div><dt>Fahrstreifen</dt><dd id="detail-lanes">—</dd></div>
+      <div><dt>Abschnittslänge</dt><dd id="detail-length">—</dd></div>
+      <div><dt>Geschwindigkeit</dt><dd id="detail-speed">—</dd></div>
+      <div><dt>OSM-Way</dt><dd id="detail-osm">—</dd></div>
+    </dl>
+    <div class="event-actions">
+      <h3>Test-Ereignis auf diesem Abschnitt</h3>
+      <p>Nur Kartendarstellung – noch kein berechneter Rückstau.</p>
+      <div class="events-grid">
+        <button type="button" data-event="none">Zurücksetzen</button>
+        <button type="button" data-event="slow">Stockend</button>
+        <button type="button" data-event="jam">Stau</button>
+        <button type="button" data-event="closure">Vollsperrung</button>
+      </div>
+    </div>
+  </aside>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
