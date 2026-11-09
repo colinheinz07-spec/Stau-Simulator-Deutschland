@@ -34,6 +34,9 @@ jobs:
           npm run check
           node --check web/app.js
           node --check web/network-loader.js
+          node --check web/bootstrap.js
+          node --check web/legacy-canvas.js
+          node --check web/legacy-geometry.js
       - name: Echte A3/A48 vollständig aus Rheinland-Pfalz, NRW und Hessen aufbauen
         run: |
           bash scripts/build-a3-a48-map.sh /tmp/map-build
@@ -55,7 +58,7 @@ jobs:
       - name: Karte und echte Daten als statische Webseite zusammenstellen
         run: |
           mkdir -p _site/data
-          cp web/index.html web/styles.css web/app.js web/network-loader.js web/simulation-controller.js web/bootstrap.js web/local-preview.js _site/
+          cp web/index.html web/styles.css web/app.js web/network-loader.js web/simulation-controller.js web/bootstrap.js web/legacy-canvas.js web/legacy-geometry.js _site/
           cp -R dist _site/dist
           cp -R /tmp/map-build/tiles _site/data/tiles
           cp /tmp/map-build/selected-network.json.audit.json _site/data/corridor-audit.json
