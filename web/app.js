@@ -29,6 +29,7 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
   maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-Mitwirkende</a>',
   crossOrigin:true,updateWhenIdle:true,keepBuffer:2
 }).addTo(map);
+window.__stauMap=map; // Share a constructed map with the OSM fallback on partial startup errors.
 const roadsLayer=L.layerGroup().addTo(map);
 const closedLayer=L.layerGroup().addTo(map);
 const junctionLayer=L.layerGroup().addTo(map);
