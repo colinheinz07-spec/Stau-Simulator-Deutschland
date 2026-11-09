@@ -33,3 +33,6 @@
   .simulation-stats{padding:6px;margin:8px 0;gap:3px}
   .simulation-stats span{font-size:9px}
   .simulation-controls .subtle-btn{padding:7px;font-size:10px}}
+
+/* Mobile users see the working simulation controls first; the map remains above. */
+@media(max-width:850px){.sidebar .simulation-controls{order:-1}}
