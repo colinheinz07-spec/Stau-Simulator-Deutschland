@@ -6,7 +6,7 @@ const CORRIDOR=[[50.155,6.86],[50.855,8.17]];
 const COUNTRY=[[47.1,5.65],[55.15,15.35]];
 const $=id=>document.getElementById(id);
 
-export async function startLocalPreview(existingMap=null){
+async function startLocalPreview(existingMap=null){
   const status=$("map-status"), message=$("map-message");
   const setStatus=text=>{if(status)status.textContent=text;};
   const setError=text=>{
@@ -38,7 +38,7 @@ export async function startLocalPreview(existingMap=null){
   $("map-bottom-info").querySelector("span").textContent=
     "OSM-Vorschau. Für Ereignisse und Simulation wird das gebaute Kartenpaket benötigt.";
   const overlay=L.layerGroup().addTo(map);
-  let showRoads=true,showJunctions=true,roadLines=[],loaded=false;
+  let showRoads=true,roadLines=[],loaded=false;
   const setCounts=(roads,ramps)=>{
     $("chip-roads").textContent=roads.toLocaleString("de-DE")+" Fahrwege";
     $("chip-ramps").textContent=ramps.toLocaleString("de-DE")+" Rampen";
@@ -62,7 +62,8 @@ export async function startLocalPreview(existingMap=null){
   $("btn-germany").addEventListener("click",()=>map.fitBounds(COUNTRY,{padding:[18,18]}));
   $("btn-test-region").addEventListener("click",()=>map.fitBounds(CORRIDOR,{padding:[16,16]}));
   $("toggle-network").addEventListener("change",e=>{showRoads=e.target.checked;draw();});
-  $("toggle-junctions").addEventListener("change",e=>{showJunctions=e.target.checked;});
+  const junctions=$("toggle-junctions");
+  if(junctions){junctions.disabled=true;junctions.closest(".switch-row").hidden=true;}
   for(const id of ["sim-toggle","sim-reset","reset-events","sim-demand"]){
     const element=$(id);
     if(element)element.disabled=true;
@@ -119,3 +120,6 @@ function escapeHtml(value){
     "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
   })[char]);
 }
+
+// A classic script works in SPCK previews even when ES module imports are blocked.
+window.startLocalPreview=startLocalPreview;
