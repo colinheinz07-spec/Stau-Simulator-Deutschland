@@ -3,7 +3,7 @@
  */
 export function chooseMapTiles(manifest,bounds,zoom,limit=80){
   if(!manifest||!Array.isArray(manifest.tiles))throw Error("Ungültiges Netzmanifest");
-  if(zoom<9)return [];
+  if(zoom<7)return [];
   const [south,west,north,east]=bounds;
   const overlaps=(b)=>b[0]<=north&&b[2]>=south&&b[1]<=east&&b[3]>=west;
   const picked=manifest.tiles.filter(t=>overlaps(t.bbox));
