@@ -13,3 +13,23 @@
 @media(max-width:410px){.brand-mark{width:32px;height:32px}.brand strong{font-size:11px}.brand small{font-size:8px}.version{padding:5px}.coverage small{display:none}.map-chips{max-width:70px}.map-bottom-info{max-width:216px}}
 /* On phones, keep zoom buttons and legally required OSM attribution ABOVE the bottom controls. */
 @media(max-width:850px){.map-pane .leaflet-bottom.leaflet-right,.map-pane .leaflet-bottom.leaflet-left{bottom:198px}.map-pane .leaflet-control-attribution{max-width:75vw}}
+
+/* Real cell-flow scenario controls: visually distinct from the static road legend. */
+.simulation-controls .disclaimer{margin:0 0 13px}
+.sim-start{display:block;width:100%;border:1px solid #3dc497;background:#127d5e;color:#fff;
+  border-radius:9px;padding:11px 8px;font-size:12px;font-weight:800;margin:9px 0 13px}
+.sim-start.running{background:#314763;border-color:#59738f}
+.sim-start:hover{filter:brightness(1.13)}
+.demand-input{display:flex;justify-content:space-between;align-items:center;color:#bdccdc;font-size:11px;margin:7px 0}
+.demand-input strong{color:#69e2b4}
+#sim-demand{display:block;width:100%;accent-color:#2ac394;cursor:pointer}
+.simulation-stats{display:grid;gap:6px;margin:13px 0;padding:10px;border-radius:9px;
+  background:#1c2d41;border:1px solid #344a61}
+.simulation-stats span{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#acbdd1}
+.simulation-stats b{color:#ecf7ff;white-space:nowrap}
+@media(max-width:850px){.simulation-controls{flex:0 0 237px;padding:12px}
+  .simulation-controls .disclaimer{font-size:9px;line-height:1.4;margin-bottom:8px}
+  .sim-start{margin:6px 0 8px;padding:8px}
+  .simulation-stats{padding:6px;margin:8px 0;gap:3px}
+  .simulation-stats span{font-size:9px}
+  .simulation-controls .subtle-btn{padding:7px;font-size:10px}}
