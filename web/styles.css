@@ -45,3 +45,5 @@
   .preview-only .map-bottom-info{bottom:207px}
   .preview-only .sidebar{max-height:180px}
 }
+
+.preview-only .switch-row[hidden]{display:none}
