@@ -51,3 +51,28 @@ test('Network tile fetch uses gzip, validates the stable key and caches by physi
     await assert.rejects(()=>repo.getTile({key:'212_35',file:'../other'}),/Kachel-Dateiname/);
   }finally{globalThis.fetch=original;}
 });
+
+test('SPCK source preview renders original OSM motorway geometry without generated dist or tiles',async()=>{
+  const page=await readFile('web/index.html','utf8');
+  const bootstrap=await readFile('web/bootstrap.js','utf8');
+  const preview=await readFile('web/local-preview.js','utf8');
+  const full=await readFile('web/app.js','utf8');
+  assert.match(page,/src="\.\/bootstrap\.js"/);
+  assert.match(page,/src="\.\/local-preview\.js"/);
+  assert.match(bootstrap,/location\.protocol==="file:"/);
+  assert.match(bootstrap,/\.\/data\/tiles\/manifest\.json/);
+  assert.match(bootstrap,/\.\/dist\/06_Karte\.js/);
+  assert.match(bootstrap,/startLocalPreview/);
+  assert.match(preview,/highway.*motorway_link/);
+  assert.match(preview,/out geom/);
+  assert.match(preview,/window\.startLocalPreview/);
+  assert.ok(!preview.includes('Math.random('),'preview must never invent roads');
+  assert.match(full,/startLocalPreview\(map\)/);
+  for(const workflowPath of [
+    '.github/workflows/publish-map.yml',
+    '.github/workflows/quick-map-preview.yml'
+  ]){
+    const workflow=await readFile(workflowPath,'utf8');
+    assert.match(workflow,/web\/bootstrap\.js web\/local-preview\.js/);
+  }
+});
