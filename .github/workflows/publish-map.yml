@@ -68,14 +68,37 @@ jobs:
               assert (site/'data/tiles'/tile['file']).stat().st_size>0
           print('Karte bereit:',manifest['counts'])
           PY
+      - name: Komplette Karten-Vorschau zum Herunterladen bereitstellen
+        uses: actions/upload-artifact@v4
+        with:
+          name: stau-simulator-deutschland-web-vorschau
+          path: _site/
+          retention-days: 30
+          if-no-files-found: error
       - name: GitHub Pages konfigurieren
+        id: pages_setup
+        continue-on-error: true
         uses: actions/configure-pages@v5
         with:
           enablement: true
       - name: Kartenseite bereitstellen
+        if: steps.pages_setup.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
       - name: Karte veröffentlichen
+        if: steps.pages_setup.outcome == 'success'
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: GitHub Pages Aktivierung erklären
+        if: steps.pages_setup.outcome != 'success'
+        run: |
+          {
+            echo "## Die Karten-Vorschau ist erfolgreich gebaut"
+            echo "Die ZIP-Datei **stau-simulator-deutschland-web-vorschau** findest du unter Artifacts."
+            echo
+            echo "Die öffentliche Seite braucht noch GitHub Pages: Repository > Settings > Pages >"
+            echo "**Build and deployment > Source: GitHub Actions**."
+            echo "Danach den Workflow **Interaktive Deutschlandkarte veröffentlichen**"
+            echo "unter Actions mit **Run workflow** starten."
+          } >> "$GITHUB_STEP_SUMMARY"
