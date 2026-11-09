@@ -1,4 +1,4 @@
-import {motorwayMapEdges,assembleVisibleTiles} from "./dist/06_Karte.js";
+import {motorwayMapEdges,assembleVisibleTiles,layoutJunctionLabels} from "./dist/06_Karte.js";
 import {chooseMapTiles,createTileRepository,edgeSummary} from "./network-loader.js";
 import {createTrafficScenario} from "./simulation-controller.js";
 import {auditConnections} from "./dist/01_Strassennetz.js";
@@ -133,18 +133,31 @@ function drawNetwork(){
     }
   }
   if(state.junctions&&map.getZoom()>=12){
-    let shown=0;
-    for(const node of state.network.nodes){
-      if(!node.junctionName&&!node.junctionRef)continue;
-      if(shown>=120)break;
-      const name=[node.junctionRef,node.junctionName].filter(Boolean).join(" · ");
+    const size=map.getSize();
+    // Carry over old simulator's label-collision safeguards. The OSM
+    // coordinate remains untouched; only overlapping TEXT is hidden.
+    const labels=layoutJunctionLabels(state.network.nodes,point=>{
+      const pixel=map.latLngToContainerPoint(point);
+      return {x:pixel.x,y:pixel.y};
+    },{
+      width:size.x,height:size.y,maxLabels:120,
+      reserved:[
+        {x:0,y:0,width:Math.min(375,size.x*.78),height:100},
+        {x:Math.max(0,size.x-95),y:0,width:95,height:160},
+        {x:0,y:Math.max(0,size.y-(window.innerWidth<=850?235:82)),
+          width:size.x,height:window.innerWidth<=850?235:82}
+      ]
+    });
+    for(const placed of labels){
       const tooltipText=document.createElement("span");
-      tooltipText.textContent=name; // OSM labels are untrusted source data, never HTML.
-      L.circleMarker(node.point,{radius:3,weight:1,color:"#fff",fillColor:"#16374a",
-        fillOpacity:.95,interactive:false}).bindTooltip(tooltipText,{
-          permanent:true,direction:"top",className:"junction-label",offset:[0,-4]
+      tooltipText.textContent=placed.label; // OSM label: safe text, not HTML.
+      const anchor=map.latLngToContainerPoint(placed.position);
+      const x=placed.box.x+placed.box.width/2-anchor.x;
+      const y=placed.box.y+placed.box.height-anchor.y;
+      L.circleMarker(placed.position,{radius:2.5,weight:1,color:"#fff",
+        fillColor:"#16374a",fillOpacity:.95,interactive:false}).bindTooltip(tooltipText,{
+          permanent:true,direction:"center",className:"junction-label",offset:[x,y]
         }).addTo(junctionLayer);
-      shown++;
     }
   }
 }
