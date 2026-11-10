@@ -135,7 +135,7 @@ function createLegacyTrafficScenario(data){
       visited.add(current.id);
       const take=Math.min(remaining,Math.max(0,current.lengthM-position));
       if(take>.001){
-        spans.push({edgeId:current.id,fromM:position,toM:position+take});
+        spans.push({edgeId:current.id,fromM:position,toM:position+take,gate:spans.length===0});
         covered+=take;remaining-=take;
       }
       if(remaining<=.01)break;
@@ -323,7 +323,7 @@ function createLegacyTrafficScenario(data){
           if(ev.shoulder==="blocked")shoulderBlocked=true;
           if(ev.speedKmh>0)permitted=Math.min(permitted,ev.speedKmh);
           if((ev.kind==="closure"||ev.closedLanes.length===edge.lanes&&
-            ev.shoulder!=="open")&&item.fromM>=a-.001&&item.fromM<b+.001)
+            ev.shoulder!=="open")&&item.gate&&item.fromM>=a-.001&&item.fromM<b+.001)
             blockedAtGate=true;
         }
         if(shoulderBlocked)shoulderOpen=false;
