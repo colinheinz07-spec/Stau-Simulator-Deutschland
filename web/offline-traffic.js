@@ -42,7 +42,7 @@ function createLegacyTrafficScenario(data){
       freeKmh:row[1]==="ramp"?75:120,
       jamPerCell:130*lanes*(meters/count)/1000,
       next:[],incoming:0,source:false,backlog:0,
-      mode:"none",speed:row[1]==="ramp"?75:120
+      mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[]
     };
     const index=edges.length;edge.index=index;edges.push(edge);byId.set(id,edge);
     if(!outByNode.has(edge.from))outByNode.set(edge.from,[]);
@@ -264,16 +264,38 @@ function createLegacyTrafficScenario(data){
   function recomputeSpeeds(){
     updateEffects();
     for(const edge of edges){
-      let fraction=0;
-      for(const vehicles of edge.stock)
-        fraction=Math.max(fraction,Math.min(1,vehicles/edge.jamPerCell));
-      let speed=edge.freeKmh*
-        (fraction<=.15?1:Math.max(.06,1-Math.pow((fraction-.15)/.85,1.4)));
-      for(const effect of activeEffects.get(edge.id)||[])
-        if(effect.event.speedKmh>0)
-          speed=Math.min(speed,effect.event.speedKmh);
-      edge.speed=speed;
+      const effectList=activeEffects.get(edge.id)||[];
+      let minSpeed=edge.freeKmh;
+      const bands=[];
+      for(let k=0;k<edge.n;k++){
+        const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
+        const fraction=Math.min(1,edge.stock[k]/edge.jamPerCell);
+        let speed=edge.freeKmh*
+          (fraction<=.15?1:Math.max(.06,1-Math.pow((fraction-.15)/.85,1.4)));
+        for(const effect of effectList){
+          if(effect.fromM>=b-.001||effect.toM<=a+.001)continue;
+          if(effect.event.speedKmh>0)
+            speed=Math.min(speed,effect.event.speedKmh);
+        }
+        minSpeed=Math.min(minSpeed,speed);
+        const color=colourForSpeed(speed);
+        if(color!=="free"){
+          const previous=bands.at(-1);
+          if(previous&&previous.color===color&&Math.abs(previous.toM-a)<.001)
+            previous.toM=b;
+          else bands.push({fromM:a,toM:b,color});
+        }
+      }
+      edge.speed=minSpeed;
+      edge.visualBands=bands;
     }
+  }
+  function visualBands(id){return byId.get(id)?.visualBands||[];}
+  function closureBands(id){
+    const effects=eventsOn(id);
+    return effects.filter(x=>x.event.kind==="closure"||
+      x.event.closedLanes.length===byId.get(id)?.lanes&&
+      x.event.shoulder!=="open").map(x=>({fromM:x.fromM,toM:x.toM}));
   }
   function reset(clearEvents=false){
     elapsed=0;generated=0;exited=0;
@@ -435,7 +457,7 @@ function createLegacyTrafficScenario(data){
   }
   function speed(id){return byId.get(id)?.speed??null;}
   function color(id){const edge=byId.get(id);return edge?colourForSpeed(edge.speed):"free";}
-  return {advance,step,reset,setMode,setEvent,removeEvent,listEvents,
+  return {advance,step,reset,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     reachable:id=>reachable.has(id),reachableCount:()=>reachable.size};
