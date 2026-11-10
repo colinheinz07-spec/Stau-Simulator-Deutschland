@@ -44,7 +44,7 @@ function createLegacyTrafficScenario(data){
       next:[],incoming:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120
     };
-    const index=edges.length;edges.push(edge);byId.set(id,edge);
+    const index=edges.length;edge.index=index;edges.push(edge);byId.set(id,edge);
     if(!outByNode.has(edge.from))outByNode.set(edge.from,[]);
     outByNode.get(edge.from).push(index);
     if(!inByNode.has(edge.to))inByNode.set(edge.to,[]);
@@ -103,6 +103,10 @@ function createLegacyTrafficScenario(data){
       reachable.add(downstream.id);frontier.push(downstream);
     }
   }
+  // Preallocate the physical cell working buffers to minimize iPhone GC pauses.
+  const send=edges.map(edge=>new Float64Array(edge.n));
+  const receive=edges.map(edge=>new Float64Array(edge.n));
+  const delta=edges.map(edge=>new Float64Array(edge.n));
   let elapsed=0,generated=0,exited=0,demandPercent=100;
   function totals(){
     let inside=0,backlog=0;
@@ -144,12 +148,12 @@ function createLegacyTrafficScenario(data){
     if(!finite(Number(pct))||Number(pct)>200)throw Error("Verkehrslast muss 0–200 % sein");
     demandPercent=Number(pct);
   }
-  function step(dt=5){
+  function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
-    const send=[],receive=[],delta=[];
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],n=edge.n,stock=edge.stock;
-      const s=new Float64Array(n),r=new Float64Array(n),d=new Float64Array(n);
+      const s=send[j],r=receive[j],d=delta[j];
+      d.fill(0);
       const blocked=edge.mode==="closure"?edge.lanes:
         edge.mode==="accident"?Math.min(edge.lanes,2):
         edge.mode==="roadworks"?1:0;
@@ -161,7 +165,6 @@ function createLegacyTrafficScenario(data){
         const room=Math.max(0,edge.jamPerCell-stock[k]);
         r[k]=Math.min(room,cap,room*wave);
       }
-      send.push(s);receive.push(r);delta.push(d);
     }
     // Simultaneous internal cell transfers. The upstream vehicle remains
     // stored if its downstream cell is too full to receive it.
@@ -207,7 +210,7 @@ function createLegacyTrafficScenario(data){
     // No internal phantom demand: source edges must be actual directed
     // network boundaries. Unadmitted vehicles remain in external backlog.
     for(const edge of sources){
-      const j=edges.indexOf(edge);
+      const j=edge.index;
       const offered=(edge.lanes*1750)*(demandPercent/100)*dt/3600;
       generated+=offered;
       const available=edge.backlog+offered;
@@ -225,7 +228,7 @@ function createLegacyTrafficScenario(data){
       }
     }
     elapsed+=dt;
-    recomputeSpeeds();
+    if(refreshSpeeds)recomputeSpeeds();
     const stats=totals();
     if(Math.abs(stats.conservationResidual)>1e-5*Math.max(1,generated))
       throw Error("Fahrzeugbilanz verletzt: "+stats.conservationResidual);
@@ -234,7 +237,7 @@ function createLegacyTrafficScenario(data){
   function advance(steps=12){
     if(!Number.isInteger(steps)||steps<1||steps>120)throw Error("Ungültige Simulationsschritte");
     let result;
-    for(let i=0;i<steps;i++)result=step();
+    for(let i=0;i<steps;i++)result=step(5,i===steps-1);
     return result;
   }
   function speed(id){return byId.get(id)?.speed??null;}
