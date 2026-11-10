@@ -11,10 +11,11 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   const window={devicePixelRatio:2,addEventListener(){}};
   runInNewContext(geometry,{window});
   runInNewContext(flow,{window});
-  const draw={strokes:0,lines:0};
+  const draw={strokes:0,lines:0,colors:[]};
   const ctx={
     setTransform(){},fillRect(){},beginPath(){},moveTo(){},
-    lineTo(){draw.lines++;},stroke(){draw.strokes++;},
+    lineTo(){draw.lines++;},stroke(){draw.strokes++;draw.colors.push(this.strokeStyle);},
+    setLineDash(){},
     fillText(){},measureText(){return {width:35}},drawImage(){}
   };
   function element(id){
@@ -76,4 +77,25 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   assert.equal(element("sim-clock").textContent,"1:00");
   assert.ok(Number(element("sim-vehicles").textContent.replaceAll(".",""))>0);
   assert.match(element("sim-toggle").textContent,/anhalten/);
+
+  // Tap a real A3 point and set a full closure through the actual mobile UI.
+  // The closure has its own red-white overlay, not fake traffic-speed coloring.
+  const refPoint=window.STAU_LEGACY_GEOMETRY.roads[0][4][0];
+  const merc=p=>[(p[1]+180)*256/360,
+    (1-Math.log(Math.tan(Math.PI/4+p[0]*Math.PI/360))/Math.PI)*128];
+  const sw=merc([50.15,6.84]),ne=merc([50.88,8.21]);
+  const z=Math.log2(Math.min(348/Math.abs(sw[0]-ne[0]),624/Math.abs(sw[1]-ne[1])));
+  const mid=[(sw[0]+ne[0])/2,(sw[1]+ne[1])/2],p=merc(refPoint);
+  const click={pointerId:1,clientX:195+(p[0]-mid[0])*2**z,
+    clientY:340+(p[1]-mid[1])*2**z};
+  listeners.get("create-canvas:pointerdown")(click);
+  listeners.get("create-canvas:pointerup")(click);
+  assert.equal(element("detail-drawer").classList.contains("open"),true,
+    "tapping actual road geometry should open incident tools");
+  listeners.get("event-closure:click")();
+  while(frames.length)frames.shift()();
+  assert.equal(element("detail-drawer").classList.contains("open"),false);
+  assert.ok(draw.colors.includes("#d52b3e"),"closure draws red stripes");
+  assert.ok(draw.colors.includes("#ffffff"),"closure draws white stripes");
+
 });
