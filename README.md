@@ -52,6 +52,14 @@ Die echten Deutschland-Rohdaten sind mehrere GB groß und **nicht in GitHub gesp
 - **Vollständiger GitHub-Workflow-Build:** Enthält kompiliertes `dist/` und importierte `data/tiles/`-Dateien; hier arbeitet die experimentelle Fahrzeug-Engine mit den frisch importierten gerichteten A3/A48-OSM-Strecken. Auch sie ist noch nicht deutschlandweit fertig.
 - **Nicht verwechseln:** Die lokale Legacy-Karte zeigt zusätzlich Autobahnen aus dem Altprojekt; das ist noch kein vollständig validiertes bundesweites Simulationsnetz. Rampenlücken aus der alten App können weiterhin bestehen und werden nicht automatisch als behoben ausgegeben.
 
+## Ereignisse konfigurieren (SPCK 0.4)
+
+In `web/index.html` auf einen OSM-Fahrweg tippen und **Baustelle, Unfall, Panne oder Vollsperrung** wählen. Im Ereigniseditor werden nicht sofort pauschal Spuren gesperrt: Es lassen sich die tatsächlichen Fahrstreifen (F1 rechts bis Fn links), Geschwindigkeit, Länge und Standstreifenstatus auswählen. Ein bestätigter Standstreifen kann als zusätzliche Fahrspur freigegeben werden; bei ausdrücklich als `shoulder=no` markierten OSM-Segmenten ist dies untersagt. Die 29 verfügbaren Schulter-OSM-Tags der alten A3/A48-Geometrie wurden übernommen; sonst ist die Verfügbarkeit unbekannt und muss bewusst für den gesamten betroffenen Abschnitt bestätigt werden.
+
+Zeitplanung: **sofort/dauerhaft**, **einmalig von–bis**, **wöchentlich wiederholt an frei ausgewählten Wochentagen**. Die Wiederholung folgt Europe/Berlin auch über Mitternacht und bei Zeitumstellung. Der Modellstart ist separat einstellbar. Ereignisse werden lokal im Browser gespeichert, können bearbeitet und entfernt werden. Pannen/Unfälle sind auf maximal 200 m begrenzt; Baustellen auf 20 km, Vollsperrungen auf 100 km. Bei unklaren Netzübergängen wird eine verkürzte tatsächliche Wirkung angezeigt. Mehrphasige Bauabläufe aus der alten App, automatische AS-Verkehrsführung und vollständige Umleitungen sind **noch nicht** übernommen.
+
+Kapazitäten und geschätzte Geschwindigkeiten reagieren auf die tatsächlich aktiven, von/bis-limitierten Fahrstreifen-Regeln. Sperren werden nur über die betroffenen Teilstücke rot-weiß markiert. Der lokale Prototyp verwendet weiterhin ein vereinfachtes Zellmodell; es ersetzt noch keine nach Zielen geroutete, flächendeckende Straßenverkehrssimulation.
+
 ## Entwicklungsstand
 Das Projekt befindet sich in der Aufbau- und Testphase. Die lokale SPCK-Karte ist jetzt ohne separates Build sichtbar. Die vollständige Stauphysik, Rampen-, Sperr- und Umleitungslogik befindet sich in den sechs Fachmodulen und wird weiter validiert. Deutschlandweite OSM-Daten sind noch nicht vollständig importiert.
 
