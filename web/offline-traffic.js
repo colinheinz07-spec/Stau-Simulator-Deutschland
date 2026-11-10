@@ -88,6 +88,17 @@ function createLegacyTrafficScenario(data){
       edge.source=true;sources.push(edge);
     }
   }
+  // Only edge paths downstream of source boundaries can receive model traffic.
+  // The rest remains visible OSM geometry but is not falsely presented as simulated.
+  const reachable=new Set(sources.map(edge=>edge.id));
+  const frontier=[...sources];
+  for(let k=0;k<frontier.length;k++){
+    for(const link of frontier[k].next){
+      const downstream=edges[link.to];
+      if(reachable.has(downstream.id))continue;
+      reachable.add(downstream.id);frontier.push(downstream);
+    }
+  }
   let elapsed=0,generated=0,exited=0,demandPercent=100;
   function totals(){
     let inside=0,backlog=0;
@@ -227,7 +238,8 @@ function createLegacyTrafficScenario(data){
   function mode(id){return byId.get(id)?.mode??"none";}
   function activeEvents(){return edges.filter(x=>x.mode!=="none").map(x=>({edgeId:x.id,kind:x.mode}));}
   return {advance,step,reset,setMode,setDemandPercent,totals,speed,color,mode,
-    activeEvents,sourceCount:()=>sources.length,edgeCount:()=>edges.length};
+    activeEvents,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
+    reachable:id=>reachable.has(id),reachableCount:()=>reachable.size};
 }
 global.createLegacyTrafficScenario=createLegacyTrafficScenario;
 })(window);
