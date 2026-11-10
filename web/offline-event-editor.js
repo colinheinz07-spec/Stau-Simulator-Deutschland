@@ -57,16 +57,19 @@ function createOfflineEventEditor(options){
     return laneInputs().filter(x=>x.checked).map(x=>Number(x.value));
   }
   function refreshShoulder(){
-    const possible=!!current&&current.kind!=="ramp";
+    const possible=!!current&&current.kind!=="ramp"&&current.shoulderTag!=="no";
     exists.disabled=!possible;
     if(!possible){exists.checked=false;shoulder.value="normal";}
     shoulder.disabled=!possible||!exists.checked||kind.value==="closure";
     if(shoulder.disabled)shoulder.value=kind.value==="closure"?"blocked":"normal";
     const open=shoulder.querySelector('option[value="open"]');
     if(open)open.disabled=shoulder.disabled;
-    $("ev-shoulder-help").textContent=possible?
-      "Die alte OSM-Karte weist Standstreifen nicht überall nach. Bitte nur bei tatsächlich vorhandenem Standstreifen bestätigen; die Freigabe ist eine Szenarioannahme.":
-      "Auf einer Rampe steht hier kein separat bestätigter Standstreifen zur Verfügung.";
+    $("ev-shoulder-help").textContent=current?.shoulderTag==="no"?
+      "OpenStreetMap kennzeichnet diesen Abschnitt ausdrücklich ohne Seitenstreifen. Eine Freigabe ist ausgeschlossen.":
+      current?.shoulderTag==="right"||current?.shoulderTag==="yes"?
+      "OpenStreetMap weist einen Seitenstreifen aus. Bitte prüfen, ob er im gewünschten Zeitraum durchgehend nutzbar ist.":
+      possible?"OpenStreetMap liefert hier keine sichere Angabe. Eine Freigabe gilt nur mit deiner Bestätigung für den gesamten betroffenen Abschnitt.":
+      "Für diese Rampe ist kein Standstreifen als zusätzliche Fahrspur bestätigt.";
   }
   function refreshSpeed(reset=true){
     const full=kind.value==="closure";
@@ -111,7 +114,7 @@ function createOfflineEventEditor(options){
     for(let i=0;i<count;i++)
       laneInputs()[i].checked=event?event.closedLanes.includes(i):
         kindValue==="closure"||i===0;
-    exists.checked=event?.hasShoulder||false;
+    exists.checked=event?.hasShoulder??(current.shoulderTag==="right"||current.shoulderTag==="yes");
     shoulder.value=event?.shoulder||"normal";
     const suggested={roadworks:500,accident:100,breakdown:50,closure:200};
     length.value=String(event?.lengthM??suggested[kindValue]);
@@ -165,6 +168,7 @@ function createOfflineEventEditor(options){
       throw Error("Bitte gültigen Datumsbereich, Wochentage und verschiedene Uhrzeiten wählen");
     return result;
   }
+  function afterReset(){persist();renderList();}
   function renderList(){
     list.replaceChildren();
     const values=scenario.listEvents();
@@ -275,7 +279,7 @@ function createOfflineEventEditor(options){
     if(minute===lastMinute)return;
     lastMinute=minute;renderList();
   }
-  return {onRoadSelected,closeForm,renderList,updateStatus};
+  return {onRoadSelected,closeForm,renderList,updateStatus,afterReset};
 }
 global.createOfflineEventEditor=createOfflineEventEditor;
 })(window);
