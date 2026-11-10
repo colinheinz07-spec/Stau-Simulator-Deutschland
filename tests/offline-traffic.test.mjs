@@ -29,6 +29,9 @@ test("conservative local OSM network: no invented source, rest-area exit exclude
   assert.equal(scenario.edgeCount(),4);
   assert.equal(scenario.totals().excludedRest,1);
   assert.equal(scenario.sourceCount(),1);
+  assert.equal(scenario.reachable("a"),true);
+  assert.equal(scenario.reachable("b"),true);
+  assert.equal(scenario.reachable("rest"),false);
   assert.equal(scenario.color("a"),"free");
   scenario.setDemandPercent(125);
   for(let i=0;i<6;i++)scenario.advance(12);
@@ -64,6 +67,9 @@ test("0 percent traffic cannot create model vehicles; near-but-not-connected lin
     ["up","mainline","A48",2,[[50,7],[50,7.01]],"",3],
     ["fake","mainline","A48",2,[[50,7.0102],[50,7.02]],"",4]
   ]});
+  assert.equal(scenario.reachable("up"),true);
+  assert.equal(scenario.reachable("fake"),false,
+    "close but nonconnected OSM paths must not be given fictitious inflow");
   scenario.setDemandPercent(0);
   scenario.advance(12);
   assert.equal(scenario.totals().generatedVehicles,0);
