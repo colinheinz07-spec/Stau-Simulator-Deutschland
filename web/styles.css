@@ -85,3 +85,50 @@
   .canvas-preview.traffic-ready .map-status{bottom:201px}
   .canvas-preview.traffic-ready .preview-zoom{bottom:209px}
 }
+
+/* 0.4 Ereigniseditor: touch-sized controls, accessible scrollable mobile drawer. */
+.incident-form{margin-top:15px;padding:13px 0 22px;border-top:1px solid #37506b}
+.incident-form[hidden],.incident-form [hidden],.incident-fields[hidden],
+.repeat-fields[hidden],.event-weekdays[hidden]{display:none!important}
+.incident-form h3{font-size:14px;margin:0 0 12px;color:#d8f6ed}
+.field-label{display:grid;gap:5px;margin:11px 0;font-size:12px;font-weight:650;color:#cbdbe9}
+.field-label input,.field-label select{
+  display:block;min-height:43px;width:100%;min-width:0;max-width:100%;
+  color:#f4fbff;background:#1c3248;border:1px solid #526a82;
+  border-radius:9px;padding:8px 10px;font:inherit;font-size:13px;color-scheme:dark
+}
+.field-label select:disabled,.field-label input:disabled{opacity:.55}
+.incident-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.event-lane-set,.event-weekdays{margin:12px 0;border:1px solid #435c73;border-radius:10px;padding:10px}
+.event-lane-set legend,.event-weekdays legend{font-size:12px;font-weight:750;color:#e0f3ff;padding:0 5px}
+.incident-form .event-lane-set p,.incident-form .event-help{color:#a8c4d8;font-size:11px;line-height:1.4;margin:6px 0}
+.event-lanes{display:grid;grid-template-columns:1fr;gap:5px}
+.event-check,.event-weekdays label{display:flex;align-items:center;gap:8px;
+  padding:8px;background:#1b3349;border-radius:7px;font-size:12px;line-height:1.3}
+.event-check input,.event-weekdays input{width:19px;height:19px;flex:none;accent-color:#2ecb99}
+.event-weekdays>div{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+.event-weekdays label{padding:6px;font-size:11px;white-space:nowrap}
+.event-form-actions{display:grid;gap:8px;margin-top:14px}
+.event-form-actions button{min-height:44px}
+.event-error{padding:9px;border:1px solid #b76269;border-radius:8px;
+  background:#4b2831;color:#fff;font-size:12px}
+.incident-form .event-error[hidden]{display:none!important}
+.planned-events{margin:10px 0;display:grid;gap:8px}
+.planned-events h3{margin:0;font-size:12px}
+.planned-event{padding:10px;background:#1b3044;border:1px solid #41596d;border-radius:10px}
+.planned-event strong{display:block;font-size:12px}
+.planned-event small{display:block;color:#c3d5e2;font-size:10px;line-height:1.5;margin:5px 0}
+.planned-state{display:block;color:#75e3b9;font-size:11px;font-weight:750}
+.event-list-actions{display:flex;gap:6px;margin-top:8px}
+.event-list-actions button{border:1px solid #57728b;border-radius:7px;
+  padding:8px;background:#234158;color:#effaff;font-size:11px}
+.detail-drawer .events-grid button{min-height:44px;line-height:1.25}
+@media(max-width:850px){
+  .detail-drawer{left:0;right:0;top:7dvh;bottom:0;width:100%;max-width:none;
+    border-radius:17px 17px 0 0;padding:16px 16px calc(24px + env(safe-area-inset-bottom));
+    transform:translateY(105%);overscroll-behavior:contain;overflow-y:auto}
+  .detail-drawer.open{transform:translateY(0)}
+  .detail-drawer .events-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .incident-fields{grid-template-columns:1fr 1fr}
+}
+@media(max-width:350px){.incident-fields{grid-template-columns:1fr}}
