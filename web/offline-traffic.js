@@ -332,10 +332,15 @@ function createLegacyTrafficScenario(data){
         const moving=Math.min(1,(permitted/3.6)*dt/edge.cellLength);
         // Block receiving at the first closure cell, but let already-present
         // vehicles discharge through the closed section's downstream cells.
-        const sendingCapacity=blockedAtGate?edge.lanes*edge.capacityPerLane*dt/3600:cap;
-        s[k]=Math.min(stock[k],sendingCapacity,stock[k]*moving);
+        const evacuated=local.some(x=>x.event.kind==="closure"||
+          x.event.closedLanes.length===edge.lanes&&x.event.shoulder!=="open");
+        // Vehicles already behind a closure's entrance gate may exit the
+        // restricted area. Gate receiving is zero; interior flow can drain.
+        const transferCapacity=evacuated?
+          edge.lanes*edge.capacityPerLane*dt/3600:cap;
+        s[k]=Math.min(stock[k],transferCapacity,stock[k]*moving);
         const room=Math.max(0,edge.jamPerCell-stock[k]);
-        r[k]=blockedAtGate?0:Math.min(room,cap,room*wave);
+        r[k]=blockedAtGate?0:Math.min(room,transferCapacity,room*wave);
       }
     }
     // Simultaneous internal cell transfers. The upstream vehicle remains
@@ -352,7 +357,20 @@ function createLegacyTrafficScenario(data){
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],s=send[j],available=s[s.length-1];
       if(available<=0||!edge.next.length)continue;
-      const valid=edge.next.filter(x=>receive[x.to][0]>0);
+      const valid=edge.next.filter(x=>{
+        if(receive[x.to][0]<=0)return false;
+        // A downstream mainline already inside a long closure may be
+        // evacuated only from other edges in the SAME closed corridor span.
+        // Ordinary on-ramps must not enter that closed stretch.
+        const toEffects=activeEffects.get(edges[x.to].id)||[];
+        const closed=toEffects.filter(item=>item.fromM<.001&&
+          (item.event.kind==="closure"||
+           item.event.closedLanes.length===edges[x.to].lanes&&
+           item.event.shoulder!=="open"));
+        if(!closed.length)return true;
+        const upstream=activeEffects.get(edge.id)||[];
+        return closed.some(item=>upstream.some(from=>from.event.id===item.event.id));
+      });
       if(!valid.length)continue;
       const totalWeight=valid.reduce((sum,x)=>sum+x.weight,0);
       for(const link of valid){
