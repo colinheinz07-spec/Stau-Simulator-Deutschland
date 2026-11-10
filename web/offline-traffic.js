@@ -33,7 +33,7 @@ function createLegacyTrafficScenario(data){
     if(meters<0.2||byId.has(id))continue;
     const count=Math.max(1,Math.ceil(meters/230));
     const edge={
-      id,kind:row[1],ref:row[2],lanes,
+      id,kind:row[1],ref:row[2],lanes,shoulderTag:row[7]||null,
       from:coord(row[4][0]),to:coord(row[4].at(-1)),
       first:row[4][0],lengthM:meters,
       n:count,cellLength:meters/count,
@@ -163,7 +163,7 @@ function createLegacyTrafficScenario(data){
     const shoulder=raw.shoulder||"normal",hasShoulder=raw.hasShoulder===true;
     if(!["normal","blocked","open"].includes(shoulder))
       throw Error("Ungültige Seitenstreifen-Einstellung");
-    if(shoulder==="open"&&(!hasShoulder||edge.kind==="ramp"))
+    if(shoulder==="open"&&(!hasShoulder||edge.kind==="ramp"||edge.shoulderTag==="no"))
       throw Error("Standstreifen-Freigabe nur nach bestätigter Verfügbarkeit auf Hauptfahrbahn");
     if(kind==="closure"&&
       (closedLanes.length!==edge.lanes||shoulder==="open"))
@@ -192,6 +192,9 @@ function createLegacyTrafficScenario(data){
       shoulder,hasShoulder,lengthM:length,offsetM:offset,speedKmh:speed,
       schedule: schedule?structuredCloneSchedule(schedule):null};
     const traceResult=trace(edge,offset,length);
+    if(shoulder==="open"&&traceResult.spans.some(span=>
+      byId.get(span.edgeId)?.shoulderTag==="no"))
+      throw Error("Mindestens ein betroffener OSM-Abschnitt hat keinen Seitenstreifen");
     return {...spec,...traceResult,spec};
   }
   function structuredCloneSchedule(s){return JSON.parse(JSON.stringify(s));}
