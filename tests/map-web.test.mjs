@@ -19,6 +19,7 @@ test('Map HTML and its production imports exist; UI remains a real touch-enabled
   assert.match(page,/src="\.\/bootstrap\.js"/);
   assert.match(page,/src="\.\/legacy-geometry\.js"/);
   assert.match(page,/src="\.\/legacy-canvas\.js"/);
+  assert.match(page,/src="\.\/offline-traffic\.js"/);
   assert.match(page,/Simulationsstrecken/);
   assert.match(page,/A3 \/ A48/);
   assert.match(app,/motorwayMapEdges/);
@@ -60,6 +61,7 @@ test('SPCK source preview reuses local geometry and loads without Leaflet or Ove
   const bootstrap=await readFile('web/bootstrap.js','utf8');
   const canvas=await readFile('web/legacy-canvas.js','utf8');
   const geometry=await readFile('web/legacy-geometry.js','utf8');
+  const flow=await readFile('web/offline-traffic.js','utf8');
   const full=await readFile('web/app.js','utf8');
   assert.match(page,/src="\.\/bootstrap\.js"/);
   assert.ok(!page.includes('src="https://unpkg.com/leaflet'),
@@ -68,6 +70,8 @@ test('SPCK source preview reuses local geometry and loads without Leaflet or Ove
   assert.match(bootstrap,/startLegacyFallback/);
   assert.match(bootstrap,/\.\/legacy-geometry\.js/);
   assert.match(bootstrap,/\.\/legacy-canvas\.js/);
+  assert.match(bootstrap,/\.\/offline-traffic\.js/);
+  assert.match(flow,/conservationResidual/);
   assert.match(bootstrap,/\.\/data\/tiles\/manifest\.json/);
   assert.match(bootstrap,/\.\/dist\/06_Karte\.js/);
   assert.match(canvas,/window\.startLegacyCanvas/);
@@ -93,6 +97,6 @@ test('SPCK source preview reuses local geometry and loads without Leaflet or Ove
     '.github/workflows/quick-map-preview.yml'
   ]){
     const workflow=await readFile(workflowPath,'utf8');
-    assert.match(workflow,/web\/bootstrap\.js web\/legacy-canvas\.js web\/legacy-geometry\.js/);
+    assert.match(workflow,/web\/bootstrap\.js web\/legacy-canvas\.js web\/legacy-geometry\.js web\/offline-traffic\.js/);
   }
 });
