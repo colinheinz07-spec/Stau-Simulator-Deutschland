@@ -81,10 +81,14 @@ function createLegacyTrafficScenario(data){
     const box=limits.get(edge.ref);
     if(!box)continue;
     const [lat,lon]=edge.first;
-    const latMargin=Math.max(.001,(box.maxLat-box.minLat)*.035);
-    const lonMargin=Math.max(.001,(box.maxLon-box.minLon)*.035);
-    if(lat-box.minLat<=latMargin||box.maxLat-lat<=latMargin||
-       lon-box.minLon<=lonMargin||box.maxLon-lon<=lonMargin){
+    const latSpan=box.maxLat-box.minLat,lonSpan=box.maxLon-box.minLon;
+    const northSouthKm=latSpan*111,westEastKm=lonSpan*111*Math.cos(lat*rad);
+    const useLat=latSpan>.002&&northSouthKm>=westEastKm*.8;
+    const useLon=lonSpan>.002&&westEastKm>=northSouthKm*.8;
+    const latMargin=latSpan*.035,lonMargin=lonSpan*.035;
+    if((useLat&&(lat-box.minLat<=latMargin||box.maxLat-lat<=latMargin))||
+       (useLon&&(lon-box.minLon<=lonMargin||box.maxLon-lon<=lonMargin))||
+       (!useLat&&!useLon&&lat===box.minLat&&lon===box.minLon)){
       edge.source=true;sources.push(edge);
     }
   }
