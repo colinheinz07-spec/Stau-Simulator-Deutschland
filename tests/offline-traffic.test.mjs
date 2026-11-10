@@ -65,7 +65,7 @@ test("full closure blocks its physical cross-section; upstream density slows",as
 test("0 percent traffic cannot create model vehicles; near-but-not-connected links stay separate",async()=>{
   const scenario=(await engine())({roads:[
     ["up","mainline","A48",2,[[50,7],[50,7.01]],"",3],
-    ["fake","mainline","A48",2,[[50,7.0102],[50,7.02]],"",4]
+    ["fake","ramp","A48",1,[[50,7.0102],[50,7.02]],"",4]
   ]});
   assert.equal(scenario.reachable("up"),true);
   assert.equal(scenario.reachable("fake"),false,
