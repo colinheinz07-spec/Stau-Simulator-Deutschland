@@ -465,7 +465,7 @@ async function startLegacyCanvas(existingMap=null){
     pauseSimulation();scenario.reset(false);displayStats();eventEditor?.renderList();requestDraw();
   });
   $("reset-events").addEventListener("click",()=>{
-    pauseSimulation();scenario.reset(true);close();eventEditor?.renderList();displayStats();requestDraw();
+    pauseSimulation();scenario.reset(true);close();eventEditor?.afterReset();displayStats();requestDraw();
   });
   function focusRoad(id,at=0){
     const road=segments.find(s=>s.id===id);
