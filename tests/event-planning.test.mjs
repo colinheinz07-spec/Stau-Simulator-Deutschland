@@ -125,3 +125,19 @@ test("long closure stops new entrants while already present vehicles can evacuat
   assert.equal(s.mode("b"),"closure");
   assert.equal(s.mode("c"),"closure");
 });
+
+test("OSM shoulder=no overrides user confirmation across a long work-zone chain",async()=>{
+  const data=fixture();
+  data.roads[1][7]="right";
+  data.roads[2][7]="no";
+  const s=(await model()).createLegacyTrafficScenario(data);
+  const short=s.setEvent(incident({id:"shoulder-short",closedLanes:[0,1,2],
+    shoulder:"open",hasShoulder:true,offsetM:0,lengthM:100,speedKmh:40}));
+  assert.equal(short.truncated,false);
+  assert.throws(()=>s.setEvent(incident({id:"shoulder-long",closedLanes:[0,1,2],
+    shoulder:"open",hasShoulder:true,offsetM:0,lengthM:1600,speedKmh:40})),
+    /keinen Seitenstreifen/);
+  assert.throws(()=>s.setEvent(incident({id:"shoulder-no",edgeId:"c",
+    closedLanes:[0,1,2],shoulder:"open",hasShoulder:true,lengthM:100,speedKmh:40})),
+    /Standstreifen/);
+});
