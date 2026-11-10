@@ -80,7 +80,7 @@ test("individual lanes, shoulder verification, accident length and full closure 
   assert.throws(()=>s.setEvent(incident({kind:"accident",lengthM:201})),/Ereignislänge/);
   assert.throws(()=>s.setEvent(incident({kind:"closure",closedLanes:[0,1],speedKmh:0})),/Vollsperrung/);
   assert.throws(()=>s.setEvent(incident({speedKmh:0})),/Geschwindigkeit/);
-  assert.throws(()=>s.setEvent(incident({kind:"accident",schedule:{
+  assert.throws(()=>s.setEvent(incident({kind:"accident",lengthM:100,schedule:{
     mode:"repeat",firstDate:"2026-11-10",lastDate:"2026-11-10",
     startTime:"19:00",endTime:"20:00",weekdays:[2]}})),/Wiederkehrende/);
   const withShoulder=s.setEvent(incident({hasShoulder:true,shoulder:"open",
