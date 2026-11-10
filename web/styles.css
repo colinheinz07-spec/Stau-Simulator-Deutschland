@@ -72,3 +72,16 @@
   .canvas-preview .coverage{max-width:min(240px,68vw)}
   .canvas-preview .map-chips{max-width:100px}
 }
+
+/* Local traffic model uses the existing mobile controls; SPCK map stays Canvas. */
+.canvas-preview.traffic-ready .simulation-controls,
+.canvas-preview.traffic-ready .demo-box{display:block}
+.canvas-preview.traffic-ready .sidebar{max-height:195px}
+.canvas-preview.traffic-ready .events-grid button.selected{
+  border-color:#80efca;background:#165643;color:#fff
+}
+@media(max-width:850px){
+  .canvas-preview.traffic-ready .sidebar{max-height:195px}
+  .canvas-preview.traffic-ready .map-status{bottom:201px}
+  .canvas-preview.traffic-ready .preview-zoom{bottom:209px}
+}
