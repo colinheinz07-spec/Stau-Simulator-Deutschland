@@ -76,7 +76,7 @@ test("individual lanes, shoulder verification, accident length and full closure 
   assert.throws(()=>s.setEvent(incident({closedLanes:[0,0]})),/Fahrstreifen/);
   assert.throws(()=>s.setEvent(incident({closedLanes:[0,3]})),/Fahrstreifen/);
   assert.throws(()=>s.setEvent(incident({shoulder:"open"})),/Standstreifen/);
-  assert.throws(()=>s.setEvent(incident({edgeId:"r",hasShoulder:true,shoulder:"open"})),/Standstreifen/);
+  assert.throws(()=>s.setEvent(incident({edgeId:"r",closedLanes:[0],hasShoulder:true,shoulder:"open"})),/Standstreifen/);
   assert.throws(()=>s.setEvent(incident({kind:"accident",lengthM:201})),/Ereignislänge/);
   assert.throws(()=>s.setEvent(incident({kind:"closure",closedLanes:[0,1],speedKmh:0})),/Vollsperrung/);
   assert.throws(()=>s.setEvent(incident({speedKmh:0})),/Geschwindigkeit/);
