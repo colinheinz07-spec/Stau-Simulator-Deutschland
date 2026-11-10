@@ -16,7 +16,7 @@
         <span class="brand-mark" aria-hidden="true">A</span>
         <div><strong>STAU SIMULATOR <span>DEUTSCHLAND</span></strong><small>Digitale Verkehrsmodellierung · Kartenprototyp</small></div>
       </div>
-      <span class="version">PROTOTYP <b>0.2</b></span>
+      <span class="version">PROTOTYP <b>0.3</b></span>
     </header>
     <main class="workspace">
       <aside class="sidebar" aria-label="Kartensteuerung">
@@ -56,7 +56,7 @@
             <div><span class="legend-swatch standstill"></span> <span>Stillstand</span><small>0–10 km/h</small></div>
             <div><span class="legend-stripes"></span> <span>Vollsperrung</span><small>separat markiert</small></div>
           </div>
-          <p class="disclaimer">Aktuell zeigt die App freie Modellgeschwindigkeiten. Keine Live-Staudaten und noch keine berechnete Rückstauphysik.</p>
+          <p class="disclaimer">Die lokale Simulation berechnet Fahrzeugbestände und Geschwindigkeiten. Keine Live-Daten; ein vollständiges Routing und lokale AS-Nachfragen folgen.</p>
         </section>
         <section class="controls demo-box">
           <div class="rowline"><h2>Darstellung testen</h2><span class="tag">DEMO</span></div>
@@ -107,6 +107,7 @@
     </div>
   </aside>
   <script src="./legacy-geometry.js"></script>
+  <script src="./offline-traffic.js"></script>
   <script src="./legacy-canvas.js"></script>
   <script src="./bootstrap.js"></script>
 </body>
