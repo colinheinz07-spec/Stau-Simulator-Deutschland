@@ -26,8 +26,12 @@ function loadStyle(href){
 window.startLegacyFallback=async function(existingMap=null){
   if(!window.STAU_LEGACY_GEOMETRY)
     await loadScript("./legacy-geometry.js");
+  if(!window.StauEventSchedule)
+    await loadScript("./event-schedule.js");
   if(typeof window.createLegacyTrafficScenario!=="function")
     await loadScript("./offline-traffic.js");
+  if(typeof window.createOfflineEventEditor!=="function")
+    await loadScript("./offline-event-editor.js");
   if(typeof window.startLegacyCanvas!=="function")
     await loadScript("./legacy-canvas.js");
   await window.startLegacyCanvas(existingMap);
