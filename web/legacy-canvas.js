@@ -192,36 +192,60 @@ async function startLegacyCanvas(existingMap=null){
   const trafficColors={
     free:"#19b979",slow:"#efae47",jam:"#e34f56",standstill:"#782842"
   };
+  // Clip an OSM polyline to the *physical* event/cell interval instead of
+  // coloring an entire road Way for a short, point-like accident.
+  function appendRange(road,fromM,toM,scale){
+    const left=Math.max(0,fromM),right=Math.min(road.meters,toM);
+    if(right-left<.001)return false;
+    let started=false;
+    for(let i=1;i<road.points.length;i++){
+      const a=road.cumulative[i-1],b=road.cumulative[i];
+      if(b<=left||a>=right||b-a<.00001)continue;
+      const t0=clamp((left-a)/(b-a),0,1),t1=clamp((right-a)/(b-a),0,1);
+      if(t1<=t0)continue;
+      const p=road.points[i-1],q=road.points[i];
+      const xy=t=>[(p[0]+(q[0]-p[0])*t-center[0])*scale+width/2,
+        (p[1]+(q[1]-p[1])*t-center[1])*scale+height/2];
+      if(!started){const start=xy(t0);context.moveTo(start[0],start[1]);started=true;}
+      const finish=xy(t1);context.lineTo(finish[0],finish[1]);
+    }
+    return started;
+  }
   function strokeGroup(roads,line,scale){
-    const states={free:[],slow:[],jam:[],standstill:[]};
+    const view=roads.filter(road=>road!==selected&&inView(road,scale));
     context.beginPath();
-    for(const road of roads){
-      if(road===selected||!inView(road,scale))continue;
-      appendRoad(road,scale);
-      states[scenario.color(road.id)].push(road);
-    }
+    for(const road of view)appendRoad(road,scale);
     context.lineWidth=line+2;
-    context.strokeStyle="#132c3a";
-    context.stroke();
+    context.strokeStyle="#132c3a";context.stroke();
     context.lineWidth=line;
-    for(const [state,items] of Object.entries(states)){
-      if(!items.length)continue;
+    context.strokeStyle=trafficColors.free;context.stroke();
+
+    // Only non-free subsegments need more drawing. Static geometry remains
+    // batched into two strokes on every touch move.
+    for(const state of ["slow","jam","standstill"]){
       context.beginPath();
-      for(const road of items)appendRoad(road,scale);
-      context.strokeStyle=trafficColors[state];
-      context.stroke();
+      let changed=false;
+      for(const road of view){
+        for(const part of scenario.visualBands(road.id)){
+          if(part.color===state)
+            changed=appendRange(road,part.fromM,part.toM,scale)||changed;
+        }
+      }
+      if(changed){
+        context.lineWidth=line;context.strokeStyle=trafficColors[state];context.stroke();
+      }
     }
-    // A full closure is NOT a black traffic jam on an empty road.
-    // It is independently marked by a red-white roadblock overlay.
-    const closed=roads.filter(road=>road!==selected&&inView(road,scale)&&
-      scenario.mode(road.id)==="closure");
+    const closed=[];
+    for(const road of view){
+      for(const part of scenario.closureBands(road.id))
+        closed.push({road,...part});
+    }
     if(closed.length){
       context.beginPath();
-      for(const road of closed)appendRoad(road,scale);
+      for(const part of closed)appendRange(part.road,part.fromM,part.toM,scale);
       context.lineWidth=line+2;
       if(typeof context.setLineDash==="function"){
-        context.setLineDash([10,9]);
-        context.lineDashOffset=0;
+        context.setLineDash([10,9]);context.lineDashOffset=0;
       }
       context.strokeStyle="#d52b3e";context.stroke();
       if(typeof context.setLineDash==="function"){
