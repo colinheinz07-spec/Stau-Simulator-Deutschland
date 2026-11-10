@@ -107,6 +107,8 @@ function createLegacyTrafficScenario(data){
   const send=edges.map(edge=>new Float64Array(edge.n));
   const receive=edges.map(edge=>new Float64Array(edge.n));
   const delta=edges.map(edge=>new Float64Array(edge.n));
+  const eventRecords=new Map();
+  let activeEffects=new Map(),effectsStamp=null,simStart=Date.now();
   let elapsed=0,generated=0,exited=0,demandPercent=100;
   function totals(){
     let inside=0,backlog=0;
@@ -120,29 +122,180 @@ function createLegacyTrafficScenario(data){
       conservationResidual:Math.abs(residual)<1e-7?0:residual,
       sources:sources.length,edges:edges.length,excludedRest};
   }
+  function clockMs(){return simStart+elapsed*1000;}
+  function listEvents(){
+    return [...eventRecords.values()].map(record=>({...record.spec,
+      coveredLengthM:record.coveredLengthM,truncated:record.truncated}));
+  }
+  function trace(edge,offset,requestedM){
+    let current=edge,position=offset,remaining=requestedM,covered=0,spans=[];
+    const visited=new Set();
+    for(let hops=0;hops<2000&&remaining>.01;hops++){
+      if(visited.has(current.id))break;
+      visited.add(current.id);
+      const take=Math.min(remaining,Math.max(0,current.lengthM-position));
+      if(take>.001){
+        spans.push({edgeId:current.id,fromM:position,toM:position+take});
+        covered+=take;remaining-=take;
+      }
+      if(remaining<=.01)break;
+      const candidates=current.next.map(x=>edges[x.to]).filter(x=>
+        x.ref===edge.ref&&x.kind===edge.kind&&!visited.has(x.id));
+      // Never guess which fork to follow or invent a missing ramp connection.
+      if(candidates.length!==1)break;
+      current=candidates[0];position=0;
+    }
+    return {spans,coveredLengthM:covered,truncated:remaining>.01};
+  }
+  function checkedEvent(raw){
+    if(!raw||typeof raw!=="object")throw Error("Ereignisdaten fehlen");
+    const edge=byId.get(raw.edgeId),kind=raw.kind;
+    if(!edge)throw Error("Unbekannter OSM-Fahrweg");
+    if(!["roadworks","accident","breakdown","closure"].includes(kind))
+      throw Error("Ungültiger Ereignistyp");
+    const id=String(raw.id||"");
+    if(!id||id.length>100||!/^[a-zA-Z0-9_-]+$/.test(id))
+      throw Error("Ungültige Ereignis-ID");
+    const closedLanes=raw.closedLanes;
+    if(!Array.isArray(closedLanes)||new Set(closedLanes).size!==closedLanes.length||
+      !closedLanes.every(n=>Number.isInteger(n)&&n>=0&&n<edge.lanes))
+      throw Error("Ungültige Fahrstreifen-Auswahl");
+    const shoulder=raw.shoulder||"normal",hasShoulder=raw.hasShoulder===true;
+    if(!["normal","blocked","open"].includes(shoulder))
+      throw Error("Ungültige Seitenstreifen-Einstellung");
+    if(shoulder==="open"&&(!hasShoulder||edge.kind==="ramp"))
+      throw Error("Standstreifen-Freigabe nur nach bestätigter Verfügbarkeit auf Hauptfahrbahn");
+    if(kind==="closure"&&
+      (closedLanes.length!==edge.lanes||shoulder==="open"))
+      throw Error("Vollsperrung muss sämtliche vorhandenen Fahrstreifen schließen");
+    const max=kind==="accident"||kind==="breakdown"?200:
+      kind==="roadworks"?20000:100000;
+    const length=Number(raw.lengthM),offset=Number(raw.offsetM??0);
+    if(!Number.isInteger(length)||length<1||length>max)
+      throw Error("Ereignislänge muss zwischen 1 und "+max+" Metern liegen");
+    if(!Number.isFinite(offset)||offset<0||offset>=edge.lengthM)
+      throw Error("Ereignisposition liegt außerhalb des OSM-Fahrwegs");
+    const open=edge.lanes-closedLanes.length+Number(shoulder==="open");
+    const speed=Number(raw.speedKmh);
+    if(!Number.isInteger(speed)||speed<0||speed>130||speed%10!==0||
+      (kind==="closure"&&speed!==0)||(!open&&speed!==0)||
+      (kind!=="closure"&&open>0&&speed===0))
+      throw Error("Geschwindigkeit passt nicht zur gewählten Verkehrsführung");
+    const schedule=raw.schedule??null;
+    if(schedule&&typeof global.StauEventSchedule?.validate!=="function")
+      throw Error("Kalender-Modul fehlt");
+    if(schedule&&!global.StauEventSchedule.validate(schedule))
+      throw Error("Ungültiger Zeitplan oder Wiederholung");
+    if(schedule?.mode==="repeat"&&!["roadworks","closure"].includes(kind))
+      throw Error("Wiederkehrende Termine nur für Baustellen und Vollsperrungen");
+    const spec={id,edgeId:edge.id,kind,closedLanes:[...closedLanes].sort((a,b)=>a-b),
+      shoulder,hasShoulder,lengthM:length,offsetM:offset,speedKmh:speed,
+      schedule: schedule?structuredCloneSchedule(schedule):null};
+    const traceResult=trace(edge,offset,length);
+    return {...spec,...traceResult,spec};
+  }
+  function structuredCloneSchedule(s){return JSON.parse(JSON.stringify(s));}
+  function setEvent(spec){
+    if(eventRecords.size>=150&&!eventRecords.has(spec?.id))
+      throw Error("Maximal 150 Ereignisse im mobilen Prototyp");
+    const valid=checkedEvent(spec);
+    eventRecords.set(valid.spec.id,valid);effectsStamp=null;
+    updateEffects();
+    recomputeSpeeds();
+    return {...valid.spec,coveredLengthM:valid.coveredLengthM,
+      truncated:valid.truncated};
+  }
+  function removeEvent(id){
+    const removed=eventRecords.delete(id);effectsStamp=null;
+    updateEffects();recomputeSpeeds();return removed;
+  }
+  function updateEffects(){
+    const time=clockMs();
+    // One set per 5-second step. Changing the event catalog invalidates it.
+    if(effectsStamp===time)return;
+    effectsStamp=time;
+    const byEdge=new Map();
+    for(const record of eventRecords.values()){
+      if(record.spec.schedule&&!global.StauEventSchedule.active(record.spec.schedule,time))
+        continue;
+      for(const span of record.spans){
+        const list=byEdge.get(span.edgeId)||[];
+        list.push({...span,event:record.spec});
+        byEdge.set(span.edgeId,list);
+      }
+    }
+    activeEffects=byEdge;
+  }
+  function eventsOn(id){updateEffects();return activeEffects.get(id)||[];}
+  function mode(id){
+    const effects=eventsOn(id);
+    if(effects.some(x=>x.event.kind==="closure"))return "closure";
+    return effects.at(-1)?.event.kind||"none";
+  }
+  function activeEvents(){
+    updateEffects();
+    return [...eventRecords.values()].filter(x=>
+      !x.spec.schedule||global.StauEventSchedule.active(x.spec.schedule,clockMs()))
+      .map(x=>({...x.spec,coveredLengthM:x.coveredLengthM,truncated:x.truncated}));
+  }
+  function eventStatus(id){
+    const record=eventRecords.get(id);
+    if(!record)return "missing";
+    if(activeEvents().some(e=>e.id===id))return "active";
+    const s=record.spec.schedule,now=clockMs();
+    if(s?.mode==="once")return now<s.startAt?"planned":"finished";
+    if(s?.mode==="repeat"){
+      const end=global.StauEventSchedule.localInstant(s.lastDate,
+        s.endTime<s.startTime?s.endTime:s.endTime,true);
+      return global.StauEventSchedule.localDate(now)<s.firstDate?"planned":
+        global.StauEventSchedule.localDate(now)>s.lastDate&&now>end?"finished":"between";
+    }
+    return "inactive";
+  }
+  function setSimulationStart(value){
+    const ms=Number(value);
+    if(!Number.isFinite(ms)||ms<0)throw Error("Ungültiger Simulationsbeginn");
+    simStart=ms;
+    return reset(false);
+  }
   function recomputeSpeeds(){
+    updateEffects();
     for(const edge of edges){
       let fraction=0;
       for(const vehicles of edge.stock)
         fraction=Math.max(fraction,Math.min(1,vehicles/edge.jamPerCell));
-      edge.speed=edge.freeKmh*
+      let speed=edge.freeKmh*
         (fraction<=.15?1:Math.max(.06,1-Math.pow((fraction-.15)/.85,1.4)));
+      for(const effect of activeEffects.get(edge.id)||[])
+        if(effect.event.speedKmh>0)
+          speed=Math.min(speed,effect.event.speedKmh);
+      edge.speed=speed;
     }
   }
   function reset(clearEvents=false){
     elapsed=0;generated=0;exited=0;
     for(const edge of edges){
       edge.stock.fill(0);edge.backlog=0;edge.speed=edge.freeKmh;
-      if(clearEvents)edge.mode="none";
     }
+    if(clearEvents)eventRecords.clear();
+    effectsStamp=null;updateEffects();recomputeSpeeds();
     return totals();
   }
-  function setMode(id,mode){
+  // Backward compatibility for the prior one-click prototype and its tests.
+  function setMode(id,modeValue){
     const edge=byId.get(id);
     if(!edge)throw Error("Unbekannter OSM-Abschnitt: "+id);
-    if(!["none","roadworks","accident","closure"].includes(mode))
+    if(!["none","roadworks","accident","closure"].includes(modeValue))
       throw Error("Ungültiger Ereignistyp");
-    edge.mode=mode;
+    const eventId="legacy-"+id.replace(/[^a-zA-Z0-9_-]/g,"_");
+    if(modeValue==="none"){removeEvent(eventId);return;}
+    const lanes=modeValue==="closure"?Array.from({length:edge.lanes},(_,i)=>i):
+      Array.from({length:Math.min(edge.lanes,modeValue==="accident"?2:1)},(_,i)=>i);
+    const open=edge.lanes-lanes.length;
+    return setEvent({id:eventId,edgeId:id,kind:modeValue,closedLanes:lanes,
+      shoulder:"normal",hasShoulder:false,offsetM:0,
+      lengthM:Math.max(1,Math.round(edge.lengthM)),
+      speedKmh:modeValue==="closure"||!open?0:open===1?40:60,schedule:null});
   }
   function setDemandPercent(pct){
     if(!finite(Number(pct))||Number(pct)>200)throw Error("Verkehrslast muss 0–200 % sein");
@@ -150,20 +303,39 @@ function createLegacyTrafficScenario(data){
   }
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
+    updateEffects();
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],n=edge.n,stock=edge.stock;
       const s=send[j],r=receive[j],d=delta[j];
       d.fill(0);
-      const blocked=edge.mode==="closure"?edge.lanes:
-        edge.mode==="accident"?Math.min(edge.lanes,2):
-        edge.mode==="roadworks"?1:0;
-      const cap=Math.max(0,edge.lanes-blocked)*edge.capacityPerLane*dt/3600;
-      const moving=Math.min(1,(edge.freeKmh/3.6)*dt/edge.cellLength);
       const wave=Math.min(1,(22/3.6)*dt/edge.cellLength);
+      const effects=activeEffects.get(edge.id)||[];
       for(let k=0;k<n;k++){
-        s[k]=Math.min(stock[k],cap,stock[k]*moving);
+        const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
+        const local=effects.filter(e=>e.fromM<b-.001&&e.toM>a+.001);
+        const closed=new Set();
+        let shoulderOpen=false,shoulderBlocked=false,blockedAtGate=false;
+        let permitted=edge.freeKmh;
+        for(const item of local){
+          const ev=item.event;
+          for(const lane of ev.closedLanes)closed.add(lane);
+          if(ev.shoulder==="open"&&ev.hasShoulder)shoulderOpen=true;
+          if(ev.shoulder==="blocked")shoulderBlocked=true;
+          if(ev.speedKmh>0)permitted=Math.min(permitted,ev.speedKmh);
+          if((ev.kind==="closure"||ev.closedLanes.length===edge.lanes&&
+            ev.shoulder!=="open")&&item.fromM>=a-.001&&item.fromM<b+.001)
+            blockedAtGate=true;
+        }
+        if(shoulderBlocked)shoulderOpen=false;
+        const open=Math.max(0,edge.lanes-closed.size+Number(shoulderOpen));
+        const cap=open*edge.capacityPerLane*dt/3600;
+        const moving=Math.min(1,(permitted/3.6)*dt/edge.cellLength);
+        // Block receiving at the first closure cell, but let already-present
+        // vehicles discharge through the closed section's downstream cells.
+        const sendingCapacity=blockedAtGate?edge.lanes*edge.capacityPerLane*dt/3600:cap;
+        s[k]=Math.min(stock[k],sendingCapacity,stock[k]*moving);
         const room=Math.max(0,edge.jamPerCell-stock[k]);
-        r[k]=Math.min(room,cap,room*wave);
+        r[k]=blockedAtGate?0:Math.min(room,cap,room*wave);
       }
     }
     // Simultaneous internal cell transfers. The upstream vehicle remains
@@ -180,7 +352,7 @@ function createLegacyTrafficScenario(data){
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],s=send[j],available=s[s.length-1];
       if(available<=0||!edge.next.length)continue;
-      const valid=edge.next.filter(x=>edges[x.to].mode!=="closure");
+      const valid=edge.next.filter(x=>receive[x.to][0]>0);
       if(!valid.length)continue;
       const totalWeight=valid.reduce((sum,x)=>sum+x.weight,0);
       for(const link of valid){
@@ -242,9 +414,8 @@ function createLegacyTrafficScenario(data){
   }
   function speed(id){return byId.get(id)?.speed??null;}
   function color(id){const edge=byId.get(id);return edge?colourForSpeed(edge.speed):"free";}
-  function mode(id){return byId.get(id)?.mode??"none";}
-  function activeEvents(){return edges.filter(x=>x.mode!=="none").map(x=>({edgeId:x.id,kind:x.mode}));}
-  return {advance,step,reset,setMode,setDemandPercent,totals,speed,color,mode,
+  return {advance,step,reset,setMode,setEvent,removeEvent,listEvents,
+    setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     reachable:id=>reachable.has(id),reachableCount:()=>reachable.size};
 }
