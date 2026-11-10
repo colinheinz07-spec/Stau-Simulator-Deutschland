@@ -71,7 +71,7 @@ async function startLegacyCanvas(existingMap=null){
   const coverage=$("coverage");
   coverage.querySelector("b").textContent="A3 / A48 · Verkehrsmodell (lokal)";
   const note=coverage.querySelector("small");
-  if(note)note.textContent="OSM-Altbestand · berechnete Modellfahrzeuge";
+  if(note)note.textContent="OSM-Altbestand · "+scenario.reachableCount()+" Abschnitte mit möglichem Modellzufluss";
   const info=$("map-bottom-info");
   if(info)info.hidden=true;
   const disclaimer=document.querySelector(".legend + .disclaimer");
@@ -309,8 +309,13 @@ async function startLegacyCanvas(existingMap=null){
       (s.meters/1000).toLocaleString("de-DE",{maximumFractionDigits:2})+" km":
       Math.round(s.meters)+" m";
     const modelSpeed=scenario.speed(s.id);
-    $("detail-speed").textContent=modelSpeed===null?"Keine Modellwerte":
+    $("detail-speed").textContent=!scenario.reachable(s.id)?
+      "Teilnetz ohne Modellzufluss":modelSpeed===null?"Keine Modellwerte":
       Math.round(modelSpeed)+" km/h · berechnet";
+    const eventHelp=document.querySelector(".detail-drawer .event-actions p");
+    if(eventHelp)eventHelp.textContent=scenario.reachable(s.id)?
+      "Reduziert die Modellkapazität. Der Stau entsteht aus realem Fahrzeugbestand; rot-weiße Markierung zeigt Sperrungen unabhängig davon.":
+      "Dieser Abschnitt ist noch nicht von einer externen Modellquelle erreichbar. Eine Sperrung wird markiert, erzeugt hier aber keinen künstlichen Stau.";
     for(const button of document.querySelectorAll("[data-event]"))
       button.classList.toggle("selected",button.dataset.event===scenario.mode(s.id));
     $("detail-osm").textContent=s.osm?String(s.osm):"OSM-Geometrie aus Altbestand";
@@ -407,7 +412,7 @@ async function startLegacyCanvas(existingMap=null){
       format(Math.round(stats.waitingOutsideSources))+" vor Netzeinfahrten";
     if(selected){
       const modelSpeed=scenario.speed(selected.id);
-      if(modelSpeed!==null)
+      if(modelSpeed!==null&&scenario.reachable(selected.id))
         $("detail-speed").textContent=Math.round(modelSpeed)+" km/h · berechnet";
     }
   }
@@ -456,9 +461,13 @@ async function startLegacyCanvas(existingMap=null){
     button.addEventListener("click",()=>{
       if(!selected)return;
       try{
+        const activeFlow=scenario.reachable(selected.id);
         scenario.setMode(selected.id,button.dataset.event);
         close();requestDraw();
-        if(button.dataset.event!=="none")startSimulation();
+        if(button.dataset.event!=="none"&&activeFlow)startSimulation();
+        else if(button.dataset.event!=="none"&&!activeFlow)
+          $("map-status").textContent=
+            "Sperrung markiert · auf diesem Teilnetz fehlt noch aktiver Modellzufluss";
       }catch(error){
         $("map-status").textContent="Ereignisfehler: "+error.message;
       }
