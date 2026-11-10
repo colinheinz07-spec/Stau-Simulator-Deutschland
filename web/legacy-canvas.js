@@ -22,7 +22,9 @@ function distance(a,b){
 function clamp(n,a,b){return Math.min(b,Math.max(a,n));}
 function format(n){return n.toLocaleString("de-DE");}
 function prepareGeometry(data){
-  return data.roads.filter(row=>Array.isArray(row[4])&&row[4].length>1).map(row=>{
+  const service=/\\b(?:rastst[aä]tte|rastplatz|rastanlage|autohof|p\\s*\\+?\\s*wc|pwc|service\\s*area|rest\\s*area)\\b/i;
+  return data.roads.filter(row=>Array.isArray(row[4])&&row[4].length>1&&
+    !(row[1]==="ramp"&&service.test(row[5]||""))).map(row=>{
     const path=row[4].map(merc);
     let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity,meters=0;
     for(let i=0;i<path.length;i++){
