@@ -1,6 +1,6 @@
 /* Map renderer adapted from the working Canvas approach in Traffic-Sinulator.
  * Local, real OSM geometry; no Leaflet or Overpass required for road visibility.
- * Static preview only; do not imply the offline snapshot is a live simulation.
+ * Directed cell-flow prototype runs from a local snapshot; no Live traffic / OD routing.
  */
 (function(){
 "use strict";
@@ -45,6 +45,10 @@ async function startLegacyCanvas(existingMap=null){
   if(existingMap){try{existingMap.remove();}catch(error){console.warn(error);}}
   root.replaceChildren();
   document.body.classList.add("preview-only","canvas-preview");
+  if(typeof window.createLegacyTrafficScenario!=="function")
+    throw Error("Das lokale Verkehrsmodul fehlt.");
+  const scenario=window.createLegacyTrafficScenario(data);
+  document.body.classList.add("traffic-ready");
   const canvas=document.createElement("canvas");
   canvas.className="legacy-preview-canvas";
   canvas.setAttribute("aria-label","Interaktive Autobahnkarte mit Original-Geometrien aus der alten Stau-App");
@@ -63,25 +67,33 @@ async function startLegacyCanvas(existingMap=null){
   root.append(zoomBox);
 
   const coverage=$("coverage");
-  coverage.querySelector("b").textContent="A3 / A48 · Straßennetz aus alter App";
+  coverage.querySelector("b").textContent="A3 / A48 · Verkehrsmodell (lokal)";
   const note=coverage.querySelector("small");
-  if(note)note.textContent="Originale OSM-Geometrie · lokale Kartenvorschau";
+  if(note)note.textContent="OSM-Altbestand · berechnete Modellfahrzeuge";
   const info=$("map-bottom-info");
   if(info)info.hidden=true;
   const disclaimer=document.querySelector(".legend + .disclaimer");
-  if(disclaimer)disclaimer.textContent="Lokale OSM-Kartenvorschau ohne simulierte Fahrzeuge. Für die vollständige Stauphysik wird die gebaute Netzversion verwendet.";
+  if(disclaimer)disclaimer.textContent="Farben werden aus der Belegung gerichteter Fahrbahnzellen berechnet. Keine Live-Daten; Zuflüsse, Routenwahl und Stauwerte sind Modellannahmen.";
   const eventActions=document.querySelector(".detail-drawer .event-actions");
-  if(eventActions)eventActions.hidden=true;
+  if(eventActions)eventActions.hidden=false;
+  const simulationNote=document.querySelector(".simulation-controls .disclaimer");
+  if(simulationNote)simulationNote.textContent=
+    "Experimenteller Zellfluss mit realer OSM-Geometrie, Kapazität und Fahrzeugbilanz. Noch keine vollständige Anschlussstellen-Nachfrage oder Zielrouten.";
+  const demoNote=document.querySelector(".demo-box p");
+  if(demoNote)demoNote.textContent=
+    "Autobahnabschnitt antippen und Unfall, Baustelle oder Vollsperrung setzen. Fahrzeuge stauen sich nur dort, wo die berechnete Kapazität nicht reicht.";
   const junctionToggle=$("toggle-junctions");
   const selection=$("detail-drawer");
   const backdrop=$("drawer-backdrop");
   const segments=prepareGeometry(data);
+  let timer=null,simRunning=false;
   const mainlines=segments.filter(x=>x.kind!=="ramp");
   const ramps=segments.filter(x=>x.kind==="ramp");
   $("chip-roads").textContent=format(segments.length)+" Fahrwege";
   $("chip-ramps").textContent=format(ramps.length)+" Rampen";
   $("map-status").textContent=format(mainlines.length)+" Hauptfahrbahnen · "+
-    format(ramps.length)+" Rampen aus alter App geladen";
+    format(ramps.length)+" Rampen · "+scenario.sourceCount()+" Randzuflüsse";
+  $("sim-demand-value").textContent="100 %";
   const tiles=new Map();
   let width=0,height=0,zoom=8,center=merc([50.5,7.5]),
     request=null,visible=$("toggle-network").checked,
@@ -173,17 +185,47 @@ async function startLegacyCanvas(existingMap=null){
       if(i===0)context.moveTo(x,y);else context.lineTo(x,y);
     }
   }
+  const trafficColors={
+    free:"#19b979",slow:"#efae47",jam:"#e34f56",standstill:"#782842"
+  };
   function strokeGroup(roads,line,scale){
+    const states={free:[],slow:[],jam:[],standstill:[]};
     context.beginPath();
     for(const road of roads){
-      if(road!==selected&&inView(road,scale))appendRoad(road,scale);
+      if(road===selected||!inView(road,scale))continue;
+      appendRoad(road,scale);
+      states[scenario.color(road.id)].push(road);
     }
     context.lineWidth=line+2;
     context.strokeStyle="#132c3a";
     context.stroke();
     context.lineWidth=line;
-    context.strokeStyle="#19b979";
-    context.stroke();
+    for(const [state,items] of Object.entries(states)){
+      if(!items.length)continue;
+      context.beginPath();
+      for(const road of items)appendRoad(road,scale);
+      context.strokeStyle=trafficColors[state];
+      context.stroke();
+    }
+    // A full closure is NOT a black traffic jam on an empty road.
+    // It is independently marked by a red-white roadblock overlay.
+    const closed=roads.filter(road=>road!==selected&&inView(road,scale)&&
+      scenario.mode(road.id)==="closure");
+    if(closed.length){
+      context.beginPath();
+      for(const road of closed)appendRoad(road,scale);
+      context.lineWidth=line+2;
+      if(typeof context.setLineDash==="function"){
+        context.setLineDash([10,9]);
+        context.lineDashOffset=0;
+      }
+      context.strokeStyle="#d52b3e";context.stroke();
+      if(typeof context.setLineDash==="function"){
+        context.lineDashOffset=10;
+        context.strokeStyle="#ffffff";context.stroke();
+        context.setLineDash([]);context.lineDashOffset=0;
+      }
+    }
   }
   function drawLabels(){
     if(!labels||zoom<11.4)return;
@@ -264,7 +306,11 @@ async function startLegacyCanvas(existingMap=null){
     $("detail-length").textContent=s.meters>=1000?
       (s.meters/1000).toLocaleString("de-DE",{maximumFractionDigits:2})+" km":
       Math.round(s.meters)+" m";
-    $("detail-speed").textContent="Keine simulierten Geschwindigkeiten";
+    const modelSpeed=scenario.speed(s.id);
+    $("detail-speed").textContent=modelSpeed===null?"Keine Modellwerte":
+      Math.round(modelSpeed)+" km/h · berechnet";
+    for(const button of document.querySelectorAll("[data-event]"))
+      button.classList.toggle("selected",button.dataset.event===scenario.mode(s.id));
     $("detail-osm").textContent=s.osm?String(s.osm):"OSM-Geometrie aus Altbestand";
     selection.classList.add("open");
     selection.setAttribute("aria-hidden","false");
@@ -349,6 +395,78 @@ async function startLegacyCanvas(existingMap=null){
   $("close-drawer").addEventListener("click",close);
   backdrop.addEventListener("click",close);
   document.addEventListener("keydown",e=>{if(e.key==="Escape")close();});
+  function displayStats(){
+    const stats=scenario.totals(),sec=Math.floor(stats.simSeconds);
+    $("sim-clock").textContent=Math.floor(sec/60)+":"+String(sec%60).padStart(2,"0");
+    $("sim-vehicles").textContent=format(Math.round(stats.vehiclesOnNetwork));
+    $("sim-outside").textContent=format(Math.round(stats.waitingOutsideSources));
+    $("map-status").textContent="Modell "+Math.floor(sec/60)+" min · "+
+      format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz · "+
+      format(Math.round(stats.waitingOutsideSources))+" vor Netzeinfahrten";
+    if(selected){
+      const modelSpeed=scenario.speed(selected.id);
+      if(modelSpeed!==null)
+        $("detail-speed").textContent=Math.round(modelSpeed)+" km/h · berechnet";
+    }
+  }
+  function pauseSimulation(){
+    if(timer!==null)clearInterval(timer);
+    timer=null;simRunning=false;
+    $("sim-toggle").textContent="▶ Simulation starten";
+    $("sim-toggle").classList.remove("running");
+  }
+  function tick(){
+    if(!simRunning)return;
+    try{
+      // Twelve 5-second conservative steps per real second.
+      scenario.advance(12);
+      displayStats();
+      requestDraw();
+    }catch(error){
+      pauseSimulation();
+      $("map-status").textContent="Simulation angehalten: "+error.message;
+      console.error(error);
+    }
+  }
+  function startSimulation(){
+    if(simRunning)return;
+    simRunning=true;
+    $("sim-toggle").textContent="Ⅱ Simulation anhalten";
+    $("sim-toggle").classList.add("running");
+    tick();
+    timer=setInterval(tick,1000);
+  }
+  $("sim-toggle").addEventListener("click",()=>{
+    if(simRunning)pauseSimulation();else startSimulation();
+  });
+  $("sim-demand").addEventListener("input",event=>{
+    const pct=Number(event.target.value);
+    scenario.setDemandPercent(pct);
+    $("sim-demand-value").textContent=pct+" %";
+  });
+  $("sim-reset").addEventListener("click",()=>{
+    pauseSimulation();scenario.reset(false);displayStats();requestDraw();
+  });
+  $("reset-events").addEventListener("click",()=>{
+    pauseSimulation();scenario.reset(true);close();displayStats();requestDraw();
+  });
+  for(const button of document.querySelectorAll("[data-event]")){
+    button.addEventListener("click",()=>{
+      if(!selected)return;
+      try{
+        scenario.setMode(selected.id,button.dataset.event);
+        close();requestDraw();
+        if(button.dataset.event!=="none")startSimulation();
+      }catch(error){
+        $("map-status").textContent="Ereignisfehler: "+error.message;
+      }
+    });
+  }
+  document.addEventListener("visibilitychange",()=>{
+    if(document.hidden)pauseSimulation();
+  });
+  window.addEventListener("pagehide",pauseSimulation);
+  displayStats();
   if(typeof ResizeObserver==="function")new ResizeObserver(resize).observe(root);
   window.addEventListener("resize",resize);
   resize();
