@@ -36,7 +36,7 @@ function prepareGeometry(data){
     }
     return {id:row[0],kind:row[1],ref:row[2],lanes:row[3],
       points:path,bbox:[minX,minY,maxX,maxY],meters,cumulative,
-      name:row[5],osm:row[6]};
+      name:row[5],osm:row[6],shoulderTag:row[7]||null};
   });
 }
 async function startLegacyCanvas(existingMap=null){
