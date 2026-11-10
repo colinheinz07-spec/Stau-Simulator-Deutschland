@@ -38,3 +38,13 @@ Die alte App wird **nicht verworfen**. Statt unkontrolliert alle Dateien zu kopi
 - **Einschränkung:** Das alte OSM-Schnappschussnetz hat ungeprüfte Lücken und einzelne nicht eindeutig verbundenen Knoten. Das Szenario hat vereinfachte äußere Zuflüsse, noch keine aus der alten App portierten Anschlussstellen-Zu-/Abfahrtsprofile, kein realistisches OD-Routing und keine dynamisch belasteten Umleitungsstrecken. Kein Live-Verkehr, keine deutschlandweite vollständige Simulation.
 
 Tests: `tests/offline-traffic.test.mjs` (Massenerhaltung, Rückstau, Ereignisse, Null-Nachfrage, Servicefilter) und `tests/spck-canvas.test.mjs` (mobiler Kartenstart und laufende Simulation).
+
+## Ereignisplanung (Prototyp 0.4)
+
+- Übernahme der Grundfunktionen aus `src/04_Ereignisse.ts`, `recurring-events.ts` und `src/06_Karte/schedule-form.ts` in die getrennten SPCK-Dateien `web/event-schedule.js` und `web/offline-event-editor.js`. Die konzervative Zell-Engine `web/offline-traffic.js` konsumiert validierte Ereignisse.
+- Spurweise Sperrung, bestätigter/OSM-belegter Standstreifen (offen/normal/gesperrt), Tempolimit, betroffene Länge und genaue Position auf dem angetippten OSM-Segment.
+- Sichtbare rot-weiße Teilstücksperrung, temporäre Geschwindigkeitsbänder und tatsächliche Kapazitätsänderung nur während der Wirksamkeit.
+- Sofort, einmalig, Wochentags-Wiederholung; Europe/Berlin mit Sommerzeit und Nachtfenstern; mobile Bearbeitung/Löschung; lokale Speicherung unter `stau-simulator-local-events-v2`.
+- Eindeutige OSM `shoulder=no`-Segmente sperren Freigaben. OSM `shoulder=right` erlaubt bestätigte Freigaben im Modell. Unbekannte Standstreifen werden **nicht automatisch** als vorhanden gewertet.
+- Wichtig: Das lineare CTM approximiert innerhalb seiner derzeitigen 230-m-Zellen. Detaillierte Mehrphasenplanung, AS-Spurführung, echte OD-Nachfrage, Umleitungsrouting und topologische Restflächen-Audits sind spätere separate Aufgaben.
+- Prüfungen in `tests/event-planning.test.mjs` und `tests/event-editor-ui.test.mjs` ergänzen die bisherigen Massenerhaltungs- und Kartentests.
