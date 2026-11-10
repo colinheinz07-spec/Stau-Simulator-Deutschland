@@ -27,14 +27,15 @@ function prepareGeometry(data){
     !(row[1]==="ramp"&&service.test(row[5]||""))).map(row=>{
     const path=row[4].map(merc);
     let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity,meters=0;
+    const cumulative=[0];
     for(let i=0;i<path.length;i++){
       const p=path[i];
       minX=Math.min(minX,p[0]);maxX=Math.max(maxX,p[0]);
       minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);
-      if(i)meters+=distance(row[4][i-1],row[4][i]);
+      if(i){meters+=distance(row[4][i-1],row[4][i]);cumulative.push(meters);}
     }
     return {id:row[0],kind:row[1],ref:row[2],lanes:row[3],
-      points:path,bbox:[minX,minY,maxX,maxY],meters,
+      points:path,bbox:[minX,minY,maxX,maxY],meters,cumulative,
       name:row[5],osm:row[6]};
   });
 }
@@ -88,6 +89,7 @@ async function startLegacyCanvas(existingMap=null){
   const selection=$("detail-drawer");
   const backdrop=$("drawer-backdrop");
   const segments=prepareGeometry(data);
+  let eventEditor=null;
   let timer=null,simRunning=false;
   const mainlines=segments.filter(x=>x.kind!=="ramp");
   const ramps=segments.filter(x=>x.kind==="ramp");
@@ -294,13 +296,15 @@ async function startLegacyCanvas(existingMap=null){
     requestDraw();
   }
   function close(){
+    eventEditor?.closeForm();
     selection.classList.remove("open");
     selection.setAttribute("aria-hidden","true");
     backdrop.hidden=true;
     selected=null;requestDraw();
   }
-  function open(s){
+  function open(s,offsetM=0){
     selected=s;
+    eventEditor?.onRoadSelected(s,offsetM);
     $("detail-heading").textContent=s.name||s.ref||"Autobahnabschnitt";
     $("detail-type").textContent=s.kind==="ramp"?
       "Auf-/Abfahrt oder Autobahn-Überleitung":"Autobahn-Hauptfahrbahn";
@@ -316,7 +320,7 @@ async function startLegacyCanvas(existingMap=null){
     if(eventHelp)eventHelp.textContent=scenario.reachable(s.id)?
       "Reduziert die Modellkapazität. Der Stau entsteht aus realem Fahrzeugbestand; rot-weiße Markierung zeigt Sperrungen unabhängig davon.":
       "Dieser Abschnitt ist noch nicht von einer externen Modellquelle erreichbar. Eine Sperrung wird markiert, erzeugt hier aber keinen künstlichen Stau.";
-    for(const button of document.querySelectorAll("[data-event]"))
+    if(!eventEditor)for(const button of document.querySelectorAll("[data-event]"))
       button.classList.toggle("selected",button.dataset.event===scenario.mode(s.id));
     $("detail-osm").textContent=s.osm?String(s.osm):"OSM-Geometrie aus Altbestand";
     selection.classList.add("open");
@@ -332,7 +336,8 @@ async function startLegacyCanvas(existingMap=null){
     for(const s of search){
       if(!inView(s,scale))continue;
       let prev=null;
-      for(const p of s.points){
+      for(let i=0;i<s.points.length;i++){
+        const p=s.points[i];
         const px=(p[0]-center[0])*scale+width/2;
         const py=(p[1]-center[1])*scale+height/2;
         if(prev){
@@ -340,7 +345,7 @@ async function startLegacyCanvas(existingMap=null){
           const t=d?clamp(((x-prev[0])*vx+(y-prev[1])*vy)/d,0,1):0;
           const dx=x-(prev[0]+t*vx),dy=y-(prev[1]+t*vy);
           const dsq=dx*dx+dy*dy;
-          if(dsq<bestD){best=s;bestD=dsq;}
+          if(dsq<bestD){best={road:s,offsetM:s.cumulative[i-1]+t*(s.cumulative[i]-s.cumulative[i-1])};bestD=dsq;}
         }
         prev=[px,py];
       }
@@ -384,7 +389,7 @@ async function startLegacyCanvas(existingMap=null){
     const p=local(e);
     if(!pointers.size&&!wasPinching&&tap&&Math.hypot(p[0]-tap.x,p[1]-tap.y)<10){
       const hit=nearest(p[0],p[1]);
-      if(hit)open(hit);
+      if(hit)open(hit.road,Math.min(hit.road.meters-.001,hit.offsetM));
     }
     if(!pointers.size){tap=null;wasPinching=false;}
   }
@@ -410,6 +415,11 @@ async function startLegacyCanvas(existingMap=null){
     $("map-status").textContent="Modell "+Math.floor(sec/60)+" min · "+
       format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz · "+
       format(Math.round(stats.waitingOutsideSources))+" vor Netzeinfahrten";
+    if(eventEditor)eventEditor.updateStatus();
+    const timeMarker=$("sim-model-date");
+    if(timeMarker&&window.StauEventSchedule)
+      timeMarker.textContent="Modell-Datum: "+
+        window.StauEventSchedule.localDateTime(scenario.clockMs()).replace("T"," ")+" Uhr";
     if(selected){
       const modelSpeed=scenario.speed(selected.id);
       if(modelSpeed!==null&&scenario.reachable(selected.id))
@@ -452,26 +462,43 @@ async function startLegacyCanvas(existingMap=null){
     $("sim-demand-value").textContent=pct+" %";
   });
   $("sim-reset").addEventListener("click",()=>{
-    pauseSimulation();scenario.reset(false);displayStats();requestDraw();
+    pauseSimulation();scenario.reset(false);displayStats();eventEditor?.renderList();requestDraw();
   });
   $("reset-events").addEventListener("click",()=>{
-    pauseSimulation();scenario.reset(true);close();displayStats();requestDraw();
+    pauseSimulation();scenario.reset(true);close();eventEditor?.renderList();displayStats();requestDraw();
   });
-  for(const button of document.querySelectorAll("[data-event]")){
-    button.addEventListener("click",()=>{
-      if(!selected)return;
-      try{
-        const activeFlow=scenario.reachable(selected.id);
-        scenario.setMode(selected.id,button.dataset.event);
-        close();requestDraw();
-        if(button.dataset.event!=="none"&&activeFlow)startSimulation();
-        else if(button.dataset.event!=="none"&&!activeFlow)
-          $("map-status").textContent=
-            "Sperrung markiert · auf diesem Teilnetz fehlt noch aktiver Modellzufluss";
-      }catch(error){
-        $("map-status").textContent="Ereignisfehler: "+error.message;
-      }
+  function focusRoad(id,at=0){
+    const road=segments.find(s=>s.id===id);
+    if(!road)return;
+    center=road.points[Math.floor(road.points.length/2)];
+    zoom=Math.max(zoom,11);
+    open(road,Math.min(road.meters-.001,at));
+    requestDraw();
+  }
+  if(typeof window.createOfflineEventEditor==="function"){
+    eventEditor=window.createOfflineEventEditor({
+      scenario,redraw:requestDraw,pause:pauseSimulation,closeDrawer:close,
+      notify:text=>{ $("map-status").textContent=text; },
+      focusRoad
     });
+  }else{
+    // Compatibility when opening a partial outdated preview without editor.
+    for(const button of document.querySelectorAll("[data-event]")){
+      button.addEventListener("click",()=>{
+        if(!selected)return;
+        try{
+          const activeFlow=scenario.reachable(selected.id);
+          scenario.setMode(selected.id,button.dataset.event);
+          close();requestDraw();
+          if(button.dataset.event!=="none"&&activeFlow)startSimulation();
+          else if(button.dataset.event!=="none"&&!activeFlow)
+            $("map-status").textContent=
+              "Sperrung markiert · auf diesem Teilnetz fehlt noch aktiver Modellzufluss";
+        }catch(error){
+          $("map-status").textContent="Ereignisfehler: "+error.message;
+        }
+      });
+    }
   }
   document.addEventListener("visibilitychange",()=>{
     if(document.hidden)pauseSimulation();
