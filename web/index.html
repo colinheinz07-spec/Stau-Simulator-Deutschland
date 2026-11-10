@@ -16,7 +16,7 @@
         <span class="brand-mark" aria-hidden="true">A</span>
         <div><strong>STAU SIMULATOR <span>DEUTSCHLAND</span></strong><small>Digitale Verkehrsmodellierung · Kartenprototyp</small></div>
       </div>
-      <span class="version">PROTOTYP <b>0.3</b></span>
+      <span class="version">PROTOTYP <b>0.4</b></span>
     </header>
     <main class="workspace">
       <aside class="sidebar" aria-label="Kartensteuerung">
@@ -37,6 +37,9 @@
         <section class="controls simulation-controls" aria-label="Verkehrssimulation">
           <div class="rowline"><h2>Verkehrssimulation</h2><span class="tag">MODELL</span></div>
           <p class="disclaimer">Experimenteller Netzfluss auf echten A3/A48-Fahrwegen. Alle Zuflüsse sind Annahmen, keine Live-Daten.</p>
+          <label class="field-label" for="sim-start">Simulationsbeginn · deutsche Ortszeit
+            <input id="sim-start" type="datetime-local" step="60">
+          </label>
           <button type="button" class="sim-start" id="sim-toggle">▶ Simulation starten</button>
           <label class="demand-input" for="sim-demand">Verkehrsbelastung <strong id="sim-demand-value">100 %</strong></label>
           <input type="range" id="sim-demand" min="0" max="200" step="10" value="100">
@@ -61,7 +64,8 @@
         <section class="controls demo-box">
           <div class="rowline"><h2>Darstellung testen</h2><span class="tag">DEMO</span></div>
           <p>Tippe eine Strecke an und setze einen Unfall, eine Baustelle oder eine Sperrung. Die Simulationsfarben folgen danach berechneten Fahrzeugbeständen.</p>
-          <button id="reset-events" class="subtle-btn" type="button">Demonstration zurücksetzen</button>
+          <div id="planned-events" class="planned-events" aria-live="polite"></div>
+          <button id="reset-events" class="subtle-btn" type="button">Ereignisse und Simulation zurücksetzen</button>
         </section>
         <div class="sidebar-footer">© OpenStreetMap-Mitwirkende · ODbL<br>Netz und Sperrregeln werden deutschlandweit identisch verarbeitet.</div>
       </aside>
@@ -99,15 +103,118 @@
       <h3>Ereignis für die Simulation</h3>
       <p>Reduziert die tatsächliche Modellkapazität. Die Rückstauentstehung wird berechnet, nicht einfach rot eingefärbt.</p>
       <div class="events-grid">
-        <button type="button" data-event="none">Zurücksetzen</button>
-        <button type="button" data-event="roadworks">Baustelle</button>
-        <button type="button" data-event="accident">Unfall</button>
-        <button type="button" data-event="closure">Vollsperrung</button>
+        <button type="button" data-event="none">Ereignisse entfernen</button>
+        <button type="button" data-event="roadworks">🚧 Baustelle</button>
+        <button type="button" data-event="accident">💥 Unfall</button>
+        <button type="button" data-event="breakdown">🚛 Panne</button>
+        <button type="button" data-event="closure">⛔ Vollsperrung</button>
       </div>
+      <form id="event-form" class="incident-form" hidden>
+        <h3 id="event-form-heading">Ereignis einstellen</h3>
+        <label class="field-label" for="ev-kind">Art
+          <select id="ev-kind">
+            <option value="roadworks">Baustelle</option>
+            <option value="accident">Unfall</option>
+            <option value="breakdown">Panne</option>
+            <option value="closure">Vollsperrung</option>
+          </select>
+        </label>
+        <fieldset class="event-lane-set">
+          <legend>Welche Fahrstreifen sperren?</legend>
+          <p>Rechts = Fahrstreifen 1. Nur vorhandene reguläre Fahrstreifen.</p>
+          <div id="ev-lanes" class="event-lanes"></div>
+        </fieldset>
+        <label class="event-check"><input id="ev-has-shoulder" type="checkbox">
+          <span>Standstreifen tatsächlich vorhanden (von mir bestätigt)</span>
+        </label>
+        <label class="field-label" for="ev-shoulder">Standstreifen
+          <select id="ev-shoulder">
+            <option value="normal">Unverändert</option>
+            <option value="blocked">Gesperrt</option>
+            <option value="open">Als zusätzlichen Fahrstreifen freigeben</option>
+          </select>
+        </label>
+        <p class="event-help" id="ev-shoulder-help">Die alten Kartendaten belegen nicht überall, ob ein Seitenstreifen existiert. Eine Freigabe verlangt deshalb deine Bestätigung.</p>
+        <div class="incident-fields">
+          <label class="field-label" for="ev-length">Betroffene Länge (m)
+            <input id="ev-length" type="number" min="1" max="20000" step="1" value="500">
+          </label>
+          <label class="field-label" for="ev-speed">Tempolimit
+            <select id="ev-speed">
+              <option value="0">0 km/h · gesperrt</option>
+              <option value="10">10 km/h</option>
+              <option value="20">20 km/h</option>
+              <option value="30">30 km/h</option>
+              <option value="40">40 km/h</option>
+              <option value="50">50 km/h</option>
+              <option value="60">60 km/h</option>
+              <option value="70">70 km/h</option>
+              <option value="80">80 km/h</option>
+              <option value="90">90 km/h</option>
+              <option value="100">100 km/h</option>
+              <option value="110">110 km/h</option>
+              <option value="120">120 km/h</option>
+              <option value="130">130 km/h</option>
+            </select>
+          </label>
+        </div>
+        <label class="field-label" for="ev-schedule">Zeitplanung
+          <select id="ev-schedule">
+            <option value="now">Ab Simulationsstart dauerhaft</option>
+            <option value="once">Einmalig · von / bis</option>
+            <option value="repeat">Wiederholen · ausgewählte Wochentage</option>
+          </select>
+        </label>
+        <div id="ev-once-fields" class="incident-fields" hidden>
+          <label class="field-label" for="ev-once-start">Beginn
+            <input id="ev-once-start" type="datetime-local" step="60">
+          </label>
+          <label class="field-label" for="ev-once-end">Ende
+            <input id="ev-once-end" type="datetime-local" step="60">
+          </label>
+        </div>
+        <div id="ev-repeat-fields" class="repeat-fields" hidden>
+          <div class="incident-fields">
+            <label class="field-label" for="ev-repeat-from">Erster Tag
+              <input id="ev-repeat-from" type="date">
+            </label>
+            <label class="field-label" for="ev-repeat-to">Letzter Tag
+              <input id="ev-repeat-to" type="date">
+            </label>
+            <label class="field-label" for="ev-repeat-start">Täglich von
+              <input id="ev-repeat-start" type="time" value="19:00">
+            </label>
+            <label class="field-label" for="ev-repeat-end">Täglich bis
+              <input id="ev-repeat-end" type="time" value="05:00">
+            </label>
+          </div>
+          <fieldset class="event-weekdays">
+            <legend>Wochentage des Beginns auswählen</legend>
+            <div>
+              <label><input type="checkbox" name="ev-day" value="1" checked> Mo</label>
+              <label><input type="checkbox" name="ev-day" value="2" checked> Di</label>
+              <label><input type="checkbox" name="ev-day" value="3" checked> Mi</label>
+              <label><input type="checkbox" name="ev-day" value="4" checked> Do</label>
+              <label><input type="checkbox" name="ev-day" value="5" checked> Fr</label>
+              <label><input type="checkbox" name="ev-day" value="6"> Sa</label>
+              <label><input type="checkbox" name="ev-day" value="0"> So</label>
+            </div>
+          </fieldset>
+          <p class="event-help">Deutsche Ortszeit. Nachtarbeiten über Mitternacht zählen zum ausgewählten Starttag; Zeitumstellung wird berücksichtigt.</p>
+        </div>
+        <p id="ev-coverage" class="event-help" aria-live="polite"></p>
+        <p id="ev-error" class="event-error" role="alert" hidden></p>
+        <div class="event-form-actions">
+          <button type="submit" id="ev-save" class="sim-start">Ereignis speichern</button>
+          <button type="button" id="ev-cancel" class="subtle-btn">Abbrechen</button>
+        </div>
+      </form>
     </div>
   </aside>
   <script src="./legacy-geometry.js"></script>
+  <script src="./event-schedule.js"></script>
   <script src="./offline-traffic.js"></script>
+  <script src="./offline-event-editor.js"></script>
   <script src="./legacy-canvas.js"></script>
   <script src="./bootstrap.js"></script>
 </body>
