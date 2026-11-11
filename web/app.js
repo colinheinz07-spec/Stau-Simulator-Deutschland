@@ -145,8 +145,8 @@ function drawNetwork(){
       reserved:[
         {x:0,y:0,width:Math.min(375,size.x*.78),height:100},
         {x:Math.max(0,size.x-95),y:0,width:95,height:160},
-        {x:0,y:Math.max(0,size.y-(window.innerWidth<=850?235:82)),
-          width:size.x,height:window.innerWidth<=850?235:82}
+        {x:0,y:Math.max(0,size.y-(window.innerWidth<=850?64:82)),
+          width:size.x,height:window.innerWidth<=850?64:82}
       ]
     });
     for(const placed of labels){

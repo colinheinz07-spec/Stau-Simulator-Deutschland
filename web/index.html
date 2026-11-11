@@ -20,6 +20,12 @@
     </header>
     <main class="workspace">
       <aside class="sidebar" aria-label="Kartensteuerung">
+        <div class="mobile-panel-header">
+          <button id="mobile-panel-toggle" class="mobile-panel-toggle" type="button" aria-expanded="true" aria-label="Steuerung einklappen">
+            <span><strong>Simulationssteuerung</strong><small id="mobile-panel-hint">Nach oben wischen für weitere Einstellungen</small></span>
+            <span class="mobile-panel-chevron" id="mobile-panel-chevron" aria-hidden="true">⌄</span>
+          </button>
+        </div>
         <section class="intro">
           <span class="eyebrow">INTERAKTIVE KARTE</span>
           <h1>Deutschlands<br>Autobahnen.</h1>
@@ -217,6 +223,7 @@
   <script src="./offline-traffic.js"></script>
   <script src="./offline-event-editor.js"></script>
   <script src="./legacy-canvas.js"></script>
+  <script src="./mobile-controls.js"></script>
   <script src="./bootstrap.js"></script>
 </body>
 </html>

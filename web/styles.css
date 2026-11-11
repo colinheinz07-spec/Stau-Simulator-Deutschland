@@ -132,3 +132,88 @@
   .incident-fields{grid-template-columns:1fr 1fr}
 }
 @media(max-width:350px){.incident-fields{grid-template-columns:1fr}}
+
+
+/* Mobile, v0.4.1: Karte und Bedienfeld sind zwei getrennte Bereiche.
+ * Sämtliche Steuerungen stehen untereinander und sind vertikal scrollbar. */
+.mobile-panel-header{display:none}
+@media(max-width:850px){
+  .app-shell{height:100dvh;min-height:0}
+  .workspace{display:flex;flex-direction:column;min-height:0}
+  .workspace .map-pane{
+    order:0;flex:1 1 auto;min-height:0;width:100%;height:auto
+  }
+  .sidebar,.canvas-preview .sidebar,.canvas-preview.traffic-ready .sidebar,
+  .preview-only .sidebar{
+    position:relative;left:auto;right:auto;top:auto;bottom:auto;
+    order:1;flex:0 0 auto;display:flex;flex-direction:column;
+    width:100%;max-width:100%;min-width:0;
+    height:clamp(230px,43dvh,410px);max-height:none;
+    overflow-x:hidden;overflow-y:auto;overscroll-behavior-y:contain;
+    -webkit-overflow-scrolling:touch;touch-action:pan-y;
+    border-right:0;border-top:1px solid #3a536b;
+    z-index:550;scroll-padding-top:62px;
+  }
+  .sidebar.is-collapsed,.canvas-preview .sidebar.is-collapsed,
+  .canvas-preview.traffic-ready .sidebar.is-collapsed,
+  .preview-only .sidebar.is-collapsed{
+    height:59px;overflow:hidden;touch-action:auto
+  }
+  .sidebar.is-collapsed > :not(.mobile-panel-header){display:none!important}
+  .mobile-panel-header{
+    display:block;position:sticky;top:0;z-index:5;
+    flex:0 0 auto;order:-2;background:#14243a;
+    border-bottom:1px solid #3d526a
+  }
+  .mobile-panel-toggle{
+    position:relative;display:flex;align-items:center;justify-content:space-between;
+    gap:12px;width:100%;min-height:59px;padding:13px 20px 8px;
+    border:0;background:transparent;color:#f0f7ff;text-align:left;
+    -webkit-tap-highlight-color:transparent
+  }
+  .mobile-panel-toggle:before{
+    content:"";position:absolute;left:calc(50% - 18px);top:5px;
+    width:36px;height:4px;border-radius:10px;background:#688199
+  }
+  .mobile-panel-toggle strong{display:block;font-size:13px;letter-spacing:.02em}
+  .mobile-panel-toggle small{display:block;font-size:10px;color:#9eb6ca}
+  .mobile-panel-chevron{font-size:25px;line-height:1;color:#8ee4c6;flex:none}
+  .sidebar .controls{
+    order:0;flex:0 0 auto;width:100%;min-width:0;
+    padding:15px 18px;border-right:0;border-top:1px solid #273b53
+  }
+  .sidebar .simulation-controls{order:-1}
+  .sidebar .demo-box{flex-basis:auto}
+  .sidebar .control-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+  .sidebar .option-btn{min-height:44px;font-size:12px}
+  .sidebar .simulation-controls h2{font-size:14px;margin-bottom:8px}
+  .sidebar .simulation-controls .disclaimer{font-size:11px;line-height:1.4}
+  .sidebar .sim-start,.sidebar .subtle-btn{min-height:44px}
+  .sidebar .field-label input,.sidebar .field-label select{
+    width:100%;max-width:100%;min-width:0;font-size:16px
+  }
+  .sidebar .simulation-stats span{font-size:11px}
+  .sidebar .switch-row{min-height:34px;font-size:12px}
+  .sidebar .legend{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sidebar .legend>div{font-size:11px}
+  .sidebar .intro,.sidebar .sidebar-footer{display:none}
+  .sidebar .controls:last-of-type{padding-bottom:calc(25px + env(safe-area-inset-bottom))}
+  .map-pane .leaflet-bottom.leaflet-right,
+  .map-pane .leaflet-bottom.leaflet-left{bottom:0}
+  .canvas-preview .preview-zoom,.canvas-preview.traffic-ready .preview-zoom{
+    bottom:12px;right:12px
+  }
+  .map-pane .map-status,.canvas-preview .map-status,
+  .canvas-preview.traffic-ready .map-status{
+    left:10px;right:auto;bottom:10px;
+    max-width:calc(100% - 108px);white-space:normal
+  }
+  .map-pane .map-bottom-info{bottom:55px}
+}
+@media(max-width:850px) and (max-height:520px){
+  .sidebar,.canvas-preview .sidebar,.canvas-preview.traffic-ready .sidebar,
+  .preview-only .sidebar{height:min(48dvh,255px)}
+  .sidebar.is-collapsed,.canvas-preview .sidebar.is-collapsed,
+  .canvas-preview.traffic-ready .sidebar.is-collapsed,
+  .preview-only .sidebar.is-collapsed{height:59px}
+}
