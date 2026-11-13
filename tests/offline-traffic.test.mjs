@@ -250,3 +250,51 @@ test("closed A3 redirects arrivals to the actual preceding open exit while prese
     "excess demand must physically queue before the closure");
   conservation(scenario.totals());
 });
+
+test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and blocks A3 entering turn",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  // Exactly the old persisted 200-m event: must auto-upgrade to full corridor.
+  const event=sim.setEvent({id:"old-short",edgeId:"extra-a59-bonn",
+    kind:"closure",closedLanes:[0,1,2],offsetM:950,lengthM:200,
+    speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.match(event.closureFrom,/A59 31 AD Köln-Heumar/);
+  assert.match(event.closureTo,/A59 32 Rath/);
+  assert.ok(event.coveredLengthM>2000&&event.coveredLengthM<2400);
+  assert.ok(event.offsetM<150);
+  const span=sim.closureBands("extra-a59-bonn")[0];
+  assert.ok(span.toM-span.fromM>2000,"all 2.1 km must have red-white overlay");
+  assert.equal(sim.closureBands("extra-a59-koeln").length,0,
+    "opposite direction must remain open");
+  assert.equal(sim.movementBlocked("A3-258495162","extra-a59-bonn"),true,
+    "A3 to A59 Heumar turning movement must not enter after closure");
+  assert.equal(sim.closureBands("extra-heumar-328948525").length,0,
+    "A59 Wahn ramp far downstream must NOT be closed merely due to shared OSM Way");
+  assert.equal(sim.closureBands("extra-heumar-132618673").length,0,
+    "Rath exit at end of closure stays usable");
+  const normal=sim.recommendedClosureLength("extra-a59-bonn",950);
+  assert.equal(normal.lengthM,2132);
+});
+test("A3 Köln-Ost to Heumar motorway closure covers all connected Ways and feeder ramps",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  const event=sim.setEvent({id:"a3-full",edgeId:"A3-26164974",
+    kind:"closure",closedLanes:[0,1,2],offsetM:460,lengthM:200,
+    speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.match(event.closureFrom,/A3 27 AK Köln-Ost/);
+  assert.match(event.closureTo,/A3 28 AD Köln-Heumar/);
+  assert.ok(event.coveredLengthM>3500&&event.coveredLengthM<4300);
+  const closedWays=w.STAU_LEGACY_GEOMETRY.roads
+    .filter(row=>row[1]==="mainline"&&sim.closureBands(row[0]).length);
+  const closedRamps=w.STAU_LEGACY_GEOMETRY.roads
+    .filter(row=>row[1]==="ramp"&&sim.closureBands(row[0]).length);
+  assert.ok(closedWays.length>=15,"closure spans original A3 OSM Way splits");
+  assert.ok(closedRamps.length>=1,"actual feeder ramp into this closed corridor is included");
+  assert.ok(Math.abs(closedWays.reduce((sum,row)=>
+    sum+sim.closureBands(row[0]).reduce((n,b)=>n+b.toM-b.fromM,0),0)-
+    event.coveredLengthM)<1);
+});
