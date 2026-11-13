@@ -147,57 +147,80 @@ function drawIncidentPins(rendered,byId){
 // claim: every queue has to contain actual simulated slowdown samples.
 function drawJamCallouts(rendered,byId){
   if(map.getZoom()<8.5)return;
-  const measured=rendered.filter(item=>item.source==="model"&&
-    item.speedKmh<=65&&item.colour!=="free"&&byId.has(item.edgeId));
-  const slow=new Map(measured.map(item=>[item.edgeId,item]));
-  if(!slow.size)return;
-  const successors=new Map(),predecessors=new Map();
-  for(const turn of state.network.movements){
-    if(!turn.allowed||!slow.has(turn.incomingEdgeId)||!slow.has(turn.outgoingEdgeId))continue;
-    const from=turn.incomingEdgeId,to=turn.outgoingEdgeId;
-    const outgoing=successors.get(from)??new Set();
-    outgoing.add(to);successors.set(from,outgoing);
-    const incoming=predecessors.get(to)??new Set();
-    incoming.add(from);predecessors.set(to,incoming);
-  }
-  const parent=new Map([...slow.keys()].map(id=>[id,id]));
-  const root=id=>{
-    while(parent.get(id)!==id){
-      parent.set(id,parent.get(parent.get(id)));
-      id=parent.get(id);
+  const pieces=[],perEdge=new Map();
+  for(const item of rendered){
+    const edge=byId.get(item.edgeId);
+    if(!edge)continue;
+    const bands=[...(item.trafficBands??[])].filter(x=>x.colour!=="free")
+      .sort((a,b)=>a.fromM-b.fromM);
+    const row=[];
+    for(const band of bands){
+      const metres=band.toM-band.fromM;
+      const delay=Math.max(0,(metres/1000)*60*
+        (1/Math.max(5,band.speedKmh)-1/edge.freeSpeedKmh));
+      const last=row.at(-1);
+      if(last&&Math.abs(last.toM-band.fromM)<.1){
+        last.toM=band.toM;last.lengthM+=metres;last.delayMin+=delay;
+      }else{
+        const part={index:pieces.length,edgeId:edge.id,
+          fromM:band.fromM,toM:band.toM,lengthM:metres,delayMin:delay};
+        pieces.push(part);row.push(part);
+      }
     }
-    return id;
-  };
-  for(const id of slow.keys()){
-    const next=[...(successors.get(id)??[])];
-    if(next.length!==1||(predecessors.get(next[0])?.size??0)!==1)continue;
-    const a=root(id),b=root(next[0]);
-    if(a!==b)parent.set(b,a);
+    if(row.length)perEdge.set(edge.id,row);
+  }
+  if(!pieces.length)return;
+  const roots=pieces.map((_,i)=>i);
+  const root=i=>{while(roots[i]!==i){roots[i]=roots[roots[i]];i=roots[i];}return i;};
+  const out=new Map(),incoming=new Map();
+  for(const move of state.network.movements){
+    if(!move.allowed)continue;
+    const from=out.get(move.incomingEdgeId)??new Set();
+    from.add(move.outgoingEdgeId);out.set(move.incomingEdgeId,from);
+    const to=incoming.get(move.outgoingEdgeId)??new Set();
+    to.add(move.incomingEdgeId);incoming.set(move.outgoingEdgeId,to);
+  }
+  // Only a unique directed continuation can combine separate OSM Ways;
+  // never join two queues through an ambiguous junction or lane fork.
+  for(const [id,parts] of perEdge){
+    const next=[...(out.get(id)??[])];
+    if(next.length!==1||incoming.get(next[0])?.size!==1)continue;
+    const target=perEdge.get(next[0]),edge=byId.get(id);
+    if(!target||!edge)continue;
+    const a=parts.at(-1),b=target[0];
+    if(a.toM<edge.lengthM-.1||b.fromM>.1)continue;
+    const ra=root(a.index),rb=root(b.index);
+    if(ra!==rb)roots[rb]=ra;
   }
   const groups=new Map();
-  for(const [id,item] of slow){
-    const edge=byId.get(id),key=root(id);
-    let group=groups.get(key);
-    if(!group){group={lengthM:0,delayMin:0,anchor:id,maxM:0};groups.set(key,group);}
-    const delay=(edge.lengthM/1000)*60*
-      (1/Math.max(5,item.speedKmh)-1/edge.freeSpeedKmh);
-    group.lengthM+=edge.lengthM;
-    group.delayMin+=Math.max(0,delay);
-    if(edge.lengthM>group.maxM){group.maxM=edge.lengthM;group.anchor=id;}
+  for(const part of pieces){
+    const id=root(part.index);
+    const g=groups.get(id)??{lengthM:0,delayMin:0,longestM:0,anchor:null};
+    g.lengthM+=part.lengthM;g.delayMin+=part.delayMin;
+    if(part.lengthM>g.longestM){g.longestM=part.lengthM;g.anchor=part;}
+    groups.set(id,g);
   }
-  let shown=0;
-  for(const group of [...groups.values()].sort((a,b)=>b.delayMin-a.delayMin)){
-    if(shown>=8)break;
-    if(group.lengthM<500||group.delayMin<.75)continue;
-    const edge=byId.get(group.anchor);
-    const km=(group.lengthM/1000).toLocaleString("de-DE",{maximumFractionDigits:1,
-      minimumFractionDigits:1});
-    const extra=Math.max(1,Math.round(group.delayMin));
-    const html='<span class="map-jam-label">≈ '+km+" km · +"+extra+" min</span>";
-    L.marker(pointOnEdge(edge,edge.lengthM/2),{
+  const boxes=[];
+  for(const g of [...groups.values()].sort((a,b)=>b.delayMin-a.delayMin)){
+    if(boxes.length>=7)break;
+    if(g.lengthM<400||g.delayMin<.5||!g.anchor)continue;
+    const edge=byId.get(g.anchor.edgeId);
+    if(!edge)continue;
+    const position=pointOnEdge(edge,(g.anchor.fromM+g.anchor.toM)/2);
+    const pixel=map.latLngToContainerPoint(position);
+    const rect={x:pixel.x-78,y:pixel.y-45,w:156,h:30};
+    if(rect.x<6||rect.x+rect.w>map.getSize().x-6||rect.y<110||
+       rect.y+rect.h>map.getSize().y-45)continue;
+    if(boxes.some(b=>rect.x<b.x+b.w+6&&rect.x+rect.w>b.x-6&&
+      rect.y<b.y+b.h+6&&rect.y+rect.h>b.y-6))continue;
+    boxes.push(rect);
+    const km=(g.lengthM/1000).toLocaleString("de-DE",{
+      minimumFractionDigits:1,maximumFractionDigits:1});
+    const extra=Math.max(1,Math.round(g.delayMin));
+    const html='<span class="map-jam-label">≈ '+km+' km · +'+extra+' min</span>';
+    L.marker(position,{
       icon:L.divIcon({className:"map-jam-pin",html,iconSize:[0,0]})
     }).addTo(incidentLayer);
-    shown++;
   }
 }
 function drawNetwork(){
