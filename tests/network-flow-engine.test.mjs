@@ -76,3 +76,20 @@ test('Nur reale Netzgrenzen erzeugen neue Nachfrage, niemals innere Autobahnabsc
   assert.throws(()=>engine.advance({'a3-west':-1}),/Ungültige Zuflussmenge/);
   assert.equal(engine.snapshot().generatedVehicles,0);
 });
+
+test('Eine geplante Vollsperrung stoppt neue Einfahrten, lässt bereits eingeschlossene Fahrzeuge abfließen',()=>{
+  const graph=sampleNetwork();
+  const engine=new Stauphysik.NetworkFlowEngine(graph,{stepSeconds:2,targetCellLengthM:100});
+  for(let i=0;i<210;i++)engine.advance({'a3-west':3300});
+  const before=engine.vehiclesOnEdge('a3-east');
+  const exited=engine.snapshot().exitedVehicles;
+  assert.ok(before>0,'vor Sperrbeginn befinden sich Fahrzeuge im Korridor');
+  const closure={id:'planned-closure',edgeId:'a3-east',kind:'closure',
+    fromM:0,toM:graph.edges[1].lengthM,closedLanes:[0,1,2],startMinute:0};
+  for(let i=0;i<240;i++)engine.advance({'a3-west':3300},[closure]);
+  assert.ok(engine.vehiclesOnEdge('a3-east')<before*.02,
+    'vorhandener Verkehr darf den gesperrten Korridor räumen');
+  assert.ok(engine.snapshot().exitedVehicles>exited,
+    'Fahrzeuge müssen im Modell regulär am realen Netzende abfließen');
+  assert.ok(Math.abs(engine.snapshot().conservationResidual)<1e-6);
+});
