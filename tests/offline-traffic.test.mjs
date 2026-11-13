@@ -86,3 +86,31 @@ test("reject unsafe rates and unknown incidents",async()=>{
   assert.throws(()=>scenario.setMode("missing","closure"),/Unbekannter/);
   assert.throws(()=>scenario.setMode("a","unknown"),/Ungültiger/);
 });
+
+test("speed-limit signs alone never create congestion colors or phantom delay",async()=>{
+  const scenario=(await engine())(network());
+  scenario.setDemandPercent(0);
+  scenario.setEvent({id:"limit-test",edgeId:"b",kind:"roadworks",
+    closedLanes:[0],lengthM:300,offsetM:0,speedKmh:20,
+    shoulder:"normal",hasShoulder:false,schedule:null});
+  scenario.advance(12);
+  assert.equal(scenario.color("b"),"free",
+    "an empty 20 km/h work zone needs an event marker, not a red queue");
+  assert.deepEqual(scenario.visualBands("b"),[]);
+  assert.deepEqual(scenario.jamSummaries(),[]);
+  conservation(scenario.totals());
+});
+test("congested connected OSM Ways have a queue length and positive delay",async()=>{
+  const scenario=(await engine())(network());
+  scenario.setDemandPercent(150);
+  scenario.setMode("c","closure");
+  for(let i=0;i<35;i++)scenario.advance(12);
+  const jams=scenario.jamSummaries();
+  assert.ok(jams.length>0,"a sustained closure must eventually generate measured queue statistics");
+  assert.ok(jams.every(x=>x.lengthM>=350&&x.delayMin>=.5));
+  assert.ok(jams.every(x=>Number.isFinite(x.delayMin)&&x.worstKmh>=0));
+  assert.ok(jams.some(x=>["a","b","c"].includes(x.edgeId)));
+  conservation(scenario.totals());
+  scenario.reset(true);
+  assert.deepEqual(scenario.jamSummaries(),[]);
+});
