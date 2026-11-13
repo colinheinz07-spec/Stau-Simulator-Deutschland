@@ -217,3 +217,15 @@
   .canvas-preview.traffic-ready .sidebar.is-collapsed,
   .preview-only .sidebar.is-collapsed{height:59px}
 }
+
+/* Incident icons are selectable; queue estimates are informational. */
+.map-event-pin{background:transparent!important;border:0!important;cursor:pointer}
+.map-event-symbol{display:flex;align-items:center;justify-content:center;width:28px;height:28px;
+  font-size:18px;line-height:1;background:#172f45;border:2px solid #fff;
+  border-radius:8px;box-shadow:0 3px 9px #10233477}
+.map-jam-pin{background:transparent!important;border:0!important;pointer-events:none}
+.map-jam-label{position:absolute;left:0;top:-10px;transform:translate(-50%,-100%);
+  display:block;padding:5px 9px;background:#172c3ef2;color:#fff;
+  border-left:4px solid #ec5863;border-radius:5px;
+  box-shadow:0 3px 12px #12243666;font-size:11px;font-weight:700;
+  line-height:1.4;white-space:nowrap;pointer-events:none}
