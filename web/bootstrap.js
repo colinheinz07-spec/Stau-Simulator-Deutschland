@@ -28,6 +28,8 @@ window.startLegacyFallback=async function(existingMap=null){
     await loadScript("./legacy-geometry.js");
   if(!window.StauEventSchedule)
     await loadScript("./event-schedule.js");
+  if(!window.StauTrafficReference)
+    await loadScript("./traffic-reference.js");
   if(typeof window.createLegacyTrafficScenario!=="function")
     await loadScript("./offline-traffic.js");
   if(typeof window.createOfflineEventEditor!=="function")
