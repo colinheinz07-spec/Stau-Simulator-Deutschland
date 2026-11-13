@@ -93,7 +93,7 @@ function createLegacyTrafficScenario(data){
     // Legacy app used roughly 5–12 % exits at ordinary junctions,
     // not the previous 25 % per exit. Interchanges may branch more.
     const weight=to.kind==="mainline"?20:1.5;
-    const link={to:to.index,fromCell,toCell,weight};
+    const link={to:to.index,fromCell,toCell,fromM,toM,weight};
     from.links.push(link);from.linksFrom[fromCell].push(link);
     to.incoming++;
     if(toM<.01)to.incomingAtStart++;
@@ -505,7 +505,20 @@ function createLegacyTrafficScenario(data){
       (!record.spec.schedule||
         global.StauEventSchedule.active(record.spec.schedule,time)));
     for(const record of roadClosures){
-      const closed=new Set(record.spans.map(span=>span.edgeId));
+      const closed=new Set(),spansById=new Map();
+      for(const span of record.spans){
+        const arr=spansById.get(span.edgeId)||[];
+        arr.push(span);spansById.set(span.edgeId,arr);
+      }
+      function leadsIntoClosed(link){
+        const target=edges[link.to];
+        if(closed.has(target.id))return true;
+        // Only the actual physical closure interval counts. A closure
+        // between A59 AS31 and AS32 must NEVER close AS35 at Wahn merely
+        // because both touch the same 26 km OSM Way.
+        return (spansById.get(target.id)||[]).some(span=>
+          link.toM>=span.fromM-.5&&link.toM<span.toM-.5);
+      }
       // Repeated fixed-point resolution covers ramp->ramp->mainline chains,
       // independent of OSM Way fragments.
       const ramps=new Set();
@@ -514,7 +527,7 @@ function createLegacyTrafficScenario(data){
         changed=false;
         for(const edge of edges){
           if(edge.kind!=="ramp"||closed.has(edge.id)||!edge.links.length)continue;
-          if(edge.links.every(link=>closed.has(edges[link.to].id))){
+          if(edge.links.every(leadsIntoClosed)){
             closed.add(edge.id);ramps.add(edge.id);changed=true;
           }
         }
@@ -814,10 +827,10 @@ function createLegacyTrafficScenario(data){
         for(const link of edge.linksFrom[k]){
           if(receive[link.to][link.toCell]<=0)continue;
           const target=edges[link.to];
-          const firstM=link.toCell*target.cellLength;
-          const toEffects=activeEffects.get(target.id)||[];
-          const blocked=toEffects.filter(item=>item.gate&&
-            item.fromM>=firstM-.01&&item.fromM<firstM+target.cellLength+.01&&
+          const targetM=link.toM;
+          const toEffects=activeEffects.get(target.id)||NO_EFFECTS;
+          const blocked=toEffects.filter(item=>
+            targetM>=item.fromM-.05&&targetM<item.toM-.05&&
             (item.event.kind==="closure"||
               item.event.closedLanes.length===target.lanes&&
               item.event.shoulder!=="open"));
