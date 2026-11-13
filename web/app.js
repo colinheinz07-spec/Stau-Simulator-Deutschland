@@ -183,10 +183,19 @@ function drawJamCallouts(rendered,byId){
   // Only a unique directed continuation can combine separate OSM Ways;
   // never join two queues through an ambiguous junction or lane fork.
   for(const [id,parts] of perEdge){
-    const next=[...(out.get(id)??[])];
-    if(next.length!==1||incoming.get(next[0])?.size!==1)continue;
-    const target=perEdge.get(next[0]),edge=byId.get(id);
-    if(!target||!edge)continue;
+    const edge=byId.get(id);
+    if(!edge)continue;
+    const next=[...(out.get(id)??[])].filter(to=>{
+      const down=byId.get(to);
+      return down&&down.kind===edge.kind&&
+        (down.motorwayRef===edge.motorwayRef||
+          (edge.motorwayRef&&down.motorwayRefs?.includes(edge.motorwayRef)));
+    });
+    // Even at an AS with an exit ramp there is still one continuous
+    // same-direction through carriageway, hence ONE connected traffic queue.
+    if(next.length!==1)continue;
+    const target=perEdge.get(next[0]);
+    if(!target)continue;
     const a=parts.at(-1),b=target[0];
     if(a.toM<edge.lengthM-.1||b.fromM>.1)continue;
     const ra=root(a.index),rb=root(b.index);
