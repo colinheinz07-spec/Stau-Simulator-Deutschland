@@ -105,15 +105,77 @@ function smoothInterpolate(points,hour){
   }
   return points.at(-1)[1];
 }
+// Published school vacation windows for RP, NRW, HE (2026 and 2026/27).
+// Sources: kmk.org/service/ferienregelung/ferienkalender.html and VRM.
+// These are CALENDAR dates; their traffic multipliers remain model assumptions.
+const schoolBreaks={
+  RP:[["2026-03-30","2026-04-10"],["2026-06-29","2026-08-07"],
+    ["2026-10-05","2026-10-16"],["2026-12-23","2027-01-08"],
+    ["2027-03-22","2027-04-02"],["2027-06-28","2027-08-06"]],
+  NW:[["2026-03-30","2026-04-11"],["2026-05-26","2026-05-26"],
+    ["2026-07-20","2026-09-01"],["2026-10-17","2026-10-31"],
+    ["2026-12-23","2027-01-06"],["2027-03-22","2027-04-03"],
+    ["2027-05-18","2027-05-18"],["2027-07-19","2027-08-31"]],
+  HE:[["2026-03-30","2026-04-10"],["2026-06-29","2026-08-07"],
+    ["2026-10-05","2026-10-17"],["2026-12-23","2027-01-12"],
+    ["2027-03-22","2027-04-02"],["2027-06-28","2027-08-06"]]
+};
+function localState(ref,points){
+  if(ref==="A48")return "RP";
+  const first=points[0]||[50.5,7.5];
+  if(first[0]>=50.67)return "NW";
+  if(first[0]<50.48&&first[1]>=8.06)return "HE";
+  return "RP";
+}
+function easterSunday(year){
+  const a=year%19,b=Math.floor(year/100),c=year%100,d=Math.floor(b/4),e=b%4;
+  const f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3);
+  const h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4;
+  const l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451);
+  const v=h+l-7*m+114,month=Math.floor(v/31),day=v%31+1;
+  return Date.UTC(year,month-1,day);
+}
+const plusDays=(ms,n)=>new Date(ms+n*86400000).toISOString().slice(0,10);
+function isPublicHoliday(date,state){
+  const year=Number(date.slice(0,4)),easter=easterSunday(year);
+  const fixed=["01-01","05-01","10-03","12-25","12-26"];
+  if(fixed.includes(date.slice(5)))return true;
+  if([plusDays(easter,-2),plusDays(easter,1),plusDays(easter,39),
+    plusDays(easter,50)].includes(date))return true;
+  if(["RP","NW","HE"].includes(state)&&date===plusDays(easter,60))return true;
+  return ["RP","NW"].includes(state)&&date.endsWith("-11-01");
+}
+function calendarStatus(ref,points,time){
+  const clock=localClock(time),state=localState(ref,points),date=clock.date;
+  const isBreak=st=>(schoolBreaks[st]||[]).some(([a,b])=>date>=a&&date<=b);
+  const regionalVacation=isBreak(state),neighborVacation=["RP","NW","HE"]
+    .filter(st=>st!==state&&isBreak(st)).length;
+  const holiday=isPublicHoliday(date,state);
+  const weekday=clock.day>=1&&clock.day<=5,hour=clock.hour;
+  let factor=1;
+  if(holiday&&weekday){
+    // A public holiday removes commuter traffic, but leaves tourist travel.
+    factor=hour>=6&&hour<10?.58:hour>=15&&hour<19?.70:
+      hour>=10&&hour<15?.92:.82;
+  }else if(regionalVacation&&weekday){
+    const commute=hour>=6&&hour<9||hour>=15&&hour<19;
+    factor=commute?.88:hour>=10&&hour<16?1.10:1;
+  }
+  if(weekday&&!holiday&&neighborVacation>0&&hour>=10&&hour<18)
+    factor*=1+.035*neighborVacation;
+  return {date,state,holiday,schoolHoliday:regionalVacation,
+    neighboringSchoolHolidays:neighborVacation,factor};
+}
 const formatter=new Intl.DateTimeFormat("en-GB",{
   timeZone:"Europe/Berlin",weekday:"short",hour:"2-digit",
-  minute:"2-digit",hourCycle:"h23"
+  minute:"2-digit",year:"numeric",month:"2-digit",day:"2-digit",hourCycle:"h23"
 });
 function localClock(ms){
   const t=Object.fromEntries(formatter.formatToParts(new Date(ms))
     .map(x=>[x.type,x.value]));
   const days={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6};
-  return {day:days[t.weekday]??0,hour:Number(t.hour)+Number(t.minute)/60};
+  return {day:days[t.weekday]??0,hour:Number(t.hour)+Number(t.minute)/60,
+    date:t.year+"-"+t.month+"-"+t.day};
 }
 function motorwayDirection(ref,points,name=""){
   const first=points[0],last=points.at(-1),dy=last[0]-first[0],dx=last[1]-first[1];
@@ -170,7 +232,8 @@ function profileFactor(key,ref,ms,points=[]){
     if(eveningKeys.has(key))direction+=.09*evening;
   }
   const exp=exponent[family]||1.3;
-  return Math.max(0,(raw<1?raw**exp:raw)*direction);
+  const context=calendarStatus(ref,points,ms);
+  return Math.max(0,(raw<1?raw**exp:raw)*direction*context.factor);
 }
 function referenceForRoad(row){
   const ref=row[2]||"",points=row[4],name=row[5]||"";
@@ -189,6 +252,7 @@ function junctionEntryPeak(row){
   return Math.max(0,descriptor.peakVph*percentage/100);
 }
 const api=Object.freeze({REFERENCE_PEAKS,LOCAL_JUNCTION_PROFILES,
-  referenceForRoad,junctionEntryPeak,profileFactor,motorwayDirection,localClock});
+  referenceForRoad,junctionEntryPeak,profileFactor,motorwayDirection,localClock,
+  calendarStatus,isPublicHoliday,schoolBreaks});
 root.StauTrafficReference=api;
 })(typeof window!=="undefined"?window:globalThis);
