@@ -229,3 +229,5 @@
   border-left:4px solid #ec5863;border-radius:5px;
   box-shadow:0 3px 12px #12243666;font-size:11px;font-weight:700;
   line-height:1.4;white-space:nowrap;pointer-events:none}
+
+#detail-flow{font-variant-numeric:tabular-nums;font-size:12px;line-height:1.35}
