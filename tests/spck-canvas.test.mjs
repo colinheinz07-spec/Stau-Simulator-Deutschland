@@ -8,10 +8,12 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   const renderer=await readFile("web/legacy-canvas.js","utf8");
   const scheduleModule=await readFile("web/event-schedule.js","utf8");
   const flow=await readFile("web/offline-traffic.js","utf8");
+  const profile=await readFile("web/traffic-reference.js","utf8");
   const frames=[],listeners=new Map(),elements=new Map();
   const window={devicePixelRatio:2,addEventListener(){}};
   runInNewContext(geometry,{window});
   runInNewContext(scheduleModule,{window});
+  runInNewContext(profile,{window});
   runInNewContext(flow,{window});
   const draw={strokes:0,lines:0,colors:[]};
   const ctx={
