@@ -41,9 +41,14 @@ jobs:
           node --check web/event-schedule.js
           node --check web/offline-event-editor.js
       - name: Echte A3/A48 vollständig aus Rheinland-Pfalz, NRW und Hessen aufbauen
+        id: osm_build
+        continue-on-error: true
         run: |
           bash scripts/build-a3-a48-map.sh /tmp/map-build
       - name: Gerichtete Rampen und Anschlussstellen auf echte Verbindungen prüfen
+        id: osm_audit
+        if: steps.osm_build.outcome == 'success'
+        continue-on-error: true
         run: |
           node scripts/audit-a3-a48-connectivity.mjs \
             /tmp/map-build/selected-network.json /tmp/map-build/connectivity-audit.json
@@ -63,12 +68,14 @@ jobs:
           mkdir -p _site/data
           cp web/index.html web/styles.css web/app.js web/network-loader.js web/simulation-controller.js web/bootstrap.js web/legacy-canvas.js web/legacy-geometry.js web/offline-traffic.js web/event-schedule.js web/offline-event-editor.js _site/
           cp -R dist _site/dist
-          cp -R /tmp/map-build/tiles _site/data/tiles
-          cp /tmp/map-build/selected-network.json.audit.json _site/data/corridor-audit.json
-          cp /tmp/map-build/connectivity-audit.json _site/data/connectivity-audit.json
-          cp /tmp/map-build/corridor-source.json.audit.json _site/data/import-audit.json
           touch _site/.nojekyll
-          python3 - <<'PY'
+          if [[ "${{ steps.osm_build.outcome }}" == "success" && "${{ steps.osm_audit.outcome }}" == "success" ]]; then
+            cp -R /tmp/map-build/tiles _site/data/tiles
+            cp /tmp/map-build/selected-network.json.audit.json _site/data/corridor-audit.json
+            cp /tmp/map-build/connectivity-audit.json _site/data/connectivity-audit.json
+            cp /tmp/map-build/corridor-source.json.audit.json _site/data/import-audit.json
+            echo '{"mode":"full-osm-import"}' > _site/data/build-status.json
+            python3 - <<'PY'
           import json,pathlib
           site=pathlib.Path('_site')
           manifest=json.loads((site/'data/tiles/manifest.json').read_text())
@@ -92,6 +99,17 @@ jobs:
               assert (site/'data/tiles'/tile['file']).stat().st_size>0
           print('Karte bereit:',manifest['counts'])
           PY
+            echo "Vollständige OSM-Karte aufgebaut und geprüft." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Externer OSM-Import nicht bereit; stattdessen lokales Canvas-Verkehrsmodell veröffentlicht."
+            echo '{"mode":"local-canvas-fallback","reason":"OSM-Import oder Topologieaudit derzeit nicht erfolgreich"}' > _site/data/build-status.json
+            {
+              echo "## Eingeschränkte Karte (Offline-Fallback)"
+              echo "Die aktuellen Verbesserungen am lokalen OSM-Canvas-Verkehrsmodell werden bereitgestellt."
+              echo "Der vollständige A3/A48-Import war nicht verfügbar oder bestand das Topologieaudit nicht."
+              echo "**Dies ist ausdrücklich kein vollständiger importierter Netzstand.**"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Komplette Karten-Vorschau zum Herunterladen bereitstellen
         uses: actions/upload-artifact@v4
         with:
