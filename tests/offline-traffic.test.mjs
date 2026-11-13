@@ -114,3 +114,56 @@ test("congested connected OSM Ways have a queue length and positive delay",async
   scenario.reset(true);
   assert.equal(scenario.jamSummaries().length,0);
 });
+
+test("shared OSM junction vertices connect mid-Way on/off ramps without invented nearby turns",async()=>{
+  const make=await engine();
+  const scenario=make({roads:[
+    ["main","mainline","A3",3,[[50,7],[50,7.012],[50,7.015],[50,7.02]],"",11],
+    ["next","mainline","A3",3,[[50,7.02],[50,7.04]],"",12],
+    ["on","ramp","A3",1,[[50.004,7.008],[50,7.012]],"Test-AS · Auffahrt",13],
+    ["off","ramp","A3",1,[[50,7.015],[50.004,7.022]],"Test-AS · Abfahrt",14],
+    ["near-only","ramp","A3",1,[[50.004,7.03],[50.0001,7.012]],"Nicht angeschlossen",15]
+  ]});
+  assert.equal(scenario.sourceCount(),2,"mainline boundary and real local onramp");
+  assert.equal(scenario.entryIncomingCount("main"),0,
+    "merge in a middle cell must not erase motorway boundary demand");
+  assert.equal(scenario.incomingCount("main"),1);
+  assert.equal(scenario.reachable("on"),true);
+  assert.equal(scenario.reachable("off"),true);
+  assert.equal(scenario.reachable("near-only"),false,
+    "geographic proximity cannot be a motorway movement");
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  for(let minute=0;minute<12;minute++)scenario.advance(12);
+  assert.ok(scenario.edgeActivity("on").enteredVph>100);
+  assert.ok(scenario.edgeActivity("off").departedVph>50);
+  conservation(scenario.totals());
+});
+test("two blocked of three lanes create a real upstream Friday queue with modeled demand",async()=>{
+  const scenario=(await engine())({roads:[
+    ["up","mainline","A3",3,[[50,7],[50,7.012],[50,7.02]],"",11],
+    ["incident","mainline","A3",3,[[50,7.02],[50,7.04]],"",12]
+  ]});
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  for(let i=0;i<10;i++)scenario.advance(12);
+  const normalSpeed=scenario.speed("up");
+  scenario.setEvent({id:"two-lanes",edgeId:"incident",kind:"accident",
+    offsetM:0,lengthM:150,closedLanes:[0,1],speedKmh:40,
+    hasShoulder:false,shoulder:"normal",schedule:null});
+  for(let i=0;i<25;i++)scenario.advance(12);
+  assert.ok(scenario.speed("up")<65&&scenario.speed("up")<normalSpeed,
+    "a 1-lane crash discharge must propagate a physical queue upstream");
+  assert.ok(scenario.jamSummaries().some(j=>j.edgeId==="up"&&j.delayMin>.5));
+  assert.ok(scenario.edgeActivity("incident").enteredVph<1800,
+    "merge losses make an accident more restrictive than a free single lane");
+  conservation(scenario.totals());
+});
+test("Friday afternoon and Sunday night generate different modeled arrivals",async()=>{
+  const make=await engine();
+  const friday=make(network()),sunday=make(network());
+  friday.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  sunday.setSimulationStart(Date.parse("2026-11-15T01:51:00Z"));
+  for(let i=0;i<10;i++){friday.advance(12);sunday.advance(12);}
+  assert.ok(friday.totals().generatedVehicles>2*sunday.totals().generatedVehicles);
+  conservation(friday.totals());
+  conservation(sunday.totals());
+});
