@@ -169,3 +169,61 @@ test("Friday afternoon and Sunday night generate different modeled arrivals",asy
   conservation(friday.totals());
   conservation(sunday.totals());
 });
+
+test("2200 Kfz/h per mainline lane is consistent with imported road capacity",async()=>{
+  const scenario=(await engine())(network());
+  assert.equal(scenario.edgeActivity("a").capacityVph,3*2200);
+  assert.equal(scenario.edgeActivity("r").capacityVph,1500);
+});
+test("a full corridor closure marks the exclusive feeder ramp chain but not the open upstream exit",async()=>{
+  const scenario=(await engine())({roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.012]],"",11],
+    ["b","mainline","A3",3,[[50,7.012],[50,7.024]],"",12],
+    ["c","mainline","A3",3,[[50,7.024],[50,7.036]],"",13],
+    ["r","ramp","A3",1,[[50.002,7.020],[50,7.024]],
+      "AS Beispiel · Auffahrt auf A3 → Köln",14],
+    ["r0","ramp","A3",1,[[50.003,7.018],[50.002,7.020]],
+      "AS Beispiel · Rampenzweig",16],
+    ["exit","ramp","A3",1,[[50,7.012],[50.004,7.015]],
+      "AS Beispiel · Abfahrt von A3",15]
+  ]});
+  scenario.setEvent({id:"c1",edgeId:"b",kind:"closure",closedLanes:[0,1,2],
+    offsetM:0,lengthM:1300,speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.equal(scenario.closureBands("r").length,1);
+  assert.equal(scenario.closureBands("r0").length,1);
+  assert.equal(scenario.mode("exit"),"none");
+  assert.equal(scenario.closureBands("exit").length,0);
+  for(let i=0;i<20;i++)scenario.advance(12);
+  conservation(scenario.totals());
+});
+test("published 2026/27 vacation windows and Easter public holidays change modeled daily traffic",async()=>{
+  const window={};
+  runInNewContext(await readFile("web/traffic-reference.js","utf8"),{window});
+  const cal=window.StauTrafficReference;
+  const first=[[50.95,7.0],[50.96,7.0]];
+  const nrw=cal.calendarStatus("A3",first,Date.parse("2026-10-23T11:00:00Z"));
+  assert.equal(nrw.state,"NW");
+  assert.equal(nrw.schoolHoliday,true);
+  const westerwald=cal.calendarStatus("A48",[[50.4,7.5]],
+    Date.parse("2026-10-23T11:00:00Z"));
+  assert.equal(westerwald.schoolHoliday,false);
+  const christmas=cal.calendarStatus("A48",[[50.4,7.5]],
+    Date.parse("2026-12-25T07:00:00Z"));
+  assert.equal(christmas.holiday,true);
+  assert.ok(christmas.factor<1);
+  const goodFriday=cal.calendarStatus("A48",[[50.4,7.5]],
+    Date.parse("2027-03-26T10:00:00Z"));
+  assert.equal(goodFriday.holiday,true);
+});
+test("two hours of Sunday night traffic on real imported snapshot do not produce unexplained queues",async()=>{
+  const window={};
+  runInNewContext(await readFile("web/traffic-reference.js","utf8"),{window});
+  runInNewContext(await readFile("web/legacy-geometry.js","utf8"),{window});
+  runInNewContext(await readFile("web/offline-traffic.js","utf8"),{window});
+  const scenario=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
+  scenario.setSimulationStart(Date.parse("2026-11-15T01:00:00Z"));
+  for(let i=0;i<90;i++)scenario.advance(12);
+  assert.equal(scenario.jamSummaries().length,0,
+    "an unimpeded, low-demand overnight network must remain free flowing");
+  conservation(scenario.totals());
+});
