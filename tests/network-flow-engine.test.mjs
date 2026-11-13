@@ -51,6 +51,11 @@ test('Eine Vollsperrung hält Fahrzeuge stromaufwärts; die Rampe wird nicht all
     'leerer gesperrter Abschnitt wird rot-weiß, nicht künstlich als stehender Stau gefärbt');
   assert.ok(current.find(x=>x.edgeId==='a3-west').speedKmh<130,
     'am tatsächlichen Engpass müssen sich Fahrzeuge physikalisch aufstauen');
+  const bands=engine.speedBands();
+  assert.ok(bands.length>0,'Rückstau muss als konkrete belegte Zellen gemeldet werden');
+  assert.ok(bands.every(x=>x.toM>x.fromM&&x.speedKmh<=65),
+    'keine flächigen Phantomstaus außerhalb der wirklich verlangsamten Zellen');
+  assert.ok(bands.some(x=>x.edgeId==='a3-west'));
 });
 test('Eine nur einspurige Unfallstelle wirkt auf den konkreten Fahrweg statt auf alle Kreuzungsarme',()=>{
   const graph=sampleNetwork();
