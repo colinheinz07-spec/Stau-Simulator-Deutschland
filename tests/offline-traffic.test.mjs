@@ -44,6 +44,9 @@ test("conservative local OSM network: no invented source, rest-area exit exclude
 });
 test("full closure blocks its physical cross-section; upstream density slows",async()=>{
   const scenario=(await engine())(network());
+  // A valid alternative off-ramp can clear a Sunday-night closure without
+  // congestion. Use a documented heavy Friday demand for a strict queue test.
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
   scenario.setDemandPercent(150);
   scenario.setMode("c","closure");
   assert.equal(scenario.color("c"),"free",
@@ -104,6 +107,7 @@ test("speed-limit signs alone never create congestion colors or phantom delay",a
 });
 test("congested connected OSM Ways have a queue length and positive delay",async()=>{
   const scenario=(await engine())(network());
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
   scenario.setDemandPercent(150);
   scenario.setMode("c","closure");
   for(let i=0;i<35;i++)scenario.advance(12);
