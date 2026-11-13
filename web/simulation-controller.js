@@ -5,7 +5,7 @@ import {NetworkFlowEngine} from './dist/03_Stauphysik.js';
 import {demandFactor} from './dist/02_Verkehr.js';
 import {planCorridorClosure} from './dist/04_Ereignisse.js';
 
-const legalModes=new Set(['roadworks','accident','closure']);
+const legalModes=new Set(['roadworks','accident','breakdown','closure']);
 export function createTrafficScenario(network){
   let engine=new NetworkFlowEngine(network,{stepSeconds:2,targetCellLengthM:180});
   let demandPercent=100;
@@ -32,7 +32,7 @@ export function createTrafficScenario(network){
       if(mode==='closure'){
         closed.add(id);continue;
       }
-      const blockedCount=mode==='roadworks'?1:Math.min(2,edge.lanes);
+      const blockedCount=mode==='accident'?Math.min(2,edge.lanes):1;
       events.push({
         id:'scenario-'+id,edgeId:id,kind:mode,
         fromM:0,toM:edge.lengthM,
