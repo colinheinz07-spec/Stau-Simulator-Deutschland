@@ -6,7 +6,7 @@
  * IMPORTANT: Flow shares at junctions and demands are scenario assumptions,
  * not observed OD matrices. No individual routes / via-way histories yet.
  */
-import type {RoadEdge,RoadNetwork,SpeedSample} from '../model.js';
+import type {RoadEdge,RoadNetwork,SpeedSample,TrafficCellBand} from '../model.js';
 import {activeEvent,activeNetworkClosures,type SimEvent,type CorridorClosure}
   from '../04_Ereignisse.js';
 
@@ -115,6 +115,26 @@ export class NetworkFlowEngine {
       }
       const speedKmh=state.vehicles.length/inverseSpeedSum;
       samples.push({edgeId:state.edge.id,speedKmh,atMinute:this.elapsed/60});
+    }
+    return samples;
+  }
+  /** Physical slowdown subsegments, never a guessed speed for the whole Way.
+   * Free or empty cells do not create orange/red traffic overlays. */
+  speedBands():TrafficCellBand[]{
+    const samples:TrafficCellBand[]=[];
+    for(const state of this.cells.values()){
+      for(let i=0;i<state.vehicles.length;i++){
+        const count=state.vehicles[i]!;
+        const fraction=state.jamCellVehicles>0?
+          Math.min(1,count/state.jamCellVehicles):0;
+        const speedKmh=state.edge.freeSpeedKmh*
+          (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
+        if(count<Math.max(2,state.edge.lanes*1.2) ||
+           fraction<=.23 || speedKmh>65)continue;
+        samples.push({edgeId:state.edge.id,
+          fromM:i*state.lengthM,toM:(i+1)*state.lengthM,
+          speedKmh,atMinute:this.elapsed/60});
+      }
     }
     return samples;
   }
