@@ -155,6 +155,13 @@ export class NetworkFlowEngine {
       entries.push(event);
       activeById.set(event.edgeId,entries);
     }
+    const closedByEvent=new Set<string>();
+    for(const [id,eventsOnEdge] of activeById){
+      const edge=this.cells.get(id)?.edge;
+      if(edge&&eventsOnEdge.some(e=>e.kind==='closure'&&
+        e.fromM<=.001&&e.toM>=edge.lengthM-.001))
+        closedByEvent.add(id);
+    }
     const send=new Map<string,Float64Array>();
     const receive=new Map<string,Float64Array>();
     const delta=new Map<string,Float64Array>();
@@ -174,7 +181,11 @@ export class NetworkFlowEngine {
           if(event.kind==='closure'){
             // A planned road closure is an ENTRY ban, not a roadblock:
             // cars already inside can evacuate at their normal discharge.
-            if(event.fromM>=a-.001&&event.fromM<b+.001)
+            // Whole-edge corridor entrance is blocked at a real boundary
+            // below; leaving this receiving cell open lets cars already
+            // inside another closed edge evacuate over the join.
+            const wholeEdge=event.fromM<=.001&&event.toM>=edge.lengthM-.001;
+            if(!wholeEdge&&event.fromM>=a-.001&&event.fromM<b+.001)
               forbiddenEntry=true;
             continue;
           }
@@ -212,6 +223,7 @@ export class NetworkFlowEngine {
       const choices=(this.moves.get(id)??[]).filter(m=>
         (!corridor.blockedEdgeIds.has(m.toId)||
           corridor.blockedEdgeIds.has(id))&&
+        (!closedByEvent.has(m.toId)||closedByEvent.has(id))&&
         !corridor.blockedMovementKeys.has(id+'=>'+m.toId)&&
         (receive.get(m.toId)?.[0]??0)>0
       );
@@ -258,7 +270,8 @@ export class NetworkFlowEngine {
     for(const id of this.sourceIds){
       // Do not generate new travel into a planned full corridor closure.
       // Existing in-network vehicles and previously recorded queues remain.
-      const demand=corridor.blockedEdgeIds.has(id)?0:(demandVph[id]??0);
+      const demand=(corridor.blockedEdgeIds.has(id)||closedByEvent.has(id))?
+        0:(demandVph[id]??0);
       if(!safeNonnegative(demand))throw Error('Ungültige Zuflussmenge: '+id);
       const created=demand*dt/3600;
       this.generated+=created;
