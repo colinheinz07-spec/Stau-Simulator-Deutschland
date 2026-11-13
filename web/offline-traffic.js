@@ -42,7 +42,8 @@ function createLegacyTrafficScenario(data){
       freeKmh:row[1]==="ramp"?75:120,
       jamPerCell:130*lanes*(meters/count)/1000,
       next:[],incoming:0,source:false,backlog:0,
-      mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[]
+      mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
+      links:[],linksFrom:Array.from({length:count},()=>[])
     };
     const index=edges.length;edge.index=index;edges.push(edge);byId.set(id,edge);
     if(!outByNode.has(edge.from))outByNode.set(edge.from,[]);
@@ -50,17 +51,67 @@ function createLegacyTrafficScenario(data){
     if(!inByNode.has(edge.to))inByNode.set(edge.to,[]);
     inByNode.get(edge.to).push(index);
   }
-  const legalIndices=new Set();
-  // A relationship exists ONLY if source and target share the exact OSM
-  // endpoint. Never snap nearby ramps into fictitious driving movements.
+  // Reuse exact OSM geometry vertices for junctions. A motorway_link often
+  // joins a motorway in the MIDDLE of an OSM Way, not at its endpoint.
+  // Never join two roads merely because they pass close to each other.
+  const vertexMap=new Map(),pointMetres=new Map();
   for(const edge of edges){
-    const possible=outByNode.get(edge.to)||[];
-    for(const j of possible){
-      const dest=edges[j];
-      if(dest===edge)continue;
-      edge.next.push({to:j,weight:dest.kind==="mainline"?6:2});
-      dest.incoming++;
-      legalIndices.add(j);
+    const source=data.roads.find(row=>String(row[0])===edge.id);
+    const vertices=source[4],cumulative=[0];
+    for(let p=1;p<vertices.length;p++){
+      const a=vertices[p-1],b=vertices[p];
+      const lat1=a[0]*rad,lat2=b[0]*rad;
+      const h=Math.sin((b[0]-a[0])*rad/2)**2+
+        Math.cos(lat1)*Math.cos(b[0]*rad)*Math.sin((b[1]-a[1])*rad/2)**2;
+      cumulative.push(cumulative.at(-1)+2*R*Math.asin(Math.min(1,Math.sqrt(h))));
+    }
+    pointMetres.set(edge.id,cumulative);
+    for(let p=0;p<vertices.length;p++){
+      const at=coord(vertices[p]),arr=vertexMap.get(at)||[];
+      arr.push({edge:edge.index,metre:cumulative[p],
+        first:p===0,last:p===vertices.length-1});
+      vertexMap.set(at,arr);
+    }
+  }
+  const linkKeys=new Set();
+  function connect(from,to,fromM,toM){
+    if(from.index===to.index)return;
+    const fromCell=Math.max(0,Math.min(from.n-1,
+      Math.floor(Math.max(0,fromM-1e-4)/from.cellLength)));
+    const toCell=Math.max(0,Math.min(to.n-1,Math.floor(toM/to.cellLength)));
+    const key=from.index+":"+fromCell+">"+to.index+":"+toCell;
+    if(linkKeys.has(key))return;
+    linkKeys.add(key);
+    const weight=to.kind==="mainline"?6:2;
+    const link={to:to.index,fromCell,toCell,weight};
+    from.links.push(link);from.linksFrom[fromCell].push(link);
+    to.incoming++;
+    // Preserve end-to-start successors for long-event tracing and old API.
+    if(fromCell===from.n-1&&toCell===0&&fromM>=from.lengthM-.01&&toM<.01)
+      from.next.push({to:to.index,weight});
+  }
+  for(const edge of edges){
+    const positions=pointMetres.get(edge.id);
+    const from=vertexMap.get(edge.from)||[];
+    const last=vertexMap.get(edge.to)||[];
+    // End of a ramp or mainline can join either a start point or a shared
+    // interior OSM node of the downstream mainline.
+    for(const dest of last){
+      if(dest.edge===edge.index||dest.last)continue;
+      const downstream=edges[dest.edge];
+      if(dest.first||downstream.kind==="mainline")
+        connect(edge,downstream,edge.lengthM,dest.metre);
+    }
+    // Off-ramp starts can attach to an interior vertex of the upstream Way.
+    const source=data.roads.find(row=>String(row[0])===edge.id);
+    for(let j=1;j<source[4].length-1;j++){
+      const at=coord(source[4][j]),metre=positions[j];
+      for(const dest of vertexMap.get(at)||[]){
+        if(dest.edge===edge.index||!dest.first)continue;
+        const downstream=edges[dest.edge];
+        if(downstream.kind==="ramp"||edge.kind==="mainline")
+          connect(edge,downstream,metre,0);
+      }
     }
   }
   // Select external corridor boundaries from actual graph sources.
@@ -94,10 +145,16 @@ function createLegacyTrafficScenario(data){
   }
   // Only edge paths downstream of source boundaries can receive model traffic.
   // The rest remains visible OSM geometry but is not falsely presented as simulated.
+  // A ramp beginning on a local (non-motorway) road is a legitimate local
+  // source only when its OSM geometry actually connects into the motorway.
+  // This is NOT phantom traffic injected on an inner motorway cell.
+  const localSources=edges.filter(edge=>edge.kind==="ramp"&&
+    edge.incoming===0&&edge.links.length>0);
+  for(const edge of localSources){edge.source=true;sources.push(edge);}
   const reachable=new Set(sources.map(edge=>edge.id));
   const frontier=[...sources];
   for(let k=0;k<frontier.length;k++){
-    for(const link of frontier[k].next){
+    for(const link of frontier[k].links){
       const downstream=edges[link.to];
       if(reachable.has(downstream.id))continue;
       reachable.add(downstream.id);frontier.push(downstream);
@@ -391,6 +448,28 @@ function createLegacyTrafficScenario(data){
     if(!finite(Number(pct))||Number(pct)>200)throw Error("Verkehrslast muss 0–200 % sein");
     demandPercent=Number(pct);
   }
+  // Local clock affects traffic: winter Friday PM peaks differ from Sunday.
+  // Baseline demand is a scenario assumption; no claims of observed traffic.
+  const clockFormatter=new Intl.DateTimeFormat("en-GB",{
+    timeZone:"Europe/Berlin",weekday:"short",hour:"2-digit",hourCycle:"h23"
+  });
+  let cachedTimeBucket=-1,cachedTimeFactor=1;
+  function timeDemandFactor(time){
+    const bucket=Math.floor(time/600000);
+    if(bucket===cachedTimeBucket)return cachedTimeFactor;
+    cachedTimeBucket=bucket;
+    const parts=Object.fromEntries(clockFormatter.formatToParts(new Date(time))
+      .map(p=>[p.type,p.value]));
+    const hour=Number(parts.hour),day=parts.weekday;
+    const weekday=day!=="Sat"&&day!=="Sun";
+    const commuting=hour>=6&&hour<9?1.22:hour>=15&&hour<19?1.26:
+      hour>=11&&hour<15?1.03:hour>=9&&hour<11?1.08:
+      hour>=19&&hour<22?.74:hour>=5&&hour<6?.72:.38;
+    const weekend=day==="Sun"?.62:day==="Sat"?.78:1;
+    const friday=day==="Fri"&&hour>=12&&hour<19?1.15:1;
+    cachedTimeFactor=commuting*weekend*friday*(weekday?1:.98);
+    return cachedTimeFactor;
+  }
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
     updateEffects();
@@ -433,56 +512,62 @@ function createLegacyTrafficScenario(data){
         r[k]=blockedAtGate?0:Math.min(room,transferCapacity,room*wave);
       }
     }
-    // Simultaneous internal cell transfers. The upstream vehicle remains
-    // stored if its downstream cell is too full to receive it.
-    for(let j=0;j<edges.length;j++){
-      const s=send[j],r=receive[j],d=delta[j];
-      for(let k=0;k<s.length-1;k++){
-        const moved=Math.min(s[k],r[k+1]);
-        d[k]-=moved;d[k+1]+=moved;
-        s[k]-=moved;r[k+1]-=moved;
-      }
-    }
+    // One simultaneous allocation for every motorway cell face and OSM
+    // connector. Ramp merges compete with the mainline for REAL receiving
+    // space, while exit splits share the originating cell's sending capacity.
+    // This fixes mid-Way motorway junctions without creating new road geometry.
     const proposed=new Map();
+    const push=(to,toCell,from,fromCell,want)=>{
+      const key=to+":"+toCell,arr=proposed.get(key)||[];
+      arr.push({to,toCell,from,fromCell,want});
+      proposed.set(key,arr);
+    };
     for(let j=0;j<edges.length;j++){
-      const edge=edges[j],s=send[j],available=s[s.length-1];
-      if(available<=0||!edge.next.length)continue;
-      const valid=edge.next.filter(x=>{
-        if(receive[x.to][0]<=0)return false;
-        // A downstream mainline already inside a long closure may be
-        // evacuated only from other edges in the SAME closed corridor span.
-        // Ordinary on-ramps must not enter that closed stretch.
-        const toEffects=activeEffects.get(edges[x.to].id)||[];
-        const closed=toEffects.filter(item=>item.fromM<.001&&
-          (item.event.kind==="closure"||
-           item.event.closedLanes.length===edges[x.to].lanes&&
-           item.event.shoulder!=="open"));
-        if(!closed.length)return true;
-        const upstream=activeEffects.get(edge.id)||[];
-        return closed.some(item=>upstream.some(from=>from.event.id===item.event.id));
-      });
-      if(!valid.length)continue;
-      const totalWeight=valid.reduce((sum,x)=>sum+x.weight,0);
-      for(const link of valid){
-        const want=available*link.weight/totalWeight;
-        const arr=proposed.get(link.to)||[];
-        arr.push([j,want]);proposed.set(link.to,arr);
+      const edge=edges[j],out=send[j];
+      for(let k=0;k<edge.n;k++){
+        const available=out[k];
+        if(available<=0)continue;
+        const options=[];
+        if(k<edge.n-1&&receive[j][k+1]>0)
+          options.push({to:j,toCell:k+1,weight:6});
+        for(const link of edge.linksFrom[k]){
+          if(receive[link.to][link.toCell]<=0)continue;
+          const target=edges[link.to];
+          const firstM=link.toCell*target.cellLength;
+          const toEffects=activeEffects.get(target.id)||[];
+          const blocked=toEffects.filter(item=>item.gate&&
+            item.fromM>=firstM-.01&&item.fromM<firstM+target.cellLength+.01&&
+            (item.event.kind==="closure"||
+              item.event.closedLanes.length===target.lanes&&
+              item.event.shoulder!=="open"));
+          if(blocked.length){
+            const upstream=activeEffects.get(edge.id)||[];
+            if(!blocked.some(item=>upstream.some(from=>
+              from.event.id===item.event.id)))continue;
+          }
+          options.push(link);
+        }
+        if(!options.length)continue;
+        const sum=options.reduce((n,x)=>n+x.weight,0);
+        for(const opt of options)
+          push(opt.to,opt.toCell,j,k,available*opt.weight/sum);
       }
     }
-    for(const [to,requests] of proposed){
-      const accepting=receive[to][0];
-      const required=requests.reduce((n,r)=>n+r[1],0);
-      const factor=required>accepting?accepting/required:1;
-      for(const [from,requested] of requests){
-        const transferred=requested*factor;
-        delta[from][edges[from].n-1]-=transferred;
-        delta[to][0]+=transferred;
+    for(const requests of proposed.values()){
+      const {to,toCell}=requests[0];
+      const accepting=receive[to][toCell];
+      const required=requests.reduce((sum,x)=>sum+x.want,0);
+      const ratio=required>accepting?accepting/required:1;
+      for(const req of requests){
+        const amount=req.want*ratio;
+        delta[req.from][req.fromCell]-=amount;
+        delta[to][toCell]+=amount;
       }
     }
     // Only a true graph sink can discharge vehicles.
     for(let j=0;j<edges.length;j++){
       const edge=edges[j];
-      if(edge.next.length)continue;
+      if(edge.links.length)continue;
       const moved=send[j][edge.n-1];
       delta[j][edge.n-1]-=moved;
       exited+=moved;
@@ -491,8 +576,9 @@ function createLegacyTrafficScenario(data){
     // network boundaries. Unadmitted vehicles remain in external backlog.
     for(const edge of sources){
       const j=edge.index;
-      // 100 % is a moderate baseline, NOT near-saturation at every source.
-       const offered=(edge.lanes*1000)*(demandPercent/100)*dt/3600;
+      // Real motorway boundary / geometric local-ramp origins only.
+      const base=edge.kind==="ramp"?270:edge.lanes*1160;
+      const offered=base*(demandPercent/100)*timeDemandFactor(clockMs())*dt/3600;
       generated+=offered;
       const available=edge.backlog+offered;
       const admitted=Math.min(available,receive[j][0]);
@@ -526,7 +612,9 @@ function createLegacyTrafficScenario(data){
   return {advance,step,reset,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
-    reachable:id=>reachable.has(id),reachableCount:()=>reachable.size};
+    reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
+    incomingCount:id=>byId.get(id)?.incoming??0,sourceIds:()=>sources.map(x=>x.id),
+    junctionCount:()=>linkKeys.size};
 }
 global.createLegacyTrafficScenario=createLegacyTrafficScenario;
 })(window);
