@@ -5,6 +5,7 @@ import {runInNewContext} from "node:vm";
 
 async function engine(){
   const window={};
+  runInNewContext(await readFile("web/traffic-reference.js","utf8"),{window});
   runInNewContext(await readFile("web/offline-traffic.js","utf8"),{window});
   return window.createLegacyTrafficScenario;
 }
