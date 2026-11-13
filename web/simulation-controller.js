@@ -54,8 +54,8 @@ export function createTrafficScenario(network){
   }
 
   const sources=engine.sourceEdges().map(edge=>{
-    const base=edge.kind==='mainline'?Math.min(4300,edge.lanes*1550):
-      edge.kind==='ramp'?650:350;
+    const base=edge.kind==='mainline'?Math.min(3200,edge.lanes*1050):
+      edge.kind==='ramp'?450:200;
     return {id:edge.id,base};
   });
   function reset(){
@@ -88,6 +88,7 @@ export function createTrafficScenario(network){
   return {
     reset,setMode,setDemandPercent,advance,
     events:()=>computedEvents,
+    selectedEvents:()=>[...modes].map(([edgeId,kind])=>({edgeId,kind})),
     warnings:()=>warnings,
     mode:id=>modes.get(id)??'none',
     demandPercent:()=>demandPercent,
