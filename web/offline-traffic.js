@@ -312,6 +312,37 @@ function createLegacyTrafficScenario(data){
         byEdge.set(span.edgeId,list);
       }
     }
+    // A directed ramp that can ONLY feed a closed carriageway/closed ramp
+    // must share the same closure. Do not close upstream exit ramps when their
+    // destination remains legal, and do not flood a whole interchange.
+    const roadClosures=[...eventRecords.values()].filter(record=>
+      record.spec.kind==="closure"&&
+      (!record.spec.schedule||
+        global.StauEventSchedule.active(record.spec.schedule,time)));
+    for(const record of roadClosures){
+      const closed=new Set(record.spans.map(span=>span.edgeId));
+      // Repeated fixed-point resolution covers ramp->ramp->mainline chains,
+      // independent of OSM Way fragments.
+      const ramps=new Set();
+      let changed=true,iterations=0;
+      while(changed&&iterations++<edges.length){
+        changed=false;
+        for(const edge of edges){
+          if(edge.kind!=="ramp"||closed.has(edge.id)||!edge.links.length)continue;
+          if(edge.links.every(link=>closed.has(edges[link.to].id))){
+            closed.add(edge.id);ramps.add(edge.id);changed=true;
+          }
+        }
+      }
+      for(const id of ramps){
+        const edge=byId.get(id);
+        const list=byEdge.get(id)||[];
+        // Closing the entrance does not delete vehicles already on a ramp.
+        list.push({edgeId:id,fromM:0,toM:edge.lengthM,gate:true,
+          derivedRampClosure:true,event:record.spec});
+        byEdge.set(id,list);
+      }
+    }
     activeEffects=byEdge;
   }
   function eventsOn(id){updateEffects();return activeEffects.get(id)||[];}
@@ -618,7 +649,11 @@ function createLegacyTrafficScenario(data){
       const j=edge.index;
       // Real corridor boundaries and one source per explicitly named AS origin.
       // Peak reference is DIRECTIONAL, not 2600 x lanes or daily DTV.
-      const offered=edge.referencePeakVph*(demandPercent/100)*
+      // A closed entry ramp does not launch new journeys into a dead end.
+      // Existing traffic elsewhere remains in the physical model.
+      const entryClosed=(activeEffects.get(edge.id)||NO_EFFECTS)
+        .some(x=>x.event.kind==="closure"&&x.gate&&x.fromM<edge.cellLength);
+      const offered=entryClosed?0:edge.referencePeakVph*(demandPercent/100)*
         sourceFactor(edge,clockMs())*dt/3600;
       generated+=offered;
       const available=edge.backlog+offered;
