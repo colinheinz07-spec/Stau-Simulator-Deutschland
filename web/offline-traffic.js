@@ -677,7 +677,7 @@ function createLegacyTrafficScenario(data){
     // connector. Ramp merges compete with the mainline for REAL receiving
     // space, while exit splits share the originating cell's sending capacity.
     // This fixes mid-Way motorway junctions without creating new road geometry.
-    const proposed=new Map();
+    const proposed=new Map(),splitSources=[];
     const push=(to,toCell,from,fromCell,want)=>{
       const key=to+":"+toCell,arr=proposed.get(key)||[];
       arr.push({to,toCell,from,fromCell,want});
@@ -725,11 +725,13 @@ function createLegacyTrafficScenario(data){
             }
           }
         }
+        if(options.length>1)splitSources.push({from:j,cell:k,available,options});
         const sum=options.reduce((n,x)=>n+x.weight,0);
         for(const opt of options)
           push(opt.to,opt.toCell,j,k,available*opt.weight/sum);
       }
     }
+    const used=new Map(),accepted=new Map();
     for(const requests of proposed.values()){
       const {to,toCell}=requests[0];
       const accepting=receive[to][toCell];
@@ -739,10 +741,36 @@ function createLegacyTrafficScenario(data){
         const amount=req.want*ratio;
         delta[req.from][req.fromCell]-=amount;
         delta[to][toCell]+=amount;
+        const fromKey=req.from+":"+req.fromCell,toKey=to+":"+toCell;
+        used.set(fromKey,(used.get(fromKey)||0)+amount);
+        accepted.set(toKey,(accepted.get(toKey)||0)+amount);
         if(req.from!==to){
           enteredStep[to]+=amount;
           departedStep[req.from]+=amount;
         }
+      }
+    }
+    // With no vehicle-specific OD assignments, don't let a saturated turn
+    // with unused demand prevent flow along an available legal throughway.
+    // Reallocate ONLY residual sending supply to remaining real receiving space.
+    for(const split of splitSources){
+      const fromKey=split.from+":"+split.cell;
+      let remaining=split.available-(used.get(fromKey)||0);
+      if(remaining<1e-6)continue;
+      for(const opt of [...split.options].sort((a,b)=>b.weight-a.weight)){
+        const toKey=opt.to+":"+opt.toCell;
+        const spare=receive[opt.to][opt.toCell]-(accepted.get(toKey)||0);
+        if(spare<=1e-6)continue;
+        const moved=Math.min(remaining,spare);
+        delta[split.from][split.cell]-=moved;
+        delta[opt.to][opt.toCell]+=moved;
+        if(opt.to!==split.from){
+          enteredStep[opt.to]+=moved;
+          departedStep[split.from]+=moved;
+        }
+        accepted.set(toKey,(accepted.get(toKey)||0)+moved);
+        remaining-=moved;
+        if(remaining<=1e-6)break;
       }
     }
     // Only a true graph sink can discharge vehicles.
