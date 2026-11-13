@@ -13,7 +13,9 @@ test('Bedienbare A3/A48-Karte hat echte Verkehrssteuerung und nicht nur vorgegeb
   assert.match(page,/data-event="accident"/);
   assert.match(page,/data-event="closure"/);
   assert.match(script,/createTrafficScenario/);
-  assert.match(script,/motorwayMapEdges\(state\.network,samples,events,minute\)/);
+  assert.match(script,/motorwayMapEdges\(state\.network,samples,events,minute,\[\],cells\)/);
+  assert.match(script,/sliceEdgeGeometry/);
+  assert.match(script,/for\(const band of item\.trafficBands\)/);
   assert.ok(!script.includes('speedKmh:15,atMinute:0'),
     'roter Stau darf nicht einfach aus einem Button erzeugt werden');
 });
