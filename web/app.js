@@ -78,6 +78,94 @@ function styling(edge){
     hit:(ramp?14:17)
   };
 }
+// Locate points by their original OSM geometry, never by arbitrary screen offsets.
+function pointOnEdge(edge,offsetM){
+  let left=Math.max(0,Math.min(edge.lengthM,offsetM));
+  const line=edge.geometry;
+  for(let i=1;i<line.length;i++){
+    const a=line[i-1],b=line[i];
+    const metres=map.distance(a,b);
+    if(metres<=0)continue;
+    if(left<=metres){
+      const t=left/metres;
+      return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+    }
+    left-=metres;
+  }
+  return line.at(-1);
+}
+function drawIncidentPins(rendered,byId){
+  const drawn=new Map(rendered.map(item=>[item.edgeId,item]));
+  const glyphs={closure:"⛔",roadworks:"🚧",accident:"💥",breakdown:"🚛"};
+  const names={closure:"Vollsperrung",roadworks:"Baustelle",accident:"Unfall",breakdown:"Panne"};
+  for(const {edgeId,kind} of state.scenario?.selectedEvents?.()??[]){
+    const edge=byId.get(edgeId),item=drawn.get(edgeId);
+    if(!edge||!item||map.getZoom()<8.1)continue;
+    const glyph=glyphs[kind]??"⚠️";
+    const icon=L.divIcon({className:"map-event-pin",
+      html:'<span class="map-event-symbol">'+glyph+"</span>",
+      iconSize:[28,28],iconAnchor:[14,14]});
+    L.marker(pointOnEdge(edge,edge.lengthM/2),{icon,title:names[kind]??"Ereignis"})
+      .on("click",()=>openDetails(edge,item)).addTo(incidentLayer);
+  }
+}
+// An estimate from directed simulated edge speeds. No generic live-traffic
+// claim: every queue has to contain actual simulated slowdown samples.
+function drawJamCallouts(rendered,byId){
+  if(map.getZoom()<8.5)return;
+  const measured=rendered.filter(item=>item.source==="model"&&
+    item.speedKmh<=65&&item.colour!=="free"&&byId.has(item.edgeId));
+  const slow=new Map(measured.map(item=>[item.edgeId,item]));
+  if(!slow.size)return;
+  const successors=new Map(),predecessors=new Map();
+  for(const turn of state.network.movements){
+    if(!turn.allowed||!slow.has(turn.incomingEdgeId)||!slow.has(turn.outgoingEdgeId))continue;
+    const from=turn.incomingEdgeId,to=turn.outgoingEdgeId;
+    const outgoing=successors.get(from)??new Set();
+    outgoing.add(to);successors.set(from,outgoing);
+    const incoming=predecessors.get(to)??new Set();
+    incoming.add(from);predecessors.set(to,incoming);
+  }
+  const parent=new Map([...slow.keys()].map(id=>[id,id]));
+  const root=id=>{
+    while(parent.get(id)!==id){
+      parent.set(id,parent.get(parent.get(id)));
+      id=parent.get(id);
+    }
+    return id;
+  };
+  for(const id of slow.keys()){
+    const next=[...(successors.get(id)??[])];
+    if(next.length!==1||(predecessors.get(next[0])?.size??0)!==1)continue;
+    const a=root(id),b=root(next[0]);
+    if(a!==b)parent.set(b,a);
+  }
+  const groups=new Map();
+  for(const [id,item] of slow){
+    const edge=byId.get(id),key=root(id);
+    let group=groups.get(key);
+    if(!group){group={lengthM:0,delayMin:0,anchor:id,maxM:0};groups.set(key,group);}
+    const delay=(edge.lengthM/1000)*60*
+      (1/Math.max(5,item.speedKmh)-1/edge.freeSpeedKmh);
+    group.lengthM+=edge.lengthM;
+    group.delayMin+=Math.max(0,delay);
+    if(edge.lengthM>group.maxM){group.maxM=edge.lengthM;group.anchor=id;}
+  }
+  let shown=0;
+  for(const group of [...groups.values()].sort((a,b)=>b.delayMin-a.delayMin)){
+    if(shown>=8)break;
+    if(group.lengthM<500||group.delayMin<.75)continue;
+    const edge=byId.get(group.anchor);
+    const km=(group.lengthM/1000).toLocaleString("de-DE",{maximumFractionDigits:1,
+      minimumFractionDigits:1});
+    const extra=Math.max(1,Math.round(group.delayMin));
+    const html='<span class="map-jam-label">≈ '+km+" km · +"+extra+" min</span>";
+    L.marker(pointOnEdge(edge,edge.lengthM/2),{
+      icon:L.divIcon({className:"map-jam-pin",html,iconSize:[0,0]})
+    }).addTo(incidentLayer);
+    shown++;
+  }
+}
 function drawNetwork(){
   roadsLayer.clearLayers();
   closedLayer.clearLayers();
@@ -117,22 +205,9 @@ function drawNetwork(){
         dashArray:"12 10",dashOffset:"11",lineCap:"butt"}).addTo(closedLayer);
     }
   }
-  // Incident marker is informational. Only moving/queued vehicles decide
-  // orange/red speeds. Closed segments retain the red-white closure overlay.
-  if(state.scenario&&map.getZoom()>=9){
-    const available=new Map(state.network.edges.map(e=>[e.id,e]));
-    for(const event of state.scenario.events()){
-      if(event.kind==="closure")continue;
-      const road=available.get(event.edgeId);
-      if(!road)continue;
-      const position=road.geometry[Math.floor(road.geometry.length/2)];
-      if(!position)continue;
-      L.circleMarker(position,{radius:5,color:"#fff",weight:1.5,
-        fillColor:event.kind==="accident"?"#cb3c42":"#e5a244",fillOpacity:1
-      }).bindTooltip(event.kind==="accident"?"Unfall – Kapazität reduziert":
-        "Baustelle – Kapazität reduziert").addTo(incidentLayer);
-    }
-  }
+  // Explicit event icons remain distinct from congestion colors.
+  drawIncidentPins(rendered,byId);
+  drawJamCallouts(rendered,byId);
   if(state.junctions&&map.getZoom()>=12){
     const size=map.getSize();
     // Carry over old simulator's label-collision safeguards. The OSM
