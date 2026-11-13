@@ -439,9 +439,15 @@ function createLegacyTrafficScenario(data){
     const roots=pieces.map((_,i)=>i);
     const root=i=>{while(roots[i]!==i){roots[i]=roots[roots[i]];i=roots[i];}return i;};
     for(const edge of edges){
-      if(edge.next.length!==1)continue;
-      const target=edges[edge.next[0].to];
-      if(target.incomingAtStart!==1)continue;
+      // Off-ramps are forks but do NOT split a continuous motorway jam.
+      // Combine only the unique same-road/same-direction continuation.
+      const candidates=edge.next.filter(link=>{
+        const dest=edges[link.to];
+        return dest.kind===edge.kind&&
+          (edge.ref?dest.ref===edge.ref:dest.ref===edge.ref);
+      });
+      if(candidates.length!==1)continue;
+      const target=edges[candidates[0].to];
       const a=perEdge.get(edge.id)?.at(-1);
       const b=perEdge.get(target.id)?.[0];
       if(!a||!b||a.toM<edge.lengthM-.02||b.fromM>.02)continue;
