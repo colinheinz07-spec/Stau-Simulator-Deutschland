@@ -70,9 +70,10 @@ async function startLegacyCanvas(existingMap=null){
   root.append(zoomBox);
 
   const coverage=$("coverage");
-  coverage.querySelector("b").textContent="A3 / A48 · Verkehrsmodell (lokal)";
+  coverage.querySelector("b").textContent="Autobahnnetz · lokales Verkehrsmodell";
   const note=coverage.querySelector("small");
-  if(note)note.textContent="OSM-Altbestand · "+scenario.reachableCount()+" Abschnitte mit möglichem Modellzufluss";
+  if(note)note.textContent="OSM-Altbestand · "+format(scenario.reachableCount())+
+    " von "+format(scenario.edgeCount())+" Fahrwegen modelliert";
   const info=$("map-bottom-info");
   if(info)info.hidden=true;
   const disclaimer=document.querySelector(".legend + .disclaimer");
@@ -237,6 +238,16 @@ async function startLegacyCanvas(existingMap=null){
       return;
     }
     if(phase==="speeds"){
+      // No model flow is NOT evidence of free-flow. Show still-visible
+      // but uncalibrated OSM ways in muted blue-grey, never false green.
+      context.beginPath();
+      let unmodelled=0;
+      for(const road of view)if(!scenario.reachable(road.id)){
+        appendRoad(road,scale);unmodelled++;
+      }
+      if(unmodelled){
+        context.lineWidth=line;context.strokeStyle="#8095a4";context.stroke();
+      }
       // Draw all green roads BEFORE all slowdown bands. Previously green
       // ramps could paint over an actual red mainline queue at an interchange.
       for(const state of ["slow","jam","standstill"]){
@@ -555,7 +566,8 @@ async function startLegacyCanvas(existingMap=null){
     $("sim-outside").textContent=format(Math.round(stats.waitingOutsideSources));
     $("map-status").textContent="Modell "+Math.floor(sec/60)+" min · "+
       format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz · "+
-      format(Math.round(stats.waitingOutsideSources))+" vor Netzeinfahrten";
+      format(Math.round(stats.waitingOutsideSources))+" vor Netzeinfahrten · "+
+      format(scenario.reachableCount())+"/"+format(scenario.edgeCount())+" Abschnitte angebunden";
     if(eventEditor)eventEditor.updateStatus();
     const timeMarker=$("sim-model-date");
     if(timeMarker&&window.StauEventSchedule)
