@@ -70,7 +70,10 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   assert.match(element("map-status").textContent,/Modell 0 min/);
   assert.deepEqual([element("create-canvas").width,element("create-canvas").height],[780,1360]);
   assert.ok(draw.lines>10000,"Real road geometry must draw even when map tiles fail");
-  assert.equal(draw.strokes,4,"All 1929 OSM features must be drawn in batched strokes");
+  assert.ok(draw.strokes>=4&&draw.strokes<=6,
+    "1929 ways use batched road strokes plus a separate unknown-coverage layer");
+  assert.ok(draw.colors.includes("#8095a4"),
+    "disconnected ways must be grey, not falsely shown as free-flow green");
   assert.ok(listeners.has("create-canvas:pointerdown"));
   assert.ok(listeners.has("create-canvas:pointermove"));
   assert.ok(listeners.has("btn-test-region:click"));
