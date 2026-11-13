@@ -5,7 +5,7 @@ import {runInNewContext} from "node:vm";
 
 test("iPhone incident editor saves exact lanes, shoulder, recurrence and edit/remove",async()=>{
   const window={};
-  for(const p of ["web/event-schedule.js","web/offline-traffic.js"])
+  for(const p of ["web/event-schedule.js","web/traffic-reference.js","web/offline-traffic.js"])
     runInNewContext(await readFile(p,"utf8"),{window,Date,Intl,console});
   const network={roads:[
     ["a","mainline","A3",3,[[50,7],[50,7.013]],"",1],
