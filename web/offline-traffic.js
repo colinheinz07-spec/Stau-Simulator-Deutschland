@@ -24,6 +24,8 @@ const finite=n=>Number.isFinite(n)&&n>=0;
 function createLegacyTrafficScenario(data){
   if(!data||!Array.isArray(data.roads))throw Error("Geprüfte lokale Kartendaten fehlen");
   const edges=[],outByNode=new Map(),inByNode=new Map(),byId=new Map();
+  const rowById=new Map(data.roads.map(row=>[String(row[0]),row]));
+  const NO_EFFECTS=Object.freeze([]);
   let excludedRest=0;
   for(const row of data.roads){
     if(!Array.isArray(row[4])||row[4].length<2)continue;
@@ -57,7 +59,7 @@ function createLegacyTrafficScenario(data){
   // Never join two roads merely because they pass close to each other.
   const vertexMap=new Map(),pointMetres=new Map();
   for(const edge of edges){
-    const source=data.roads.find(row=>String(row[0])===edge.id);
+    const source=rowById.get(edge.id);
     const vertices=source[4],cumulative=[0];
     for(let p=1;p<vertices.length;p++){
       const a=vertices[p-1],b=vertices[p];
@@ -107,7 +109,7 @@ function createLegacyTrafficScenario(data){
         connect(edge,downstream,edge.lengthM,dest.metre);
     }
     // Off-ramp starts can attach to an interior vertex of the upstream Way.
-    const source=data.roads.find(row=>String(row[0])===edge.id);
+    const source=rowById.get(edge.id);
     for(let j=1;j<source[4].length-1;j++){
       const at=coord(source[4][j]),metre=positions[j];
       for(const dest of vertexMap.get(at)||[]){
@@ -330,7 +332,7 @@ function createLegacyTrafficScenario(data){
   function recomputeSpeeds(){
     updateEffects();
     for(const edge of edges){
-      const effectList=activeEffects.get(edge.id)||[];
+      const effectList=activeEffects.get(edge.id)||NO_EFFECTS;
       let minSpeed=edge.freeKmh;
       const bands=[];
       for(let k=0;k<edge.n;k++){
@@ -486,10 +488,11 @@ function createLegacyTrafficScenario(data){
       const s=send[j],r=receive[j],d=delta[j];
       d.fill(0);
       const wave=Math.min(1,(22/3.6)*dt/edge.cellLength);
-      const effects=activeEffects.get(edge.id)||[];
+      const effects=activeEffects.get(edge.id)||NO_EFFECTS;
       for(let k=0;k<n;k++){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
-        const local=effects.filter(e=>e.fromM<b-.001&&e.toM>a+.001);
+        const local=effects.length?
+          effects.filter(e=>e.fromM<b-.001&&e.toM>a+.001):NO_EFFECTS;
         const closed=new Set();
         let shoulderOpen=false,shoulderBlocked=false,blockedAtGate=false;
         let permitted=edge.freeKmh;
