@@ -255,6 +255,48 @@ function createLegacyTrafficScenario(data){
     }
     return {spans,coveredLengthM:covered,truncated:remaining>.01};
   }
+  function recommendedClosureLength(id,offsetM=0){
+    const edge=byId.get(id);
+    if(!edge||edge.kind!=="mainline"||!edge.ref)return null;
+    const candidates=(data.junctions||[]).filter(j=>j[0]===edge.ref);
+    if(!candidates.length)return null;
+    const possible=trace(edge,Math.max(0,offsetM),100000);
+    let passed=0,found=null;
+    for(const span of possible.spans){
+      const road=rowById.get(span.edgeId),points=road[4];
+      const cum=pointMetres.get(span.edgeId);
+      for(const junction of candidates){
+        const center=junction[3];
+        if(!Array.isArray(center))continue;
+        const scale=Math.cos(center[0]*rad)*111194,latScale=111194;
+        let bestDistance=Infinity,metresAlong=0;
+        for(let k=1;k<points.length;k++){
+          const left=points[k-1],right=points[k];
+          const x=(right[1]-left[1])*scale,
+            y=(right[0]-left[0])*latScale;
+          const px=(center[1]-left[1])*scale,
+            py=(center[0]-left[0])*latScale;
+          const t=Math.max(0,Math.min(1,
+            (x*px+y*py)/Math.max(.001,x*x+y*y)));
+          const distance=Math.hypot(px-t*x,py-t*y);
+          if(distance<bestDistance){
+            bestDistance=distance;
+            metresAlong=cum[k-1]+t*(cum[k]-cum[k-1]);
+          }
+        }
+        if(bestDistance>600||
+          metresAlong<span.fromM-.1||metresAlong>span.toM+.1)continue;
+        const distance=passed+metresAlong-span.fromM;
+        if(distance<350)continue; // selected AS itself, not the next AS
+        if(!found||distance<found.distance)
+          found={distance,junction};
+      }
+      passed+=span.toM-span.fromM;
+    }
+    return found?{lengthM:Math.round(found.distance),
+      label:"bis "+found.junction[0]+" "+found.junction[1]+" "+
+        found.junction[2],fromRealJunction:true}:null;
+  }
   function checkedEvent(raw){
     if(!raw||typeof raw!=="object")throw Error("Ereignisdaten fehlen");
     const edge=byId.get(raw.edgeId),kind=raw.kind;
@@ -733,6 +775,7 @@ function createLegacyTrafficScenario(data){
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
+    recommendedClosureLength,
     incomingCount:id=>byId.get(id)?.incoming??0,
     entryIncomingCount:id=>byId.get(id)?.incomingAtStart??0,
     sourceIds:()=>sources.map(x=>x.id),
