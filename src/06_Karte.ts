@@ -1,5 +1,5 @@
 /** 06 KARTE: Darstellung allein – niemals Fahrzeugbestände oder Verbindungen erfinden. */
-import type {Point, RoadNetwork, RoadKind, SpeedSample} from './model.js';
+import type {Point, RoadNetwork, RoadKind, SpeedSample,TrafficCellBand} from './model.js';
 import type {SimEvent,CorridorClosure} from './04_Ereignisse.js';
 import {activeNetworkClosures} from './04_Ereignisse.js';
 import {activeEvent} from './04_Ereignisse.js';
@@ -19,6 +19,8 @@ export interface DrawableEdge {
   speedKmh: number;
   /** Vorsimulations-Zustand = angenommene freie Geschwindigkeit, keine Messung. */
   source: 'model' | 'initial-free';
+  /** Actual cell slowdown only; do not color entire OSM Ways red. */
+  trafficBands: readonly {fromM:number;toM:number;colour:TrafficColour;speedKmh:number}[];
   /** Abschnitte zur gesonderten rot-weißen Sperrmarkierung. */
   closures: readonly {fromM:number;toM:number}[];
 }
@@ -27,9 +29,15 @@ export interface DrawableEdge {
 export function motorwayMapEdges(
   network: RoadNetwork, speeds: readonly SpeedSample[] = [],
   events: readonly SimEvent[] = [], minute = 0,
-  corridors: readonly CorridorClosure[] = []
+  corridors: readonly CorridorClosure[] = [],
+  cellSamples: readonly TrafficCellBand[] = []
 ): DrawableEdge[] {
   const known = new Map(speeds.map(s => [s.edgeId,s.speedKmh]));
+  const slowByEdge = new Map<string,TrafficCellBand[]>();
+  for(const sample of cellSamples){
+    const list=slowByEdge.get(sample.edgeId)??[];
+    list.push(sample);slowByEdge.set(sample.edgeId,list);
+  }
   const networkClosures = activeNetworkClosures(network,corridors,minute);
   const closedByEdge = new Map<string,{fromM:number;toM:number}[]>();
   for (const span of networkClosures.spans) closedByEdge.set(span.edgeId,[
@@ -41,6 +49,11 @@ export function motorwayMapEdges(
     return {edgeId:edge.id,kind:edge.kind,geometry:edge.geometry,
       colour:colourAtSpeed(speedKmh),speedKmh,
       source: measured === undefined ? 'initial-free' as const : 'model' as const,
+      trafficBands:(slowByEdge.get(edge.id)??[])
+        .filter(s=>Number.isFinite(s.fromM)&&Number.isFinite(s.toM)&&
+          s.fromM>=0&&s.toM>s.fromM&&s.toM<=edge.lengthM+.01)
+        .map(s=>({fromM:s.fromM,toM:Math.min(edge.lengthM,s.toM),
+          colour:colourAtSpeed(s.speedKmh),speedKmh:s.speedKmh})),
       closures:events.filter(e => e.edgeId === edge.id && e.kind === 'closure' &&
         activeEvent(e,minute)).map(e => ({fromM:e.fromM,toM:e.toM}))
         .concat(closedByEdge.get(edge.id)??[])};
