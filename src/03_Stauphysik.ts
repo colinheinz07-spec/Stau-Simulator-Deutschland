@@ -1,6 +1,6 @@
 /** 03 STAUPHYSIK: konservative Basisregeln; flächige Netz-Zellphysik folgt separat. */
 import type {RoadEdge} from './model.js';
-export const DEFAULT_MAINLINE_CAPACITY_PER_LANE_VPH = 2100;
+export const DEFAULT_MAINLINE_CAPACITY_PER_LANE_VPH = 2200;
 export const DEFAULT_RAMP_CAPACITY_PER_LANE_VPH = 1500;
 export const JAM_DENSITY_VEH_PER_KM_PER_LANE = 130;
 
