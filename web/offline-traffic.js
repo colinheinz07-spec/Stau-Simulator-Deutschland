@@ -43,7 +43,8 @@ function createLegacyTrafficScenario(data){
       jamPerCell:130*lanes*(meters/count)/1000,
       next:[],incoming:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
-      links:[],linksFrom:Array.from({length:count},()=>[])
+      links:[],linksFrom:Array.from({length:count},()=>[]),
+      enteredVph:0,departedVph:0
     };
     const index=edges.length;edge.index=index;edges.push(edge);byId.set(id,edge);
     if(!outByNode.has(edge.from))outByNode.set(edge.from,[]);
@@ -82,7 +83,9 @@ function createLegacyTrafficScenario(data){
     const key=from.index+":"+fromCell+">"+to.index+":"+toCell;
     if(linkKeys.has(key))return;
     linkKeys.add(key);
-    const weight=to.kind==="mainline"?6:2;
+    // Legacy app used roughly 5–12 % exits at ordinary junctions,
+    // not the previous 25 % per exit. Interchanges may branch more.
+    const weight=to.kind==="mainline"?20:1.5;
     const link={to:to.index,fromCell,toCell,weight};
     from.links.push(link);from.linksFrom[fromCell].push(link);
     to.incoming++;
@@ -164,6 +167,8 @@ function createLegacyTrafficScenario(data){
   const send=edges.map(edge=>new Float64Array(edge.n));
   const receive=edges.map(edge=>new Float64Array(edge.n));
   const delta=edges.map(edge=>new Float64Array(edge.n));
+  const enteredStep=new Float64Array(edges.length);
+  const departedStep=new Float64Array(edges.length);
   const eventRecords=new Map();
   let activeEffects=new Map(),effectsStamp=null,simStart=Date.now();
   let elapsed=0,generated=0,exited=0,demandPercent=100;
@@ -423,6 +428,7 @@ function createLegacyTrafficScenario(data){
     elapsed=0;generated=0;exited=0;
     for(const edge of edges){
       edge.stock.fill(0);edge.backlog=0;edge.speed=edge.freeKmh;
+      edge.enteredVph=0;edge.departedVph=0;
     }
     if(clearEvents)eventRecords.clear();
     effectsStamp=null;updateEffects();recomputeSpeeds();
@@ -473,6 +479,7 @@ function createLegacyTrafficScenario(data){
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
     updateEffects();
+    enteredStep.fill(0);departedStep.fill(0);
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],n=edge.n,stock=edge.stock;
       const s=send[j],r=receive[j],d=delta[j];
@@ -529,7 +536,7 @@ function createLegacyTrafficScenario(data){
         if(available<=0)continue;
         const options=[];
         if(k<edge.n-1&&receive[j][k+1]>0)
-          options.push({to:j,toCell:k+1,weight:6});
+          options.push({to:j,toCell:k+1,weight:20});
         for(const link of edge.linksFrom[k]){
           if(receive[link.to][link.toCell]<=0)continue;
           const target=edges[link.to];
@@ -562,6 +569,10 @@ function createLegacyTrafficScenario(data){
         const amount=req.want*ratio;
         delta[req.from][req.fromCell]-=amount;
         delta[to][toCell]+=amount;
+        if(req.from!==to){
+          enteredStep[to]+=amount;
+          departedStep[req.from]+=amount;
+        }
       }
     }
     // Only a true graph sink can discharge vehicles.
@@ -570,6 +581,7 @@ function createLegacyTrafficScenario(data){
       if(edge.links.length)continue;
       const moved=send[j][edge.n-1];
       delta[j][edge.n-1]-=moved;
+      departedStep[j]+=moved;
       exited+=moved;
     }
     // No internal phantom demand: source edges must be actual directed
@@ -577,12 +589,13 @@ function createLegacyTrafficScenario(data){
     for(const edge of sources){
       const j=edge.index;
       // Real motorway boundary / geometric local-ramp origins only.
-      const base=edge.kind==="ramp"?270:edge.lanes*1160;
+      const base=edge.kind==="ramp"?225:edge.lanes*1050;
       const offered=base*(demandPercent/100)*timeDemandFactor(clockMs())*dt/3600;
       generated+=offered;
       const available=edge.backlog+offered;
       const admitted=Math.min(available,receive[j][0]);
       delta[j][0]+=admitted;
+      enteredStep[j]+=admitted;
       edge.backlog=Math.max(0,available-admitted);
     }
     for(let j=0;j<edges.length;j++){
@@ -593,6 +606,10 @@ function createLegacyTrafficScenario(data){
           throw Error("Ungültiger Fahrzeugbestand auf "+edge.id);
         edge.stock[k]=Math.max(0,after);
       }
+      // 2-minute exponential flow meter for inspectable scenario plausibility.
+      const alpha=1-Math.exp(-dt/120);
+      edge.enteredVph+=alpha*(enteredStep[j]*3600/dt-edge.enteredVph);
+      edge.departedVph+=alpha*(departedStep[j]*3600/dt-edge.departedVph);
     }
     elapsed+=dt;
     if(refreshSpeeds)recomputeSpeeds();
@@ -607,12 +624,21 @@ function createLegacyTrafficScenario(data){
     for(let i=0;i<steps;i++)result=step(5,i===steps-1);
     return result;
   }
+  function edgeActivity(id){
+    const edge=byId.get(id);
+    if(!edge)return null;
+    const count=edge.stock.reduce((sum,x)=>sum+x,0);
+    return {reachable:reachable.has(id),vehicles:count,
+      enteredVph:edge.enteredVph,departedVph:edge.departedVph,
+      capacityVph:edge.lanes*edge.capacityPerLane,
+      source:edge.source,connections:edge.links.length};
+  }
   function speed(id){return byId.get(id)?.speed??null;}
   function color(id){const edge=byId.get(id);return edge?colourForSpeed(edge.speed):"free";}
   return {advance,step,reset,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
-    reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
+    edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
     incomingCount:id=>byId.get(id)?.incoming??0,sourceIds:()=>sources.map(x=>x.id),
     junctionCount:()=>linkKeys.size};
 }
