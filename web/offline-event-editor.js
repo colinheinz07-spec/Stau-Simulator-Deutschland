@@ -18,6 +18,7 @@ function createOfflineEventEditor(options){
   const error=$("ev-error"),startClock=$("sim-start");
   const list=$("planned-events");
   let current=null,currentOffset=0,editingId=null,sequence=0;
+  let nextClosureJunction=null;
   const nowRounded=Date.now()-Date.now()%60000;
   startClock.value=calendar.localDateTime(nowRounded);
   scenario.setSimulationStart(calendar.localInstant(startClock.value.slice(0,10),
@@ -103,7 +104,11 @@ function createOfflineEventEditor(options){
     if(Number(length.value)>max)length.value=String(max);
     $("ev-coverage").textContent=
       "Das Ereignis beginnt an deiner markierten Position ("+
-      Math.round(currentOffset)+" m ab Anfang dieses OSM-Segments). Bei einer langen Sperrung folgt das Modell nur eindeutigen, tatsächlich verbundenen Straßenabschnitten.";
+      Math.round(currentOffset)+" m ab Anfang dieses OSM-Segments). "+
+      (kind.value==="closure"&&nextClosureJunction?
+        "Empfohlener Abschnitt: "+nextClosureJunction.label+". ":
+        "")+
+      "Das Modell folgt nur eindeutig verbundenen Fahrbahnen. Bei Netzdatenlücken wird die tatsächlich gesperrte Länge gemeldet.";
   }
   function prepare(kindValue,event=null){
     if(!current)return;
@@ -116,8 +121,11 @@ function createOfflineEventEditor(options){
         kindValue==="closure"||i===0;
     exists.checked=event?.hasShoulder??(current.shoulderTag==="right"||current.shoulderTag==="yes");
     shoulder.value=event?.shoulder||"normal";
-    const suggested={roadworks:500,accident:100,breakdown:50,closure:200};
-    length.value=String(event?.lengthM??suggested[kindValue]);
+    nextClosureJunction=kindValue==="closure"?
+      scenario.recommendedClosureLength?.(current.id,currentOffset):null;
+    const suggested={roadworks:500,accident:100,breakdown:50,closure:5000};
+    length.value=String(event?.lengthM??
+      nextClosureJunction?.lengthM??suggested[kindValue]);
     currentOffset=event?.offsetM??currentOffset;
     schedule.value=event?.schedule?.mode||"now";
     const base=calendar.localDateTime(scenario.clockMs());
