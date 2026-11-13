@@ -227,3 +227,26 @@ test("two hours of Sunday night traffic on real imported snapshot do not produce
     "an unimpeded, low-demand overnight network must remain free flowing");
   conservation(scenario.totals());
 });
+
+test("closed A3 redirects arrivals to the actual preceding open exit while preserving an upstream queue",async()=>{
+  const scenario=(await engine())({roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.012],[50,7.020]],"",11],
+    ["b","mainline","A3",3,[[50,7.020],[50,7.032]],"",12],
+    ["exit","ramp","A3",1,[[50,7.012],[50.006,7.019]],
+      "AS Muster · Abfahrt",13]
+  ]});
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  for(let i=0;i<5;i++)scenario.advance(12);
+  const ordinaryExit=scenario.edgeActivity("exit").enteredVph;
+  scenario.setEvent({id:"closed-b",edgeId:"b",kind:"closure",
+    closedLanes:[0,1,2],offsetM:0,lengthM:1200,speedKmh:0,
+    shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<20;i++)scenario.advance(12);
+  const diversion=scenario.edgeActivity("exit").enteredVph;
+  assert.ok(diversion>ordinaryExit*2,
+    "actual off-ramp should absorb more traffic after an announced closure");
+  assert.ok(diversion<=1550,"one-lane exit must not pass impossible flow");
+  assert.ok(scenario.jamSummaries().some(x=>x.edgeId==="a"),
+    "excess demand must physically queue before the closure");
+  conservation(scenario.totals());
+});
