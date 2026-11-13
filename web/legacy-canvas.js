@@ -225,7 +225,8 @@ async function startLegacyCanvas(existingMap=null){
     return started;
   }
   function strokeGroup(roads,line,scale,phase){
-    const view=roads.filter(road=>road!==selected&&inView(road,scale));
+    // The view is culled ONCE for all three rendering phases.
+    const view=roads;
     if(phase==="base"){
       context.beginPath();
       for(const road of view)appendRoad(road,scale);
@@ -379,14 +380,17 @@ async function startLegacyCanvas(existingMap=null){
     if(visible){
       const scale=2**zoom;
       context.lineJoin="round";context.lineCap="round";
-      const layers=[{roads:mainlines,line:clamp(3.5+(zoom-10)*.65,2.2,7)}];
+      const layers=[{roads:mainlines,
+        visible:mainlines.filter(road=>road!==selected&&inView(road,scale)),
+        line:clamp(3.5+(zoom-10)*.65,2.2,7)}];
       if(zoom>=7.6)layers.push({roads:ramps,
+        visible:ramps.filter(road=>road!==selected&&inView(road,scale)),
         line:clamp(1.5+(zoom-10)*.25,1,3.8)});
       // Two cheap batched background strokes per layer, followed by real
       // queue overlays and closures; never hide red beneath later green.
       for(const phase of ["base","speeds","closed"])
         for(const layer of layers)
-          strokeGroup(layer.roads,layer.line,scale,phase);
+          strokeGroup(layer.visible,layer.line,scale,phase);
       for(const layer of layers){
         if(selected&&layer.roads.includes(selected)&&inView(selected,scale)){
           context.beginPath();
@@ -641,10 +645,22 @@ async function startLegacyCanvas(existingMap=null){
       });
     }
   }
+  // Mobile browsers may briefly background the SPCK preview when panels
+  // open. Suspend its timer, not the USER'S requested running state.
+  // Resume on visibility without clearing event or vehicle inventories.
+  function suspendTimer(){
+    if(timer!==null)clearInterval(timer);
+    timer=null;
+  }
+  function resumeTimer(){
+    if(!simRunning||timer!==null||document.hidden)return;
+    tick();timer=setInterval(tick,1000);
+  }
   document.addEventListener("visibilitychange",()=>{
-    if(document.hidden)pauseSimulation();
+    if(document.hidden)suspendTimer();else resumeTimer();
   });
-  window.addEventListener("pagehide",pauseSimulation);
+  window.addEventListener("pagehide",suspendTimer);
+  window.addEventListener("pageshow",resumeTimer);
   displayStats();
   if(typeof ResizeObserver==="function")new ResizeObserver(resize).observe(root);
   window.addEventListener("resize",resize);
