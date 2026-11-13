@@ -336,9 +336,14 @@ function createLegacyTrafficScenario(data){
     if(point<0||marks.length<2)return null;
     // The clicked road lies BETWEEN two successive AS/AK; preserve actual
     // kilometrage of the direction including all OSM Way splits.
-    const left=marks.filter(m=>m.position<=point+.001)
+    const before=marks.filter(m=>m.position<=point+.001)
       .sort((a,b)=>b.position-a.position)[0];
-    const right=marks.filter(m=>m.position>point+.001)
+    // A tap just BEFORE a real junction node is still a tap on that
+    // junction: snap to it instead of claiming the whole previous corridor.
+    const nearStart=marks.filter(m=>m.position>point&&
+      m.position-point<=140).sort((a,b)=>a.position-b.position)[0];
+    const left=nearStart||before;
+    const right=marks.filter(m=>m.position>left.position+1)
       .sort((a,b)=>a.position-b.position)[0];
     if(!left||!right||left.junction[1]===right.junction[1]||
       right.position-left.position<100)return null;
@@ -517,7 +522,7 @@ function createLegacyTrafficScenario(data){
         // between A59 AS31 and AS32 must NEVER close AS35 at Wahn merely
         // because both touch the same 26 km OSM Way.
         return (spansById.get(target.id)||[]).some(span=>
-          link.toM>=span.fromM-.5&&link.toM<span.toM-.5);
+          link.toM>=span.fromM-140&&link.toM<span.toM-.5);
       }
       // Repeated fixed-point resolution covers ramp->ramp->mainline chains,
       // independent of OSM Way fragments.
@@ -830,7 +835,7 @@ function createLegacyTrafficScenario(data){
           const targetM=link.toM;
           const toEffects=activeEffects.get(target.id)||NO_EFFECTS;
           const blocked=toEffects.filter(item=>
-            targetM>=item.fromM-.05&&targetM<item.toM-.05&&
+            targetM>=item.fromM-140&&targetM<item.toM-.05&&
             (item.event.kind==="closure"||
               item.event.closedLanes.length===target.lanes&&
               item.event.shoulder!=="open"));
