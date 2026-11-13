@@ -94,6 +94,40 @@ function pointOnEdge(edge,offsetM){
   }
   return line.at(-1);
 }
+// Clip congestion and closure overlays to the actual OSM metre interval.
+const geometryCache=new WeakMap();
+function measuresFor(edge){
+  let lengths=geometryCache.get(edge);
+  if(lengths)return lengths;
+  const cumulative=[0],points=edge.geometry;
+  for(let i=1;i<points.length;i++)
+    cumulative.push(cumulative.at(-1)+map.distance(points[i-1],points[i]));
+  lengths={cumulative,total:cumulative.at(-1)};
+  geometryCache.set(edge,lengths);
+  return lengths;
+}
+function sliceEdgeGeometry(edge,fromM,toM){
+  const a=Math.max(0,Math.min(edge.lengthM,fromM));
+  const b=Math.max(a,Math.min(edge.lengthM,toM));
+  if(b-a<.1)return [];
+  const points=edge.geometry,{cumulative,total}=measuresFor(edge);
+  const k=edge.lengthM>0?total/edge.lengthM:0,lo=a*k,hi=b*k;
+  function pointAt(m){
+    for(let i=1;i<cumulative.length;i++){
+      if(cumulative[i]<m)continue;
+      const v=cumulative[i]-cumulative[i-1];
+      const t=v>0?(m-cumulative[i-1])/v:0;
+      const x=points[i-1],y=points[i];
+      return [x[0]+(y[0]-x[0])*t,x[1]+(y[1]-x[1])*t];
+    }
+    return points.at(-1);
+  }
+  const result=[pointAt(lo)];
+  for(let i=1;i<points.length-1;i++)
+    if(cumulative[i]>lo+.01&&cumulative[i]<hi-.01)result.push(points[i]);
+  result.push(pointAt(hi));
+  return result;
+}
 function drawIncidentPins(rendered,byId){
   const drawn=new Map(rendered.map(item=>[item.edgeId,item]));
   const glyphs={closure:"⛔",roadworks:"🚧",accident:"💥",breakdown:"🚛"};
@@ -176,10 +210,12 @@ function drawNetwork(){
   const samples=state.scenario?.speeds()??[];
   const events=state.scenario?.events()??[];
   const minute=(state.scenario?.stats().simSeconds??0)/60;
-  const rendered=motorwayMapEdges(state.network,samples,events,minute);
+  const cells=state.scenario?.speedBands?.()??[];
+  const rendered=motorwayMapEdges(state.network,samples,events,minute,[],cells);
   const byId=new Map(state.network.edges.map(e=>[e.id,e]));
   // Sort mainline below ramps: each OSM segment is rendered exactly once.
   rendered.sort((a,b)=>(a.kind==="ramp")-(b.kind==="ramp"));
+  const slowOverlays=[],closureOverlays=[];
   for(const item of rendered){
     const edge=byId.get(item.edgeId);
     if(!edge||item.geometry.length<2)continue;
@@ -187,23 +223,33 @@ function drawNetwork(){
     const lines={smoothFactor:0,noClip:false,lineCap:"round",lineJoin:"round",interactive:false};
     L.polyline(latlngs,{...lines,color:"#102338",weight:s.casing,opacity:.96})
       .addTo(roadsLayer);
-    const colour=L.polyline(latlngs,{...lines,color:COLOURS[item.colour],
+    const base=L.polyline(latlngs,{...lines,color:COLOURS.free,
       weight:s.line,opacity:1,className:edge.kind==="ramp"?"map-network-ramp":"map-network-main"})
       .addTo(roadsLayer);
-    // The transparent, wider target is easier to select on phones.
     const hit=L.polyline(latlngs,{...lines,color:"#000",opacity:0,weight:s.hit,
       interactive:true,bubblingMouseEvents:false}).addTo(roadsLayer);
     const click=()=>openDetails(edge,item);
-    hit.on("click",click);
-    colour.on("click",click);
-    if(item.closures.length){
-      // The UI demo only closes a full RoadEdge. For real partial events,
-      // we will split the exact geometry by metres in a later interface.
-      L.polyline(latlngs,{...lines,color:"#d83c49",weight:s.line+1.7,
-        dashArray:"12 10",lineCap:"butt"}).addTo(closedLayer);
-      L.polyline(latlngs,{...lines,color:"#fff",weight:s.line+1.7,
-        dashArray:"12 10",dashOffset:"11",lineCap:"butt"}).addTo(closedLayer);
+    hit.on("click",click);base.on("click",click);
+    for(const band of item.trafficBands){
+      if(band.colour==="free")continue;
+      const geometry=sliceEdgeGeometry(edge,band.fromM,band.toM);
+      if(geometry.length>=2)slowOverlays.push({geometry,line:s.line,colour:COLOURS[band.colour]});
     }
+    for(const band of item.closures){
+      const geometry=sliceEdgeGeometry(edge,band.fromM,band.toM);
+      if(geometry.length>=2)closureOverlays.push({geometry,line:s.line+1.7});
+    }
+  }
+  // Never allow a later green ramp to cover a physically congested motorway.
+  for(const band of slowOverlays)
+    L.polyline(band.geometry,{color:band.colour,weight:band.line,
+      lineCap:"round",lineJoin:"round",interactive:false,smoothFactor:0})
+      .addTo(roadsLayer);
+  for(const band of closureOverlays){
+    const style={weight:band.line,dashArray:"12 10",lineCap:"butt",
+      interactive:false,smoothFactor:0};
+    L.polyline(band.geometry,{...style,color:"#d83c49"}).addTo(closedLayer);
+    L.polyline(band.geometry,{...style,color:"#fff",dashOffset:"11"}).addTo(closedLayer);
   }
   // Explicit event icons remain distinct from congestion colors.
   drawIncidentPins(rendered,byId);
