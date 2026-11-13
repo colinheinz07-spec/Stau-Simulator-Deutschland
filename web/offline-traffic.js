@@ -129,6 +129,27 @@ function createLegacyTrafficScenario(data){
   // residential on-ramp. Select a single upstream boundary per directional
   // motorway corridor, and only distinctly named on-ramp heads for AS traffic.
   // Adapted from the old directional A3/A48/NRW demand reference catalog.
+  // Boundary safety: a synthetic one-Way corridor ending at a truncated
+  // interchange cannot receive an entire motorway's original peak demand.
+  // Until real OSM continuation is present, leave its traffic unmodelled
+  // instead of manufacturing a capacity bottleneck at the map edge.
+  const provenMainline=new Map();
+  function hasContinuousMainline(edge){
+    if(provenMainline.has(edge.id))return provenMainline.get(edge.id);
+    const seen=new Set(),stack=[edge],ref=edge.ref;let metres=0,n=0;
+    while(stack.length&&seen.size<10000){
+      const current=stack.pop();
+      if(seen.has(current.id))continue;
+      seen.add(current.id);metres+=current.lengthM;n++;
+      for(const link of current.links){
+        const down=edges[link.to];
+        if(down.kind==="mainline"&&down.ref===ref&&!seen.has(down.id))
+          stack.push(down);
+      }
+    }
+    const result=n>=2&&metres>=1500;
+    provenMainline.set(edge.id,result);return result;
+  }
   const rankedMainline=new Map();
   function upstreamRank(edge,key){
     const [lat,lon]=edge.first;
@@ -145,7 +166,7 @@ function createLegacyTrafficScenario(data){
   for(const edge of edges){
     if(edge.kind!=="mainline"||!edge.ref||edge.incomingAtStart)continue;
     const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
-    if(profile.peakVph<=0)continue; // no guessed A565/A61 rate
+    if(profile.peakVph<=0||!hasContinuousMainline(edge))continue;
     const rank=upstreamRank(edge,profile.key);
     const old=rankedMainline.get(profile.key);
     if(!old||rank>old.rank+1e-8||
@@ -164,7 +185,9 @@ function createLegacyTrafficScenario(data){
       continue;
     const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
     const peak=traffic.junctionEntryPeak(row);
-    if(peak<=0)continue;
+    if(peak<=0||!edge.links.some(link=>
+      edges[link.to].kind==="mainline"&&
+      hasContinuousMainline(edges[link.to])))continue;
     // Repeated copies/fragments for the same signed AS→direction must never
     // create repeated independent 500 Kfz/h traffic generators.
     const label=edge.name.replace(/\s+/g," ").trim().toLowerCase();
