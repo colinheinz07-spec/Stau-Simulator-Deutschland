@@ -224,18 +224,21 @@ async function startLegacyCanvas(existingMap=null){
     }
     return started;
   }
-  function strokeGroup(roads,line,scale){
+  function strokeGroup(roads,line,scale,phase){
     const view=roads.filter(road=>road!==selected&&inView(road,scale));
-    context.beginPath();
-    for(const road of view)appendRoad(road,scale);
-    context.lineWidth=line+2;
-    context.strokeStyle="#132c3a";context.stroke();
-    context.lineWidth=line;
-    context.strokeStyle=trafficColors.free;context.stroke();
-
-    // Only non-free subsegments need more drawing. Static geometry remains
-    // batched into two strokes on every touch move.
-    for(const state of ["slow","jam","standstill"]){
+    if(phase==="base"){
+      context.beginPath();
+      for(const road of view)appendRoad(road,scale);
+      context.lineWidth=line+2;
+      context.strokeStyle="#132c3a";context.stroke();
+      context.lineWidth=line;
+      context.strokeStyle=trafficColors.free;context.stroke();
+      return;
+    }
+    if(phase==="speeds"){
+      // Draw all green roads BEFORE all slowdown bands. Previously green
+      // ramps could paint over an actual red mainline queue at an interchange.
+      for(const state of ["slow","jam","standstill"]){
       context.beginPath();
       let changed=false;
       for(const road of view){
@@ -247,7 +250,10 @@ async function startLegacyCanvas(existingMap=null){
       if(changed){
         context.lineWidth=line;context.strokeStyle=trafficColors[state];context.stroke();
       }
+      }
+      return;
     }
+    if(phase!=="closed")return;
     const closed=[];
     for(const road of view){
       for(const part of scenario.closureBands(road.id))
@@ -291,6 +297,10 @@ async function startLegacyCanvas(existingMap=null){
       if(boxes.some(b=>left<b[2]+8&&left+w>b[0]-8&&
         top<b[3]+8&&top+25>b[1]-8))continue;
       boxes.push([left,top,left+w,top+25]);
+      // Explicit anchor on the actual jam-colored OSM subsegment, not
+      // an unattached badge somewhere above an apparently green road.
+      context.fillStyle="#f65d67";
+      context.fillRect(x-4,y-4,8,8);
       context.fillStyle="#152a3bef";
       context.fillRect(left,top,w,25);
       context.fillStyle="#ff6a72";
@@ -323,10 +333,17 @@ async function startLegacyCanvas(existingMap=null){
       if(y<105||y>height-56)continue;
       placed.push([x,y]);
       const active=status==="active";
-      context.fillStyle=active?"#193044":"#627284";
-      context.fillRect(x-14,y-14,28,28);
-      context.fillStyle=active?"#ffb65b":"#bfcbd6";
-      context.fillRect(x-14,y+11,28,3);
+      const tone={roadworks:"#956118",accident:"#a52d40",
+        breakdown:"#2a6392",closure:"#973042"}[event.kind]||"#3d5971";
+      if(typeof context.arc==="function"&&typeof context.fill==="function"){
+        context.beginPath();context.arc(x,y,17,0,Math.PI*2);
+        context.fillStyle="#ffffff";context.fill();
+        context.beginPath();context.arc(x,y,14,0,Math.PI*2);
+        context.fillStyle=active?tone:"#647386";context.fill();
+      }else{
+        context.fillStyle="#fff";context.fillRect(x-16,y-16,32,32);
+        context.fillStyle=active?tone:"#647386";context.fillRect(x-13,y-13,26,26);
+      }
       context.fillStyle="#fff";
       context.fillText(symbols[event.kind]||"⚠️",x,y+6,25);
       eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,offsetM:event.offsetM});
@@ -362,18 +379,20 @@ async function startLegacyCanvas(existingMap=null){
     if(visible){
       const scale=2**zoom;
       context.lineJoin="round";context.lineCap="round";
-      for(const group of [mainlines,ramps]){
-        if(group===ramps&&zoom<7.6)continue;
-        const line=group===ramps?clamp(1.5+(zoom-10)*.25,1,3.8):
-          clamp(3.5+(zoom-10)*.65,2.2,7);
-        // Batch hundreds of OSM segments into just two Canvas strokes,
-        // so drag/pinch stays responsive even on older iPhones.
-        strokeGroup(group,line,scale);
-        if(selected&&group.includes(selected)&&inView(selected,scale)){
+      const layers=[{roads:mainlines,line:clamp(3.5+(zoom-10)*.65,2.2,7)}];
+      if(zoom>=7.6)layers.push({roads:ramps,
+        line:clamp(1.5+(zoom-10)*.25,1,3.8)});
+      // Two cheap batched background strokes per layer, followed by real
+      // queue overlays and closures; never hide red beneath later green.
+      for(const phase of ["base","speeds","closed"])
+        for(const layer of layers)
+          strokeGroup(layer.roads,layer.line,scale,phase);
+      for(const layer of layers){
+        if(selected&&layer.roads.includes(selected)&&inView(selected,scale)){
           context.beginPath();
           appendRoad(selected,scale);
-          context.lineWidth=line+2;context.strokeStyle="#132c3a";context.stroke();
-          context.lineWidth=line;context.strokeStyle="#ffe37c";context.stroke();
+          context.lineWidth=layer.line+2;context.strokeStyle="#132c3a";context.stroke();
+          context.lineWidth=layer.line;context.strokeStyle="#ffe37c";context.stroke();
         }
       }
       drawLabels();
@@ -416,6 +435,11 @@ async function startLegacyCanvas(existingMap=null){
       (s.meters/1000).toLocaleString("de-DE",{maximumFractionDigits:2})+" km":
       Math.round(s.meters)+" m";
     const modelSpeed=scenario.speed(s.id);
+    const activity=scenario.edgeActivity?.(s.id);
+    const flowInfo=$("detail-flow");
+    if(flowInfo)flowInfo.textContent=!activity?.reachable?
+      "Nicht mit Modellquellen verbunden":
+      "~"+Math.round(activity.enteredVph).toLocaleString("de-DE")+" Kfz/h · Modell";
     $("detail-speed").textContent=!scenario.reachable(s.id)?
       "Teilnetz ohne Modellzufluss":modelSpeed===null?"Keine Modellwerte":
       Math.round(modelSpeed)+" km/h · berechnet";
@@ -534,6 +558,10 @@ async function startLegacyCanvas(existingMap=null){
       timeMarker.textContent="Modell-Datum: "+
         window.StauEventSchedule.localDateTime(scenario.clockMs()).replace("T"," ")+" Uhr";
     if(selected){
+      const flow=scenario.edgeActivity?.(selected.id);
+      if(flow&&$("detail-flow"))$("detail-flow").textContent=flow.reachable?
+        "~"+Math.round(flow.enteredVph).toLocaleString("de-DE")+" Kfz/h · Modell":
+        "Nicht mit Modellquellen verbunden";
       const modelSpeed=scenario.speed(selected.id);
       if(modelSpeed!==null&&scenario.reachable(selected.id))
         $("detail-speed").textContent=Math.round(modelSpeed)+" km/h · berechnet";
@@ -590,7 +618,7 @@ async function startLegacyCanvas(existingMap=null){
   }
   if(typeof window.createOfflineEventEditor==="function"){
     eventEditor=window.createOfflineEventEditor({
-      scenario,redraw:requestDraw,pause:pauseSimulation,closeDrawer:close,
+      scenario,redraw:requestDraw,pause:pauseSimulation,start:startSimulation,closeDrawer:close,
       notify:text=>{ $("map-status").textContent=text; },
       focusRoad
     });
