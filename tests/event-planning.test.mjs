@@ -6,6 +6,7 @@ import {runInNewContext} from "node:vm";
 async function model(){
   const window={};
   runInNewContext(await readFile("web/event-schedule.js","utf8"),{window,Intl,Date,console});
+  runInNewContext(await readFile("web/traffic-reference.js","utf8"),{window,Intl,Date,console});
   runInNewContext(await readFile("web/offline-traffic.js","utf8"),{window,Intl,Date,console});
   return window;
 }
