@@ -41,7 +41,7 @@ function createLegacyTrafficScenario(data){
       capacityPerLane:row[1]==="ramp"?1550:2200,
       freeKmh:row[1]==="ramp"?75:120,
       jamPerCell:130*lanes*(meters/count)/1000,
-      next:[],incoming:0,source:false,backlog:0,
+      next:[],incoming:0,incomingAtStart:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
       links:[],linksFrom:Array.from({length:count},()=>[]),
       enteredVph:0,departedVph:0
@@ -89,6 +89,7 @@ function createLegacyTrafficScenario(data){
     const link={to:to.index,fromCell,toCell,weight};
     from.links.push(link);from.linksFrom[fromCell].push(link);
     to.incoming++;
+    if(toM<.01)to.incomingAtStart++;
     // Preserve end-to-start successors for long-event tracing and old API.
     if(fromCell===from.n-1&&toCell===0&&fromM>=from.lengthM-.01&&toM<.01)
       from.next.push({to:to.index,weight});
@@ -131,7 +132,7 @@ function createLegacyTrafficScenario(data){
   }
   const sources=[];
   for(const edge of edges){
-    if(edge.incoming||edge.kind!=="mainline"||!edge.ref)continue;
+    if(edge.incomingAtStart||edge.kind!=="mainline"||!edge.ref)continue;
     const box=limits.get(edge.ref);
     if(!box)continue;
     const [lat,lon]=edge.first;
@@ -152,7 +153,7 @@ function createLegacyTrafficScenario(data){
   // source only when its OSM geometry actually connects into the motorway.
   // This is NOT phantom traffic injected on an inner motorway cell.
   const localSources=edges.filter(edge=>edge.kind==="ramp"&&
-    edge.incoming===0&&edge.links.length>0);
+    edge.incomingAtStart===0&&edge.links.length>0);
   for(const edge of localSources){edge.source=true;sources.push(edge);}
   const reachable=new Set(sources.map(edge=>edge.id));
   const frontier=[...sources];
@@ -388,7 +389,7 @@ function createLegacyTrafficScenario(data){
     for(const edge of edges){
       if(edge.next.length!==1)continue;
       const target=edges[edge.next[0].to];
-      if(target.incoming!==1)continue;
+      if(target.incomingAtStart!==1)continue;
       const a=perEdge.get(edge.id)?.at(-1);
       const b=perEdge.get(target.id)?.[0];
       if(!a||!b||a.toM<edge.lengthM-.02||b.fromM>.02)continue;
@@ -652,7 +653,9 @@ function createLegacyTrafficScenario(data){
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
-    incomingCount:id=>byId.get(id)?.incoming??0,sourceIds:()=>sources.map(x=>x.id),
+    incomingCount:id=>byId.get(id)?.incoming??0,
+    entryIncomingCount:id=>byId.get(id)?.incomingAtStart??0,
+    sourceIds:()=>sources.map(x=>x.id),
     junctionCount:()=>linkKeys.size};
 }
 global.createLegacyTrafficScenario=createLegacyTrafficScenario;
