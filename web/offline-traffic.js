@@ -504,7 +504,20 @@ function createLegacyTrafficScenario(data){
         }
         if(shoulderBlocked)shoulderOpen=false;
         const open=Math.max(0,edge.lanes-closed.size+Number(shoulderOpen));
-        const cap=open*edge.capacityPerLane*dt/3600;
+        // Copy the legacy simulator's principle: a lane drop has a lower
+        // discharge than an unrestricted lane. Merging/braking consumes service
+        // headway; the signed speed limit alone is not the congestion color.
+        // Conservative prototype coefficients, subject to later calibration.
+        let restriction=1;
+        if(closed.size>0&&open>0){
+          const accident=local.some(item=>item.event.kind==="accident");
+          const breakdown=local.some(item=>item.event.kind==="breakdown");
+          const roadworks=local.some(item=>item.event.kind==="roadworks");
+          restriction=accident?(open===1?.69:.79):
+            breakdown?(open===1?.78:.87):
+            roadworks?(open===1?.80:.90):1;
+        }
+        const cap=open*edge.capacityPerLane*restriction*dt/3600;
         const moving=Math.min(1,(permitted/3.6)*dt/edge.cellLength);
         // Block receiving at the first closure cell, but let already-present
         // vehicles discharge through the closed section's downstream cells.
