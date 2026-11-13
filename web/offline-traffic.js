@@ -44,7 +44,7 @@ function createLegacyTrafficScenario(data){
       n:count,cellLength:meters/count,
       stock:new Float64Array(count),
       // User-defined unrestricted motorway service, not a speed threshold.
-       capacityPerLane:row[1]==="ramp"?1500:2600,
+       capacityPerLane:row[1]==="ramp"?1500:2200,
       freeKmh:row[1]==="ramp"?75:120,
       jamPerCell:130*lanes*(meters/count)/1000,
       next:[],incoming:0,incomingAtStart:0,source:false,backlog:0,
@@ -496,9 +496,9 @@ function createLegacyTrafficScenario(data){
       const edge=edges[j],n=edge.n,stock=edge.stock;
       const s=send[j],r=receive[j],d=delta[j];
       d.fill(0);
-      // w=32 km/h keeps the receiving branch consistent with 2600 Kfz/h/lane:
+      // w=32 km/h keeps the receiving branch consistent with 2200 Kfz/h/lane:
       // 22 km/h would cap free-flow receiving below the user-defined capacity.
-      const wave=Math.min(1,(32/3.6)*dt/edge.cellLength);
+      const wave=Math.min(1,(22/3.6)*dt/edge.cellLength);
       const effects=activeEffects.get(edge.id)||NO_EFFECTS;
       for(let k=0;k<n;k++){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
