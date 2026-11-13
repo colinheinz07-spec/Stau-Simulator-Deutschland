@@ -224,6 +224,13 @@ function createOfflineEventEditor(options){
     current=road;currentOffset=Math.max(0,Math.min(road.meters-.001,offsetM));
     closeForm();
   }
+  // A map pin opens this exact saved event in the same editor as the list.
+  function editEventById(id){
+    const event=scenario.listEvents().find(item=>item.id===id);
+    if(!event||!current||current.id!==event.edgeId)return false;
+    prepare(event.kind,event);
+    return true;
+  }
   for(const button of document.querySelectorAll(".event-actions [data-event]")){
     button.addEventListener("click",()=>{
       if(!current)return;
@@ -279,7 +286,7 @@ function createOfflineEventEditor(options){
     if(minute===lastMinute)return;
     lastMinute=minute;renderList();
   }
-  return {onRoadSelected,closeForm,renderList,updateStatus,afterReset};
+  return {onRoadSelected,editEventById,closeForm,renderList,updateStatus,afterReset};
 }
 global.createOfflineEventEditor=createOfflineEventEditor;
 })(window);
