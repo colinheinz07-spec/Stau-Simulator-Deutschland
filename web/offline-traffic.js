@@ -444,7 +444,7 @@ function createLegacyTrafficScenario(data){
       const candidates=edge.next.filter(link=>{
         const dest=edges[link.to];
         return dest.kind===edge.kind&&
-          (edge.ref?dest.ref===edge.ref:dest.ref===edge.ref);
+          dest.ref===edge.ref;
       });
       if(candidates.length!==1)continue;
       const target=edges[candidates[0].to];
