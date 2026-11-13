@@ -96,8 +96,8 @@ test("speed-limit signs alone never create congestion colors or phantom delay",a
   scenario.advance(12);
   assert.equal(scenario.color("b"),"free",
     "an empty 20 km/h work zone needs an event marker, not a red queue");
-  assert.deepEqual(scenario.visualBands("b"),[]);
-  assert.deepEqual(scenario.jamSummaries(),[]);
+  assert.equal(scenario.visualBands("b").length,0);
+  assert.equal(scenario.jamSummaries().length,0);
   conservation(scenario.totals());
 });
 test("congested connected OSM Ways have a queue length and positive delay",async()=>{
@@ -112,5 +112,5 @@ test("congested connected OSM Ways have a queue length and positive delay",async
   assert.ok(jams.some(x=>["a","b","c"].includes(x.edgeId)));
   conservation(scenario.totals());
   scenario.reset(true);
-  assert.deepEqual(scenario.jamSummaries(),[]);
+  assert.equal(scenario.jamSummaries().length,0);
 });
