@@ -294,7 +294,7 @@ async function startLegacyCanvas(existingMap=null){
     context.textAlign="center";
     context.font="600 12px system-ui,Arial,sans-serif";
     for(const group of groups){
-      if(boxes.length>=8)break;
+      if(boxes.length>=4)break;
       const road=segmentById.get(group.edgeId);
       if(!road||!inView(road,scale))continue;
       const [x,y]=pointAt(pointAlong(road,group.offsetM));
