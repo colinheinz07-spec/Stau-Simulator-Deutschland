@@ -53,11 +53,67 @@ export function createTrafficScenario(network){
     computedEvents=events;warnings=warn;
   }
 
-  const sources=engine.sourceEdges().map(edge=>{
-    const base=edge.kind==='mainline'?Math.min(3200,edge.lanes*1050):
-      edge.kind==='ramp'?450:200;
-    return {id:edge.id,base};
-  });
+  // Reuse the old simulator's directional PEAK-HOUR references and
+  // separate weekly curves. Do NOT create 3200 cars at every cut OSM Way.
+  const traffic=globalThis.StauTrafficReference??null;
+  const junctions=network.nodes.filter(n=>!!n.junctionRef);
+  function closestJunction(point){
+    let best=null,distance=Infinity;
+    for(const node of junctions){
+      const [lat,lon]=node.point;
+      const metres=Math.hypot((lat-point[0])*111194,
+        (lon-point[1])*111194*Math.cos(lat*Math.PI/180));
+      if(metres<distance){distance=metres;best=node;}
+    }
+    return distance<=1100?best:null;
+  }
+  const candidates=new Map(),rampCandidates=new Map();
+  for(const edge of engine.sourceEdges()){
+    if(!traffic){
+      // Node.js test fixtures do not load browser-side reference data.
+      // On the actual map the imported catalog is always available.
+      if(edge.kind==='mainline')candidates.set(edge.id,{id:edge.id,
+        base:Math.min(3200,edge.lanes*900),edge,key:"",ref:edge.motorwayRef});
+      continue;
+    }
+    if(!edge.motorwayRef||!edge.geometry?.length)continue;
+    const row=[edge.id,edge.kind,edge.motorwayRef,edge.lanes,edge.geometry,""];
+    const reference=traffic.referenceForRoad(row);
+    if(reference.peakVph<=0)continue;
+    if(edge.kind==='mainline'){
+      const first=edge.geometry[0],last=edge.geometry.at(-1);
+      const key=reference.key,lat=first[0],lon=first[1];
+      // At most one true entry per corridor/direction. An isolated OSM
+      // mid-Way fragment must not become a second motorway generator.
+      const rank=key==="A3-koeln"?-lat:key==="A3-frankfurt"?lat:
+        key==="A48-dernbach"?-lon:key==="A48-koblenz"?lon:
+        Math.abs(last[0]-lat)>Math.abs(last[1]-lon)?
+          (last[0]>lat?-lat:lat):(last[1]>lon?-lon:lon);
+      const previous=candidates.get(key);
+      if(!previous||rank>previous.rank)candidates.set(key,{
+        id:edge.id,base:reference.peakVph,edge,key,ref:edge.motorwayRef,rank});
+    }else if(edge.kind==='ramp'){
+      const junction=closestJunction(edge.geometry[0]);
+      if(!junction)continue;
+      const label="AS "+junction.junctionRef+" "+(junction.junctionName??"")+
+        " · Auffahrt";
+      const rampRow=[edge.id,edge.kind,edge.motorwayRef,edge.lanes,
+        edge.geometry,label];
+      const base=traffic.junctionEntryPeak(rampRow);
+      if(base<=0)continue;
+      const unique=edge.motorwayRef+":"+junction.junctionRef+":"+reference.key;
+      const existing=rampCandidates.get(unique);
+      if(!existing||edge.lengthM>existing.edge.lengthM)
+        rampCandidates.set(unique,{id:edge.id,base,edge,key:reference.key,
+          ref:edge.motorwayRef});
+    }
+  }
+  const sources=[...candidates.values(),...rampCandidates.values()];
+  let simStart=Date.now();
+  function setSimulationStart(ms){
+    if(!Number.isFinite(Number(ms))||Number(ms)<0)throw Error("Ungültiges Startdatum");
+    simStart=Number(ms);reset();
+  }
   function reset(){
     engine=new NetworkFlowEngine(network,{stepSeconds:2,targetCellLengthM:180});
     modes.clear();buildEvents();
@@ -78,15 +134,21 @@ export function createTrafficScenario(network){
   function advance(steps=1){
     if(!Number.isInteger(steps)||steps<1||steps>120)throw Error('Ungültiger Simulationstakt');
     const demand={};
-    // Monday 08:00 scenario: explicitly NOT measured A3/A48 traffic.
-    const scale=(demandPercent/100)*demandFactor({dayOfWeek:1,hour:8},'transit');
-    for(const entry of sources)demand[entry.id]=entry.base*scale;
+    const clockMs=simStart+engine.snapshot().simSeconds*1000;
+    const moment=new Date(clockMs);
+    const common={dayOfWeek:moment.getUTCDay(),
+      hour:moment.getUTCHours()+moment.getUTCMinutes()/60};
+    for(const entry of sources){
+      const factor=traffic?traffic.profileFactor(entry.key,entry.ref,clockMs,
+        entry.edge.geometry):demandFactor(common,'transit');
+      demand[entry.id]=entry.base*(demandPercent/100)*factor;
+    }
     let info;
     for(let i=0;i<steps;i++)info=engine.advance(demand,computedEvents);
     return info;
   }
   return {
-    reset,setMode,setDemandPercent,advance,
+    reset,setMode,setDemandPercent,setSimulationStart,advance,
     events:()=>computedEvents,
     selectedEvents:()=>[...modes].map(([edgeId,kind])=>({edgeId,kind})),
     warnings:()=>warnings,
@@ -95,6 +157,8 @@ export function createTrafficScenario(network){
     stats:()=>engine.snapshot(),
     speeds:()=>engine.speedSamples(),
     speedBands:()=>engine.speedBands(),
-    sourceCount:()=>sources.length
+    sourceCount:()=>sources.length,
+    sourceProfiles:()=>sources.map(x=>({id:x.id,ref:x.ref,key:x.key,peakVph:x.base})),
+    clockMs:()=>simStart+engine.snapshot().simSeconds*1000
   };
 }
