@@ -56,3 +56,11 @@ export interface RoadNetwork {
   routeRestrictions?: readonly RouteRestriction[];
 }
 export interface SpeedSample { edgeId: string; speedKmh: number; atMinute: number }
+/** Exact simulated cell interval. Only published for physically congested cells. */
+export interface TrafficCellBand {
+  edgeId: string;
+  fromM: number;
+  toM: number;
+  speedKmh: number;
+  atMinute: number;
+}
