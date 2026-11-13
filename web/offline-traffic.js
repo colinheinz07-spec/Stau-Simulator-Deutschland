@@ -615,6 +615,8 @@ function createLegacyTrafficScenario(data){
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
     updateEffects();
+    const anyClosureActive=[...activeEffects.values()].some(items=>
+      items.some(item=>item.event.kind==="closure"));
     enteredStep.fill(0);departedStep.fill(0);
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],n=edge.n,stock=edge.stock;
@@ -710,7 +712,7 @@ function createLegacyTrafficScenario(data){
         // If a planned corridor closure lies downstream, approaching
         // motorists can progressively take the LAST available open exit.
         // Reweight ONLY real OSM turns; never teleport cars or create roads.
-        if(edge.kind==="mainline"&&options.some(o=>
+        if(anyClosureActive&&edge.kind==="mainline"&&options.some(o=>
           o.to!==j&&edges[o.to].kind==="ramp")){
           const distance=closureDistanceAhead(edge,k*edge.cellLength);
           if(distance<12000){
