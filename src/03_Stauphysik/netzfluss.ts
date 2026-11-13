@@ -87,6 +87,12 @@ export class NetworkFlowEngine {
   sourceEdges():RoadEdge[]{
     return this.sourceIds.map(id=>this.cells.get(id)!.edge);
   }
+  /** Read-only per-Way inventory for conservation and evacuation audits. */
+  vehiclesOnEdge(edgeId:string):number{
+    const state=this.cells.get(edgeId);
+    if(!state)throw Error('Unbekannter OSM-Fahrweg: '+edgeId);
+    return [...state.vehicles].reduce((total,n)=>total+n,0);
+  }
   snapshot():FlowStatistics{
     let vehicles=0,waiting=0;
     for(const x of this.cells.values())
