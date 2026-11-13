@@ -590,6 +590,28 @@ function createLegacyTrafficScenario(data){
     }
     return edge.profileFactor;
   }
+  function closureDistanceAhead(edge,offsetM,maxDistance=12000){
+    let current=edge,from=Math.max(0,offsetM),travelled=0;
+    const visited=new Set();
+    for(let hops=0;hops<80&&travelled<=maxDistance;hops++){
+      if(visited.has(current.id))return Infinity;
+      visited.add(current.id);
+      const effects=activeEffects.get(current.id)||NO_EFFECTS;
+      for(const item of effects){
+        if(item.event.kind!=="closure"||item.fromM<from-.01)continue;
+        const distance=travelled+item.fromM-from;
+        if(distance<=maxDistance)return distance;
+      }
+      const next=current.next.filter(link=>{
+        const target=edges[link.to];
+        return target.kind==="mainline"&&target.ref===edge.ref;
+      });
+      if(next.length!==1)return Infinity;
+      travelled+=current.lengthM-from;
+      current=edges[next[0].to];from=0;
+    }
+    return Infinity;
+  }
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
     updateEffects();
@@ -685,6 +707,22 @@ function createLegacyTrafficScenario(data){
           options.push(link);
         }
         if(!options.length)continue;
+        // If a planned corridor closure lies downstream, approaching
+        // motorists can progressively take the LAST available open exit.
+        // Reweight ONLY real OSM turns; never teleport cars or create roads.
+        if(edge.kind==="mainline"&&options.some(o=>
+          o.to!==j&&edges[o.to].kind==="ramp")){
+          const distance=closureDistanceAhead(edge,k*edge.cellLength);
+          if(distance<12000){
+            const imminence=Math.max(0,1-distance/12000);
+            for(const option of options){
+              if(option.to===j)
+                option.weight=Math.max(.8,option.weight*(1-.92*imminence));
+              else if(edges[option.to].kind==="ramp")
+                option.weight=Math.max(option.weight,20*imminence*imminence);
+            }
+          }
+        }
         const sum=options.reduce((n,x)=>n+x.weight,0);
         for(const opt of options)
           push(opt.to,opt.toCell,j,k,available*opt.weight/sum);
