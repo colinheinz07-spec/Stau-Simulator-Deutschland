@@ -394,6 +394,11 @@ function updateSimStats(){
   $("sim-clock").textContent=mm+":"+String(ss).padStart(2,"0");
   $("sim-vehicles").textContent=Math.round(p.vehiclesOnNetwork).toLocaleString("de-DE");
   $("sim-outside").textContent=Math.round(p.waitingOutsideSources).toLocaleString("de-DE");
+  const calendar=window.StauEventSchedule;
+  const time=state.scenario?.clockMs?.();
+  if(calendar&&Number.isFinite(time))
+    $("sim-model-date").textContent="Modell-Datum: "+
+      calendar.localDateTime(time).replace("T"," ")+" Uhr";
 }
 function stopSimulation(){
   if(state.simTimer!==null)clearInterval(state.simTimer);
@@ -436,6 +441,22 @@ $("sim-demand").addEventListener("input",e=>{
   const pct=Number(e.target.value);
   $("sim-demand-value").textContent=pct+" %";
   state.scenario?.setDemandPercent(pct);
+});
+function applySimulationStart(){
+  const field=$("sim-start");
+  if(!field?.value||!state.scenario?.setSimulationStart)return;
+  const date=field.value;
+  const calendar=window.StauEventSchedule;
+  const time=calendar?.localInstant?
+    calendar.localInstant(date.slice(0,10),date.slice(11,16)):
+    new Date(date).getTime();
+  if(!Number.isFinite(time))throw Error("Ungültiger Simulationsbeginn");
+  stopSimulation();
+  state.scenario.setSimulationStart(time);
+  updateSimStats();drawNetwork();
+}
+$("sim-start").addEventListener("change",()=>{
+  try{applySimulationStart()}catch(error){setError(error.message);}
 });
 $("sim-reset").addEventListener("click",()=>{
   stopSimulation();
@@ -487,6 +508,9 @@ async function init(){
     if(audit.invalidMovements.length)
       throw Error("Ungültige gerichtete OSM-Fahrbeziehungen: "+audit.invalidMovements.length);
     state.scenario=createTrafficScenario(state.fullNetwork);
+    const calendar=window.StauEventSchedule;
+    if(calendar) $("sim-start").value=calendar.localDateTime(Date.now());
+    applySimulationStart();
     updateSimStats();
     await updateViewport();
     setStatus("A3/A48: "+audit.motorwayMainlineCount+
