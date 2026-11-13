@@ -26,6 +26,8 @@ function createLegacyTrafficScenario(data){
   const edges=[],outByNode=new Map(),inByNode=new Map(),byId=new Map();
   const rowById=new Map(data.roads.map(row=>[String(row[0]),row]));
   const NO_EFFECTS=Object.freeze([]);
+  const traffic=global.StauTrafficReference;
+  if(!traffic)throw Error("traffic-reference.js fehlt vor offline-traffic.js");
   let excludedRest=0;
   for(const row of data.roads){
     if(!Array.isArray(row[4])||row[4].length<2)continue;
@@ -35,18 +37,21 @@ function createLegacyTrafficScenario(data){
     if(meters<0.2||byId.has(id))continue;
     const count=Math.max(1,Math.ceil(meters/230));
     const edge={
-      id,kind:row[1],ref:row[2],lanes,shoulderTag:row[7]||null,
+      id,kind:row[1],ref:row[2],name:row[5]||"",lanes,
+       shoulderTag:row[7]||null,
       from:coord(row[4][0]),to:coord(row[4].at(-1)),
       first:row[4][0],lengthM:meters,
       n:count,cellLength:meters/count,
       stock:new Float64Array(count),
-      capacityPerLane:row[1]==="ramp"?1550:2200,
+      // User-defined unrestricted motorway service, not a speed threshold.
+       capacityPerLane:row[1]==="ramp"?1500:2600,
       freeKmh:row[1]==="ramp"?75:120,
       jamPerCell:130*lanes*(meters/count)/1000,
       next:[],incoming:0,incomingAtStart:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
       links:[],linksFrom:Array.from({length:count},()=>[]),
-      enteredVph:0,departedVph:0
+      enteredVph:0,departedVph:0,
+      referencePeakVph:0,directionKey:"",lastProfileMinute:-1,profileFactor:0
     };
     const index=edges.length;edge.index=index;edges.push(edge);byId.set(id,edge);
     if(!outByNode.has(edge.from))outByNode.set(edge.from,[]);
@@ -120,43 +125,57 @@ function createLegacyTrafficScenario(data){
       }
     }
   }
-  // Select external corridor boundaries from actual graph sources.
-  // This avoids injecting imaginary cars at all the map's internal OSM gaps.
-  const limits=new Map();
+  // Source provenance matters: an orphaned OSM ramp Way is NOT a
+  // residential on-ramp. Select a single upstream boundary per directional
+  // motorway corridor, and only distinctly named on-ramp heads for AS traffic.
+  // Adapted from the old directional A3/A48/NRW demand reference catalog.
+  const rankedMainline=new Map();
+  function upstreamRank(edge,key){
+    const [lat,lon]=edge.first;
+    if(key==="A3-koeln")return -lat;
+    if(key==="A3-frankfurt")return lat;
+    if(key==="A48-dernbach")return -lon;
+    if(key==="A48-koblenz")return lon;
+    if(/a4-olpe|a560-hennef|a562-bonn-ost/.test(key))return -lon;
+    if(/a4-aachen|a560-bonn|a562-bonn$/.test(key))return lon;
+    if(/a59-koeln|a555-koeln|a1-dortmund|a559-gremberg/.test(key))return -lat;
+    if(/a59-bonn|a555-bonn|a1-koblenz|a559-porz/.test(key))return lat;
+    return Math.abs(lat)>=Math.abs(lon)?-lat:-lon;
+  }
   for(const edge of edges){
-    if(edge.kind!=="mainline"||!edge.ref)continue;
-    const box=limits.get(edge.ref)??{minLat:90,maxLat:-90,minLon:180,maxLon:-180};
-    for(const p of [edge.first]){
-      box.minLat=Math.min(box.minLat,p[0]);box.maxLat=Math.max(box.maxLat,p[0]);
-      box.minLon=Math.min(box.minLon,p[1]);box.maxLon=Math.max(box.maxLon,p[1]);
-    }
-    limits.set(edge.ref,box);
+    if(edge.kind!=="mainline"||!edge.ref||edge.incomingAtStart)continue;
+    const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
+    if(profile.peakVph<=0)continue; // no guessed A565/A61 rate
+    const rank=upstreamRank(edge,profile.key);
+    const old=rankedMainline.get(profile.key);
+    if(!old||rank>old.rank+1e-8||
+      Math.abs(rank-old.rank)<=1e-8&&edge.lengthM>old.edge.lengthM)
+      rankedMainline.set(profile.key,{edge,profile,rank});
   }
   const sources=[];
-  for(const edge of edges){
-    if(edge.incomingAtStart||edge.kind!=="mainline"||!edge.ref)continue;
-    const box=limits.get(edge.ref);
-    if(!box)continue;
-    const [lat,lon]=edge.first;
-    const latSpan=box.maxLat-box.minLat,lonSpan=box.maxLon-box.minLon;
-    const northSouthKm=latSpan*111,westEastKm=lonSpan*111*Math.cos(lat*rad);
-    const useLat=latSpan>.002&&northSouthKm>=westEastKm*.8;
-    const useLon=lonSpan>.002&&westEastKm>=northSouthKm*.8;
-    const latMargin=latSpan*.035,lonMargin=lonSpan*.035;
-    if((useLat&&(lat-box.minLat<=latMargin||box.maxLat-lat<=latMargin))||
-       (useLon&&(lon-box.minLon<=lonMargin||box.maxLon-lon<=lonMargin))||
-       (!useLat&&!useLon&&lat===box.minLat&&lon===box.minLon)){
-      edge.source=true;sources.push(edge);
-    }
+  for(const {edge,profile} of rankedMainline.values()){
+    edge.source=true;edge.referencePeakVph=profile.peakVph;
+    edge.directionKey=profile.key;sources.push(edge);
   }
-  // Only edge paths downstream of source boundaries can receive model traffic.
-  // The rest remains visible OSM geometry but is not falsely presented as simulated.
-  // A ramp beginning on a local (non-motorway) road is a legitimate local
-  // source only when its OSM geometry actually connects into the motorway.
-  // This is NOT phantom traffic injected on an inner motorway cell.
-  const localSources=edges.filter(edge=>edge.kind==="ramp"&&
-    edge.incomingAtStart===0&&edge.links.length>0);
-  for(const edge of localSources){edge.source=true;sources.push(edge);}
+  const distinctOnramps=new Map();
+  for(const edge of edges){
+    if(edge.kind!=="ramp"||edge.incomingAtStart||!edge.links.length)continue;
+    if(!/\\b(?:auffahrt|zufahrt)\\b/i.test(edge.name)||/rampenzweig/i.test(edge.name))
+      continue;
+    const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
+    const peak=traffic.junctionEntryPeak(row);
+    if(peak<=0)continue;
+    // Repeated copies/fragments for the same signed AS→direction must never
+    // create repeated independent 500 Kfz/h traffic generators.
+    const label=edge.name.replace(/\\s+/g," ").trim().toLowerCase();
+    const old=distinctOnramps.get(label);
+    if(!old||edge.lengthM>old.edge.lengthM)
+      distinctOnramps.set(label,{edge,profile,peak});
+  }
+  for(const {edge,profile,peak} of distinctOnramps.values()){
+    edge.source=true;edge.referencePeakVph=peak;
+    edge.directionKey=profile.key;sources.push(edge);
+  }
   const reachable=new Set(sources.map(edge=>edge.id));
   const frontier=[...sources];
   for(let k=0;k<frontier.length;k++){
@@ -431,6 +450,7 @@ function createLegacyTrafficScenario(data){
     elapsed=0;generated=0;exited=0;
     for(const edge of edges){
       edge.stock.fill(0);edge.backlog=0;edge.speed=edge.freeKmh;
+      edge.lastProfileMinute=-1;edge.profileFactor=0;
       edge.enteredVph=0;edge.departedVph=0;
     }
     if(clearEvents)eventRecords.clear();
@@ -457,27 +477,16 @@ function createLegacyTrafficScenario(data){
     if(!finite(Number(pct))||Number(pct)>200)throw Error("Verkehrslast muss 0–200 % sein");
     demandPercent=Number(pct);
   }
-  // Local clock affects traffic: winter Friday PM peaks differ from Sunday.
-  // Baseline demand is a scenario assumption; no claims of observed traffic.
-  const clockFormatter=new Intl.DateTimeFormat("en-GB",{
-    timeZone:"Europe/Berlin",weekday:"short",hour:"2-digit",hourCycle:"h23"
-  });
-  let cachedTimeBucket=-1,cachedTimeFactor=1;
-  function timeDemandFactor(time){
-    const bucket=Math.floor(time/600000);
-    if(bucket===cachedTimeBucket)return cachedTimeFactor;
-    cachedTimeBucket=bucket;
-    const parts=Object.fromEntries(clockFormatter.formatToParts(new Date(time))
-      .map(p=>[p.type,p.value]));
-    const hour=Number(parts.hour),day=parts.weekday;
-    const weekday=day!=="Sat"&&day!=="Sun";
-    const commuting=hour>=6&&hour<9?1.22:hour>=15&&hour<19?1.26:
-      hour>=11&&hour<15?1.03:hour>=9&&hour<11?1.08:
-      hour>=19&&hour<22?.74:hour>=5&&hour<6?.72:.38;
-    const weekend=day==="Sun"?.62:day==="Sat"?.78:1;
-    const friday=day==="Fri"&&hour>=12&&hour<19?1.15:1;
-    cachedTimeFactor=commuting*weekend*friday*(weekday?1:.98);
-    return cachedTimeFactor;
+  // Exact weekday/friday/weekend curves and directional 1-hour peak inputs
+  // ported from the old Traffic-Sinulator, shared with the full-map adapter.
+  function sourceFactor(edge,time){
+    const minute=Math.floor(time/60000);
+    if(edge.lastProfileMinute!==minute){
+      edge.profileFactor=traffic.profileFactor(edge.directionKey,edge.ref,time,
+        rowById.get(edge.id)[4]);
+      edge.lastProfileMinute=minute;
+    }
+    return edge.profileFactor;
   }
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
@@ -487,7 +496,9 @@ function createLegacyTrafficScenario(data){
       const edge=edges[j],n=edge.n,stock=edge.stock;
       const s=send[j],r=receive[j],d=delta[j];
       d.fill(0);
-      const wave=Math.min(1,(22/3.6)*dt/edge.cellLength);
+      // w=32 km/h keeps the receiving branch consistent with 2600 Kfz/h/lane:
+      // 22 km/h would cap free-flow receiving below the user-defined capacity.
+      const wave=Math.min(1,(32/3.6)*dt/edge.cellLength);
       const effects=activeEffects.get(edge.id)||NO_EFFECTS;
       for(let k=0;k<n;k++){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
@@ -605,9 +616,10 @@ function createLegacyTrafficScenario(data){
     // network boundaries. Unadmitted vehicles remain in external backlog.
     for(const edge of sources){
       const j=edge.index;
-      // Real motorway boundary / geometric local-ramp origins only.
-      const base=edge.kind==="ramp"?225:edge.lanes*1050;
-      const offered=base*(demandPercent/100)*timeDemandFactor(clockMs())*dt/3600;
+      // Real corridor boundaries and one source per explicitly named AS origin.
+      // Peak reference is DIRECTIONAL, not 2600 x lanes or daily DTV.
+      const offered=edge.referencePeakVph*(demandPercent/100)*
+        sourceFactor(edge,clockMs())*dt/3600;
       generated+=offered;
       const available=edge.backlog+offered;
       const admitted=Math.min(available,receive[j][0]);
@@ -648,7 +660,8 @@ function createLegacyTrafficScenario(data){
     return {reachable:reachable.has(id),vehicles:count,
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
       capacityVph:edge.lanes*edge.capacityPerLane,
-      source:edge.source,connections:edge.links.length};
+      source:edge.source,sourcePeakVph:edge.referencePeakVph,
+      sourceDirection:edge.directionKey,connections:edge.links.length};
   }
   function speed(id){return byId.get(id)?.speed??null;}
   function color(id){const edge=byId.get(id);return edge?colourForSpeed(edge.speed):"free";}
@@ -659,6 +672,9 @@ function createLegacyTrafficScenario(data){
     incomingCount:id=>byId.get(id)?.incoming??0,
     entryIncomingCount:id=>byId.get(id)?.incomingAtStart??0,
     sourceIds:()=>sources.map(x=>x.id),
+    sourceProfiles:()=>sources.map(edge=>({id:edge.id,ref:edge.ref,
+      direction:edge.directionKey,peakVph:edge.referencePeakVph,
+      kind:edge.kind,name:edge.name})),
     junctionCount:()=>linkKeys.size};
 }
 global.createLegacyTrafficScenario=createLegacyTrafficScenario;
