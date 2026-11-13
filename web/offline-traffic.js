@@ -110,6 +110,7 @@ function createLegacyTrafficScenario(data){
   const eventRecords=new Map();
   let activeEffects=new Map(),effectsStamp=null,simStart=Date.now();
   let elapsed=0,generated=0,exited=0,demandPercent=100;
+  let jamGroups=[];
   function totals(){
     let inside=0,backlog=0;
     for(const edge of edges){
@@ -261,6 +262,8 @@ function createLegacyTrafficScenario(data){
     simStart=ms;
     return reset(false);
   }
+  // Jam diagnostics use ONLY the density of actual model vehicles. A 20 km/h
+  // roadworks limit alone must never turn an empty road red.
   function recomputeSpeeds(){
     updateEffects();
     for(const edge of edges){
@@ -269,26 +272,88 @@ function createLegacyTrafficScenario(data){
       const bands=[];
       for(let k=0;k<edge.n;k++){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
-        const fraction=Math.min(1,edge.stock[k]/edge.jamPerCell);
-        let speed=edge.freeKmh*
-          (fraction<=.15?1:Math.max(.06,1-Math.pow((fraction-.15)/.85,1.4)));
+        const fraction=Math.min(1,edge.stock[k]/Math.max(.001,edge.jamPerCell));
+        const densitySpeed=edge.freeKmh*
+          (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
+        let speed=densitySpeed;
         for(const effect of effectList){
           if(effect.fromM>=b-.001||effect.toM<=a+.001)continue;
           if(effect.event.speedKmh>0)
             speed=Math.min(speed,effect.event.speedKmh);
         }
-        minSpeed=Math.min(minSpeed,speed);
-        const color=colourForSpeed(speed);
+        // No vehicle = no measured travel speed. Capacity restrictions and
+        // closures remain separately visible as event/closure overlays.
+        if(edge.stock[k]>=1)minSpeed=Math.min(minSpeed,speed);
+        const congested=edge.stock[k]>=Math.max(2,edge.lanes*1.2)&&fraction>.23;
+        const color=congested?colourForSpeed(densitySpeed):"free";
         if(color!=="free"){
           const previous=bands.at(-1);
-          if(previous&&previous.color===color&&Math.abs(previous.toM-a)<.001)
+          if(previous&&previous.color===color&&Math.abs(previous.toM-a)<.001){
             previous.toM=b;
-          else bands.push({fromM:a,toM:b,color});
+            previous.speedKmh=Math.min(previous.speedKmh,densitySpeed);
+          }else bands.push({fromM:a,toM:b,color,speedKmh:densitySpeed});
         }
       }
       edge.speed=minSpeed;
       edge.visualBands=bands;
     }
+    jamGroups=calculateJamGroups();
+  }
+  // Adjacent congestion cells are one queue, even when OSM splits them into
+  // dozens of Ways. Never join across a branch or a disconnected geometry.
+  function calculateJamGroups(){
+    const pieces=[],perEdge=new Map();
+    for(const edge of edges){
+      const local=[];
+      for(const band of edge.visualBands){
+        const m=band.toM-band.fromM;
+        const delay=Math.max(0,(m/1000)*60*
+          (1/Math.max(5,band.speedKmh)-1/edge.freeKmh));
+        const last=local.at(-1);
+        if(last&&Math.abs(last.toM-band.fromM)<.02){
+          last.toM=band.toM;last.delayMin+=delay;
+          last.worstKmh=Math.min(last.worstKmh,band.speedKmh);
+        }else{
+          const item={index:pieces.length,edgeId:edge.id,fromM:band.fromM,
+            toM:band.toM,delayMin:delay,worstKmh:band.speedKmh};
+          pieces.push(item);local.push(item);
+        }
+      }
+      if(local.length)perEdge.set(edge.id,local);
+    }
+    const roots=pieces.map((_,i)=>i);
+    const root=i=>{while(roots[i]!==i){roots[i]=roots[roots[i]];i=roots[i];}return i;};
+    for(const edge of edges){
+      if(edge.next.length!==1)continue;
+      const target=edges[edge.next[0].to];
+      if(target.incoming!==1)continue;
+      const a=perEdge.get(edge.id)?.at(-1);
+      const b=perEdge.get(target.id)?.[0];
+      if(!a||!b||a.toM<edge.lengthM-.02||b.fromM>.02)continue;
+      const ra=root(a.index),rb=root(b.index);
+      if(ra!==rb)roots[rb]=ra;
+    }
+    const groups=new Map();
+    for(const piece of pieces){
+      const key=root(piece.index);
+      let g=groups.get(key);
+      if(!g){
+        g={lengthM:0,delayMin:0,worstKmh:Infinity,
+          edgeId:piece.edgeId,offsetM:(piece.fromM+piece.toM)/2,
+          longestM:0};
+        groups.set(key,g);
+      }
+      const len=piece.toM-piece.fromM;
+      g.lengthM+=len;g.delayMin+=piece.delayMin;
+      g.worstKmh=Math.min(g.worstKmh,piece.worstKmh);
+      if(len>g.longestM){
+        g.longestM=len;g.edgeId=piece.edgeId;
+        g.offsetM=(piece.fromM+piece.toM)/2;
+      }
+    }
+    return [...groups.values()].filter(g=>g.lengthM>=350&&g.delayMin>=.5)
+      .sort((a,b)=>b.delayMin-a.delayMin)
+      .map(({longestM,...g})=>g);
   }
   function visualBands(id){return byId.get(id)?.visualBands||[];}
   function closureBands(id){
@@ -426,7 +491,8 @@ function createLegacyTrafficScenario(data){
     // network boundaries. Unadmitted vehicles remain in external backlog.
     for(const edge of sources){
       const j=edge.index;
-      const offered=(edge.lanes*1750)*(demandPercent/100)*dt/3600;
+      // 100 % is a moderate baseline, NOT near-saturation at every source.
+       const offered=(edge.lanes*1000)*(demandPercent/100)*dt/3600;
       generated+=offered;
       const available=edge.backlog+offered;
       const admitted=Math.min(available,receive[j][0]);
@@ -459,7 +525,7 @@ function createLegacyTrafficScenario(data){
   function color(id){const edge=byId.get(id);return edge?colourForSpeed(edge.speed):"free";}
   return {advance,step,reset,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
-    activeEvents,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
+    activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     reachable:id=>reachable.has(id),reachableCount:()=>reachable.size};
 }
 global.createLegacyTrafficScenario=createLegacyTrafficScenario;
