@@ -18,6 +18,16 @@ Stand: 13.11.2026. Für dieses Projekt gelten **bundesweite, nicht streckenspezi
 
 7. **Fehlende Reaktion bei angehaltener Simulation:** Ein nachträglich gespeichertes Ereignis konnte sichtbar markiert sein, während der Simulations-Zeitgeber angehalten war. Ein aktives Ereignis setzt nun die Simulation fort, ohne die bisherigen Fahrzeuge zu löschen. Kurzzeitige iOS-/SPCK-Sichtbarkeitswechsel sollen den Benutzerzustand nicht mehr auf „Pause“ setzen.
 
+## Ergänzungen nach erneuter Nutzerprüfung am 13.11.2026
+
+- **Kapazitätsentscheidung: 2.200 Kfz/h je Hauptfahrstreifen** (nicht 2.600). Die importerbasierte Standardkapazität und der lokale SPCK-Adapter wurden einheitlich zurückgestellt; Rampenbasis 1.500 Kfz/h.
+- Aus der alten App sind die tages-, freitags- und richtungsabhängigen Spitzenstundenprofile, A3/A48-Referenzen, AS-Einfahrtsanteile und regionale Kurven in `web/traffic-reference.js` übernommen. Feiertage (beweglich nach Ostern) sowie die für 2026/27 veröffentlichten KMK-Ferienfenster RLP/NRW/Hessen beeinflussen die Prognose; Verkehrsreaktionen auf Ferien sind Annahmen.
+- **Netzrandproblem:** Pauschale Einspeisung an 188 OSM-Quellen hat NRW-Teilstrecken ohne echte durchgehende Hauptfahrbahn überlastet. Jetzt nur 18 nachgewiesene Autobahn- und benannte AS-Quellen; bei einer fehlenden zusammenhängenden Hauptfahrbahn wird die angenommene externe Spitzenlast NICHT eingespeist.
+- **Vollsperrung:** Gegenüber der ursprünglichen 200-m-Voreinstellung nutzt der Editor den nächsten bekannten OSM-Anschluss als Längenvorschlag und überträgt die Sperrung rückwärts auf ausschließlich hineinführende Rampenketten. Bereits innerhalb der Sperrung vorhandene Autos dürfen weiter ausfahren. Keine pauschale Sperrung offener Ausfahrten.
+- **Stauhinweise:** zusammenhängende Hauptfahrbahn-Rückstaus werden über eine Abfahrt hinweg verbunden und auf höchstens vier beschriftete Hinweise begrenzt; rote Segmente selbst bleiben sichtbar.
+- **Regressionen:** Bei plausibler niedriger Sonntagnacht-Belastung nach 90 Modellminuten null Staus im lokalen A3/A48/NRW-Snapshot; unveränderte Fahrzeugbilanz. Die GitHub-Prüfkette enthält zusätzlich einen Unfall-Test und einen Evakuierungstest für Sperrungen.
+- **Wichtig:** Noch nicht nachgewiesen ist, dass die Langzeitbelastung an allen Kölner Rampen realistisch ist. Die vorher künstlich überlasteten, datenarmen Randstrecken sind daher noch nicht als vollständig simuliert gekennzeichnet.
+
 ## Fachliche Regeln (verbindlich)
 
 - Freie Fahrt, stockend, Stau und Stillstand müssen vom **berechneten Fahrzeugbestand und Fahrverhalten** stammen. Tempolimit und Ereignissymbol sind keine Staufarbe.
@@ -40,8 +50,8 @@ Stand: 13.11.2026. Für dieses Projekt gelten **bundesweite, nicht streckenspezi
 ## Noch nicht abgeschlossen – keine falschen Fertigmeldungen
 
 1. **OD-Matrix und lokale Auf-/Abfahrtszahlen** für A3/A48 und NRW samt Richtungsprofilen, Quell-/Zielverkehr, Schwerverkehr. Das jetzige Verhältnis der Abfahrten ist nur ein generischer Ausgangspunkt.
-2. **Bessere Datengrundlage** im lokalen SPCK-Modus: aktuell 1.929 Legacy-Geometrien mit 253 modellseitig nicht erreichbaren Abschnitten, teils unbestätigten externen Rampenquellen. Die vollständige A3/A48-OSM-Importpipeline ist davon getrennt. Der vollständige Import muss maßgeblich werden.
-3. **Zusammenhängende Korridor-Vollsperrungen und Umleitungen** im lokalen SPCK-Modus; die Produktionslogik unter src/04_Ereignisse/netzsperrungen.ts ist umfangreicher und darf nicht mit dem lokalen 200-m-Ereignisprototyp gleichgesetzt werden.
+2. **Bessere Datengrundlage** im lokalen SPCK-Modus: aktuell 1.929 Legacy-Geometrien, davon 1.219 über 18 begründete Quelleinfahrten erreichbar und 710 mangels vollständigem Netz grau. Die vorherigen 188 Einspeisungen (1.676 erreichbare Wege) waren größtenteils unbestätigte Rampenfragment-Quellen und wurden bewusst entfernt. Der vollständige OSM-Import muss maßgeblich werden.
+3. **Zusammenhängende Korridor-Vollsperrungen und Umleitungen** im lokalen SPCK-Modus: Zugeordnete Zubringerrampen schließen jetzt bei fehlender Alternative; die vorgeschlagene Sperrlänge reicht bis zur nächsten bekannten Anschlussstelle, wenn die Originalgeometrie eindeutig ist. Das ist **noch keine flächendeckende Quell-Ziel-Umleitung**. Die Produktionslogik unter src/04_Ereignisse/netzsperrungen.ts ist umfangreicher.
 4. **Verkehrsfluss bei bereits voller Autobahn**, Priorität an Einfädelungen und Rampen, dynamische Zielwahl bei Überlastung und einheitliche Datenverträge zwischen Canvas und Leaflet.
 5. **Praxisprüfung am iPhone in SPCK** inklusive realer Bildausschnitte und Ereignissen. Automatische GitHub-Tests ersetzen diese nicht.
 
