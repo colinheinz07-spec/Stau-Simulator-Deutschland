@@ -89,6 +89,8 @@ async function startLegacyCanvas(existingMap=null){
   const selection=$("detail-drawer");
   const backdrop=$("drawer-backdrop");
   const segments=prepareGeometry(data);
+  const segmentById=new Map(segments.map(road=>[road.id,road]));
+  let eventTargets=[];
   let eventEditor=null;
   let timer=null,simRunning=false;
   const mainlines=segments.filter(x=>x.kind!=="ramp");
@@ -124,6 +126,17 @@ async function startLegacyCanvas(existingMap=null){
     const scale=2**zoom;
     return [(world[0]-center[0])*scale+width/2,
       (world[1]-center[1])*scale+height/2];
+  }
+  function pointAlong(road,metres){
+    const at=clamp(metres,0,road.meters);
+    for(let i=1;i<road.points.length;i++){
+      if(road.cumulative[i]<at)continue;
+      const start=road.cumulative[i-1],length=road.cumulative[i]-start;
+      const t=length>0?(at-start)/length:0;
+      const a=road.points[i-1],b=road.points[i];
+      return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+    }
+    return road.points.at(-1);
   }
   function zoomAt(x,y,step){
     const oldScale=2**zoom;
@@ -255,6 +268,70 @@ async function startLegacyCanvas(existingMap=null){
       }
     }
   }
+  function drawJamLabels(){
+    if(zoom<8.6||typeof scenario.jamSummaries!=="function")return;
+    const groups=scenario.jamSummaries();
+    const boxes=[];
+    const scale=2**zoom;
+    context.textAlign="center";
+    context.font="600 12px system-ui,Arial,sans-serif";
+    for(const group of groups){
+      if(boxes.length>=8)break;
+      const road=segmentById.get(group.edgeId);
+      if(!road||!inView(road,scale))continue;
+      const [x,y]=pointAt(pointAlong(road,group.offsetM));
+      if(x<65||x>width-65||y<115||y>height-62)continue;
+      const km=(group.lengthM/1000).toLocaleString("de-DE",{
+        minimumFractionDigits:1,maximumFractionDigits:1
+      });
+      const minutes=Math.max(1,Math.round(group.delayMin));
+      const label="Stau "+km+" km · +"+minutes+" min";
+      const w=Math.min(width-20,Math.max(110,context.measureText(label).width+22));
+      const left=clamp(x-w/2,10,width-w-10),top=y-33;
+      if(boxes.some(b=>left<b[2]+8&&left+w>b[0]-8&&
+        top<b[3]+8&&top+25>b[1]-8))continue;
+      boxes.push([left,top,left+w,top+25]);
+      context.fillStyle="#152a3bef";
+      context.fillRect(left,top,w,25);
+      context.fillStyle="#ff6a72";
+      context.fillRect(left,top,4,25);
+      context.fillStyle="#fff";
+      context.fillText(label,left+w/2,top+17,w-12);
+    }
+  }
+  function drawEventMarkers(){
+    eventTargets=[];
+    if(zoom<8.1)return;
+    const scale=2**zoom;
+    const symbols={roadworks:"🚧",accident:"💥",breakdown:"🚛",closure:"⛔"};
+    const placed=[];
+    context.textAlign="center";
+    context.font="17px system-ui,Apple Color Emoji,sans-serif";
+    for(const event of scenario.listEvents()){
+      const status=scenario.eventStatus(event.id);
+      if(status==="finished"||status==="inactive")continue;
+      const road=segmentById.get(event.edgeId);
+      if(!road||!inView(road,scale))continue;
+      let [x,y]=pointAt(pointAlong(road,event.offsetM));
+      if(x<18||y<105||x>width-18||y>height-56)continue;
+      // Stagger coincident icons; each still targets the original OSM offset.
+      let tries=0;
+      while(placed.some(p=>Math.hypot(p[0]-x,p[1]-y)<30)&&tries<5){
+        y+=tries%2===0?23:-46;
+        tries++;
+      }
+      if(y<105||y>height-56)continue;
+      placed.push([x,y]);
+      const active=status==="active";
+      context.fillStyle=active?"#193044":"#627284";
+      context.fillRect(x-14,y-14,28,28);
+      context.fillStyle=active?"#ffb65b":"#bfcbd6";
+      context.fillRect(x-14,y+11,28,3);
+      context.fillStyle="#fff";
+      context.fillText(symbols[event.kind]||"⚠️",x,y+6,25);
+      eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,offsetM:event.offsetM});
+    }
+  }
   function drawLabels(){
     if(!labels||zoom<11.4)return;
     context.font="600 11px -apple-system,Arial,sans-serif";
@@ -300,7 +377,9 @@ async function startLegacyCanvas(existingMap=null){
         }
       }
       drawLabels();
-    }
+      drawJamLabels();
+      drawEventMarkers();
+    }else eventTargets=[];
     context.fillStyle="#ffffffee";
     context.fillRect(7,height-24,185,18);
     context.font="10px system-ui,sans-serif";
@@ -412,8 +491,18 @@ async function startLegacyCanvas(existingMap=null){
     pointers.delete(e.pointerId);
     const p=local(e);
     if(!pointers.size&&!wasPinching&&tap&&Math.hypot(p[0]-tap.x,p[1]-tap.y)<10){
-      const hit=nearest(p[0],p[1]);
-      if(hit)open(hit.road,Math.min(hit.road.meters-.001,hit.offsetM));
+      const event=eventTargets.find(target=>
+        Math.hypot(target.x-p[0],target.y-p[1])<=19);
+      if(event){
+        const road=segmentById.get(event.edgeId);
+        if(road){
+          open(road,event.offsetM);
+          eventEditor?.editEventById(event.id);
+        }
+      }else{
+        const hit=nearest(p[0],p[1]);
+        if(hit)open(hit.road,Math.min(hit.road.meters-.001,hit.offsetM));
+      }
     }
     if(!pointers.size){tap=null;wasPinching=false;}
   }
