@@ -202,7 +202,7 @@ function drawJamCallouts(rendered,byId){
   }
   const boxes=[];
   for(const g of [...groups.values()].sort((a,b)=>b.delayMin-a.delayMin)){
-    if(boxes.length>=7)break;
+    if(boxes.length>=4)break;
     if(g.lengthM<400||g.delayMin<.5||!g.anchor)continue;
     const edge=byId.get(g.anchor.edgeId);
     if(!edge)continue;
