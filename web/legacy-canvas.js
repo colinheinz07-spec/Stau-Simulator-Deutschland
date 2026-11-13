@@ -269,7 +269,7 @@ async function startLegacyCanvas(existingMap=null){
     }
   }
   function drawJamLabels(){
-    if(zoom<8.6||typeof scenario.jamSummaries!=="function")return;
+    if(zoom<8.1||typeof scenario.jamSummaries!=="function")return;
     const groups=scenario.jamSummaries();
     const boxes=[];
     const scale=2**zoom;
