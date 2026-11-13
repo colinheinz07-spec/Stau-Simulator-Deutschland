@@ -103,12 +103,17 @@ export class NetworkFlowEngine {
   speedSamples():SpeedSample[]{
     const samples:SpeedSample[]=[];
     for(const state of this.cells.values()){
-      let fraction=0;
-      if(state.jamCellVehicles>0)
-        for(const n of state.vehicles)
-          fraction=Math.max(fraction,Math.min(1,n/state.jamCellVehicles));
-      const speedKmh=state.edge.freeSpeedKmh*
-        (fraction<=.15?1:Math.max(.06,1-Math.pow((fraction-.15)/.85,1.4)));
+      // Equal-length cells: harmonic mean reflects travel time over the
+      // entire OSM edge. A single slow cell must not paint a long Way red.
+      let inverseSpeedSum=0;
+      for(const count of state.vehicles){
+        const fraction=state.jamCellVehicles>0?
+          Math.min(1,count/state.jamCellVehicles):0;
+        const speed=state.edge.freeSpeedKmh*
+          (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
+        inverseSpeedSum+=1/Math.max(1,speed);
+      }
+      const speedKmh=state.vehicles.length/inverseSpeedSum;
       samples.push({edgeId:state.edge.id,speedKmh,atMinute:this.elapsed/60});
     }
     return samples;
