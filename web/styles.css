@@ -231,3 +231,5 @@
   line-height:1.4;white-space:nowrap;pointer-events:none}
 
 #detail-flow{font-variant-numeric:tabular-nums;font-size:12px;line-height:1.35}
+
+.legend-swatch.unknown{background:#8095a4}
