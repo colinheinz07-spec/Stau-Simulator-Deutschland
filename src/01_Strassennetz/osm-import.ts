@@ -323,7 +323,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
           lanes:laneCount(tags,kind,label,twoWay),
           lengthM:polylineLengthM(geometry),
           freeSpeedKmh:kind==='mainline'?130:kind==='ramp'?80:50,
-          capacityPerLaneVph:kind==='mainline'?2100:kind==='ramp'?1500:900
+          capacityPerLaneVph:kind==='mainline'?2200:kind==='ramp'?1500:900
         };
         edges.push(edge);
         const startJunction=junctionNames.get(srcId);
