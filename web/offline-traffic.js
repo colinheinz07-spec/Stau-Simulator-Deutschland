@@ -160,14 +160,14 @@ function createLegacyTrafficScenario(data){
   const distinctOnramps=new Map();
   for(const edge of edges){
     if(edge.kind!=="ramp"||edge.incomingAtStart||!edge.links.length)continue;
-    if(!/\\b(?:auffahrt|zufahrt)\\b/i.test(edge.name)||/rampenzweig/i.test(edge.name))
+    if(!/\b(?:auffahrt|zufahrt)\b/i.test(edge.name)||/rampenzweig/i.test(edge.name))
       continue;
     const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
     const peak=traffic.junctionEntryPeak(row);
     if(peak<=0)continue;
     // Repeated copies/fragments for the same signed AS→direction must never
     // create repeated independent 500 Kfz/h traffic generators.
-    const label=edge.name.replace(/\\s+/g," ").trim().toLowerCase();
+    const label=edge.name.replace(/\s+/g," ").trim().toLowerCase();
     const old=distinctOnramps.get(label);
     if(!old||edge.lengthM>old.edge.lengthM)
       distinctOnramps.set(label,{edge,profile,peak});
