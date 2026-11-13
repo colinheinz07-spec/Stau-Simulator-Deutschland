@@ -94,6 +94,7 @@ export function createTrafficScenario(network){
     demandPercent:()=>demandPercent,
     stats:()=>engine.snapshot(),
     speeds:()=>engine.speedSamples(),
+    speedBands:()=>engine.speedBands(),
     sourceCount:()=>sources.length
   };
 }
