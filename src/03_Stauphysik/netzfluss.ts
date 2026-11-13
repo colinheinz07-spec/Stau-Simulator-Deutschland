@@ -70,7 +70,8 @@ export class NetworkFlowEngine {
         throw Error('Fahrbeziehung ohne wirklichen OSM-Knoten: '+movement.incomingEdgeId+
           ' → '+movement.outgoingEdgeId);
       incoming.add(to.edge.id);
-      const weight=to.edge.kind==='mainline'?6:to.edge.kind==='ramp'?2:1;
+      // Same ordinary AS split as the local solver: ~7%, not 25%.
+      const weight=to.edge.kind==='mainline'?20:to.edge.kind==='ramp'?1.5:1;
       const arr=this.moves.get(from.edge.id)??[];
       arr.push({toId:to.edge.id,capacityVph:movement.capacityVph,weight});
       this.moves.set(from.edge.id,arr);
@@ -167,19 +168,26 @@ export class NetworkFlowEngine {
       for(let i=0;i<vehicles.length;i++){
         const a=i*lengthM,b=(i+1)*lengthM;
         let capacity=edge.capacityPerLaneVph*edge.lanes;
-        if(corridor.blockedEdgeIds.has(id))capacity=0;
-        else{
-          const closed=new Set<number>();
-          for(const event of affecting)if(event.fromM<b&&event.toM>a){
-            if(event.kind==='closure'){capacity=0;break}
-            for(const lane of event.closedLanes)closed.add(lane);
+        let forbiddenEntry=false;
+        const closed=new Set<number>();
+        for(const event of affecting)if(event.fromM<b&&event.toM>a){
+          if(event.kind==='closure'){
+            // A planned road closure is an ENTRY ban, not a roadblock:
+            // cars already inside can evacuate at their normal discharge.
+            if(event.fromM>=a-.001&&event.fromM<b+.001)
+              forbiddenEntry=true;
+            continue;
           }
-          if(capacity>0)capacity=Math.max(0,edge.lanes-closed.size)*edge.capacityPerLaneVph;
+          for(const lane of event.closedLanes)closed.add(lane);
         }
+        if(closed.size)
+          capacity=Math.max(0,edge.lanes-closed.size)*edge.capacityPerLaneVph;
         const cap=capacity*dt/3600;
         outs[i]=Math.min(vehicles[i]!,cap,vehicles[i]!*freeTravelFraction);
         const room=Math.max(0,jamCellVehicles-vehicles[i]!);
-        ins[i]=Math.min(room,cap,room*waveFraction);
+        // Corridor closures are enforced at real directed boundaries below.
+        // Do not prevent exiting a closed OSM Way into the next closed Way.
+        ins[i]=forbiddenEntry?0:Math.min(room,cap,room*waveFraction);
       }
       send.set(id,outs);receive.set(id,ins);delta.set(id,changes);
     }
@@ -202,7 +210,8 @@ export class NetworkFlowEngine {
       const available=out[out.length-1]!;
       if(available<=0)continue;
       const choices=(this.moves.get(id)??[]).filter(m=>
-        !corridor.blockedEdgeIds.has(m.toId)&&
+        (!corridor.blockedEdgeIds.has(m.toId)||
+          corridor.blockedEdgeIds.has(id))&&
         !corridor.blockedMovementKeys.has(id+'=>'+m.toId)&&
         (receive.get(m.toId)?.[0]??0)>0
       );
@@ -247,7 +256,9 @@ export class NetworkFlowEngine {
     // Enter demand at external nodes only; space/capacity may keep arrivals
     // in a tracked source backlog. No vehicles appear in ramp middle sections.
     for(const id of this.sourceIds){
-      const demand=demandVph[id]??0;
+      // Do not generate new travel into a planned full corridor closure.
+      // Existing in-network vehicles and previously recorded queues remain.
+      const demand=corridor.blockedEdgeIds.has(id)?0:(demandVph[id]??0);
       if(!safeNonnegative(demand))throw Error('Ungültige Zuflussmenge: '+id);
       const created=demand*dt/3600;
       this.generated+=created;
