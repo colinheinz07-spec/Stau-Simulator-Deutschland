@@ -255,11 +255,116 @@ function createLegacyTrafficScenario(data){
     }
     return {spans,coveredLengthM:covered,truncated:remaining>.01};
   }
+  // Two REAL junction boundaries on the same directed carriageway define
+  // a motorway full closure, not the mouse position or a 200 m OSM Way.
+  // The chain uses original vertex-connected mainline links only.
+  const mainlineBack=new Map();
+  const landmarkCache=new Map();
+  for(const upstream of edges){
+    if(upstream.kind!=="mainline")continue;
+    for(const turn of upstream.links){
+      const downstream=edges[turn.to];
+      if(downstream.kind!=="mainline"||downstream.ref!==upstream.ref||
+        turn.fromCell!==upstream.n-1||turn.toCell!==0)continue;
+      const back=mainlineBack.get(downstream.id)||[];
+      if(!back.includes(upstream))back.push(upstream);
+      mainlineBack.set(downstream.id,back);
+    }
+  }
+  const mainlineNext=new Map();
+  for(const upstream of edges){
+    if(upstream.kind!=="mainline")continue;
+    mainlineNext.set(upstream.id,[...new Set(upstream.links
+      .filter(turn=>turn.fromCell===upstream.n-1&&turn.toCell===0)
+      .map(turn=>edges[turn.to])
+      .filter(next=>next.kind==="mainline"&&next.ref===upstream.ref))]);
+  }
+  function junctionsOn(edge){
+    if(landmarkCache.has(edge.id))return landmarkCache.get(edge.id);
+    const points=rowById.get(edge.id)[4],metres=pointMetres.get(edge.id);
+    const found=[];
+    if(edge.ref&&edge.kind==="mainline")for(const junction of data.junctions||[]){
+      if(junction[0]!==edge.ref||!Array.isArray(junction[3]))continue;
+      const p=junction[3],cos=Math.cos(p[0]*rad)*R*rad,lat=R*rad;
+      let best=Infinity,offset=0;
+      for(let i=1;i<points.length;i++){
+        const a=points[i-1],b=points[i];
+        const x=(b[1]-a[1])*cos,y=(b[0]-a[0])*lat;
+        const qx=(p[1]-a[1])*cos,qy=(p[0]-a[0])*lat;
+        const alpha=Math.max(0,Math.min(1,
+          (x*qx+y*qy)/Math.max(.001,x*x+y*y)));
+        const error=Math.hypot(qx-alpha*x,qy-alpha*y);
+        if(error<best){
+          best=error;offset=metres[i-1]+alpha*(metres[i]-metres[i-1]);
+        }
+      }
+      if(best<=250)found.push({offset,junction,best});
+    }
+    landmarkCache.set(edge.id,found);
+    return found;
+  }
+  function motorwayCorridor(edge,clickedM){
+    if(edge.kind!=="mainline"||!edge.ref||!(data.junctions||[]).length)
+      return null;
+    // Extend only through a uniquely connected directed motorway path.
+    const chain=[edge],seen=new Set([edge.id]);
+    for(let i=0;i<500;i++){
+      const first=chain[0],previous=(mainlineBack.get(first.id)||[])
+        .filter(x=>!seen.has(x.id));
+      if(previous.length!==1)break;
+      const candidate=previous[0];
+      chain.unshift(candidate);seen.add(candidate.id);
+      if(chain.reduce((s,e)=>s+e.lengthM,0)>75000)break;
+    }
+    for(let i=0;i<500;i++){
+      const last=chain.at(-1),forward=(mainlineNext.get(last.id)||[])
+        .filter(x=>!seen.has(x.id));
+      if(forward.length!==1)break;
+      const candidate=forward[0];
+      chain.push(candidate);seen.add(candidate.id);
+      if(chain.reduce((s,e)=>s+e.lengthM,0)>75000)break;
+    }
+    let advance=0,point=-1;
+    const marks=[],starts=new Map();
+    for(const road of chain){
+      starts.set(road.id,advance);
+      if(road.id===edge.id)point=advance+clickedM;
+      for(const hit of junctionsOn(road))
+        marks.push({...hit,position:advance+hit.offset});
+      advance+=road.lengthM;
+    }
+    if(point<0||marks.length<2)return null;
+    // The clicked road lies BETWEEN two successive AS/AK; preserve actual
+    // kilometrage of the direction including all OSM Way splits.
+    const left=marks.filter(m=>m.position<=point+.001)
+      .sort((a,b)=>b.position-a.position)[0];
+    const right=marks.filter(m=>m.position>point+.001)
+      .sort((a,b)=>a.position-b.position)[0];
+    if(!left||!right||left.junction[1]===right.junction[1]||
+      right.position-left.position<100)return null;
+    const spans=[];
+    for(const road of chain){
+      const begin=starts.get(road.id),end=begin+road.lengthM;
+      const fromM=Math.max(0,left.position-begin);
+      const toM=Math.min(road.lengthM,right.position-begin);
+      if(toM>fromM+.05&&end>=left.position&&begin<=right.position)
+        spans.push({edgeId:road.id,fromM,toM,gate:spans.length===0});
+    }
+    if(!spans.length)return null;
+    return {spans,coveredLengthM:spans.reduce((n,s)=>n+s.toM-s.fromM,0),
+      truncated:false,from:left.junction,to:right.junction,
+      fromLabel:left.junction[0]+" "+left.junction[1]+" "+left.junction[2],
+      toLabel:right.junction[0]+" "+right.junction[1]+" "+right.junction[2]};
+  }
   function recommendedClosureLength(id,offsetM=0){
     const edge=byId.get(id);
     if(!edge||edge.kind!=="mainline"||!edge.ref)return null;
     const candidates=(data.junctions||[]).filter(j=>j[0]===edge.ref);
     if(!candidates.length)return null;
+    const directed=motorwayCorridor(edge,Math.max(0,offsetM));
+    if(directed)return {lengthM:Math.round(directed.coveredLengthM),
+      label:directed.fromLabel+" – "+directed.toLabel,
+      fromRealJunction:true};
     const possible=trace(edge,Math.max(0,offsetM),100000);
     let passed=0,found=null;
     for(const span of possible.spans){
@@ -341,7 +446,22 @@ function createLegacyTrafficScenario(data){
     const spec={id,edgeId:edge.id,kind,closedLanes:[...closedLanes].sort((a,b)=>a-b),
       shoulder,hasShoulder,lengthM:length,offsetM:offset,speedKmh:speed,
       schedule: schedule?structuredCloneSchedule(schedule):null};
-    const traceResult=trace(edge,offset,length);
+    // In the real road snapshot a motorway closure ALWAYS covers the exact
+    // directed carriageway between the surrounding junctions. Ignore stale
+    // 200 m saved events and hand-entered fragment lengths.
+    const physical=kind==="closure"&&edge.kind==="mainline"?
+      motorwayCorridor(edge,offset):null;
+    if(kind==="closure"&&edge.kind==="mainline"&&
+      (data.junctions||[]).some(j=>j[0]===edge.ref)&&!physical)
+      throw Error("Vollsperrung nicht gesetzt: Zwei verbundene Anschlussstellen "+
+        "in dieser Fahrtrichtung konnten nicht sicher ermittelt werden.");
+    const traceResult=physical||trace(edge,offset,length);
+    if(physical){
+      const first=physical.spans[0],newStart=byId.get(first.edgeId);
+      spec.edgeId=newStart.id;spec.offsetM=first.fromM;
+      spec.lengthM=Math.max(1,Math.round(physical.coveredLengthM));
+      spec.closureFrom=physical.fromLabel;spec.closureTo=physical.toLabel;
+    }
     if(shoulder==="open"&&traceResult.spans.some(span=>
       byId.get(span.edgeId)?.shoulderTag==="no"))
       throw Error("Mindestens ein betroffener OSM-Abschnitt hat keinen Seitenstreifen");
