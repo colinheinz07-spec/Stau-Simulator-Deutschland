@@ -9,7 +9,7 @@ const NAMES={roadworks:"Baustelle",accident:"Unfall",breakdown:"Panne",closure:"
 const SYMBOLS={roadworks:"🚧",accident:"💥",breakdown:"🚛",closure:"⛔"};
 const STORAGE="stau-simulator-local-events-v2";
 function createOfflineEventEditor(options){
-  const {scenario,redraw,pause,closeDrawer,notify,focusRoad}=options;
+  const {scenario,redraw,pause,start,closeDrawer,notify,focusRoad}=options;
   const calendar=global.StauEventSchedule;
   if(!calendar)throw Error("Kalender für Ereignisse fehlt");
   const form=$("event-form"),kind=$("ev-kind"),lanes=$("ev-lanes");
@@ -219,6 +219,14 @@ function createOfflineEventEditor(options){
       " von "+result.lengthM+" m topologisch eindeutig nutzbar.":
       "Ereignis gespeichert: "+NAMES[result.kind]+
       " · "+result.lengthM+" m · "+calendar.label(result.schedule));
+    if(!scenario.reachable(result.edgeId)){
+      notify("Ereignis markiert, aber diese Strecke erhält aus dem lokalen Teilnetz "+
+        "noch keinen Modellzufluss. Kein künstlicher Stau.");
+    }else if(scenario.eventStatus(result.id)==="active"){
+      // A newly set incident cannot develop a queue in a paused model.
+      // Resume without clearing vehicles, clock, or other events.
+      start?.();
+    }
   }
   function onRoadSelected(road,offsetM=0){
     current=road;currentOffset=Math.max(0,Math.min(road.meters-.001,offsetM));
