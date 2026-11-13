@@ -37,6 +37,7 @@ jobs:
           node --check web/bootstrap.js
           node --check web/legacy-canvas.js
           node --check web/legacy-geometry.js
+          node --check web/traffic-reference.js
           node --check web/offline-traffic.js
           node --check web/event-schedule.js
           node --check web/offline-event-editor.js
@@ -66,7 +67,7 @@ jobs:
       - name: Karte und echte Daten als statische Webseite zusammenstellen
         run: |
           mkdir -p _site/data
-          cp web/index.html web/styles.css web/app.js web/network-loader.js web/simulation-controller.js web/bootstrap.js web/legacy-canvas.js web/legacy-geometry.js web/offline-traffic.js web/event-schedule.js web/offline-event-editor.js _site/
+          cp web/index.html web/styles.css web/app.js web/network-loader.js web/simulation-controller.js web/bootstrap.js web/legacy-canvas.js web/legacy-geometry.js web/traffic-reference.js web/offline-traffic.js web/event-schedule.js web/offline-event-editor.js _site/
           cp -R dist _site/dist
           touch _site/.nojekyll
           if [[ "${{ steps.osm_build.outcome }}" == "success" && "${{ steps.osm_audit.outcome }}" == "success" ]]; then
