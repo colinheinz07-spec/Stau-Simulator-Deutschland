@@ -362,50 +362,10 @@ function createLegacyTrafficScenario(data){
       toLabel:right.junction[0]+" "+right.junction[1]+" "+right.junction[2]};
   }
   function recommendedClosureLength(id,offsetM=0){
-    const edge=byId.get(id);
-    if(!edge||edge.kind!=="mainline"||!edge.ref)return null;
-    const candidates=(data.junctions||[]).filter(j=>j[0]===edge.ref);
-    if(!candidates.length)return null;
-    const directed=motorwayCorridor(edge,Math.max(0,offsetM));
-    if(directed)return {lengthM:Math.round(directed.coveredLengthM),
-      label:directed.fromLabel+" – "+directed.toLabel,
-      fromRealJunction:true};
-    const possible=trace(edge,Math.max(0,offsetM),100000);
-    let passed=0,found=null;
-    for(const span of possible.spans){
-      const road=rowById.get(span.edgeId),points=road[4];
-      const cum=pointMetres.get(span.edgeId);
-      for(const junction of candidates){
-        const center=junction[3];
-        if(!Array.isArray(center))continue;
-        const scale=Math.cos(center[0]*rad)*111194,latScale=111194;
-        let bestDistance=Infinity,metresAlong=0;
-        for(let k=1;k<points.length;k++){
-          const left=points[k-1],right=points[k];
-          const x=(right[1]-left[1])*scale,
-            y=(right[0]-left[0])*latScale;
-          const px=(center[1]-left[1])*scale,
-            py=(center[0]-left[0])*latScale;
-          const t=Math.max(0,Math.min(1,
-            (x*px+y*py)/Math.max(.001,x*x+y*y)));
-          const distance=Math.hypot(px-t*x,py-t*y);
-          if(distance<bestDistance){
-            bestDistance=distance;
-            metresAlong=cum[k-1]+t*(cum[k]-cum[k-1]);
-          }
-        }
-        if(bestDistance>600||
-          metresAlong<span.fromM-.1||metresAlong>span.toM+.1)continue;
-        const distance=passed+metresAlong-span.fromM;
-        if(distance<350)continue; // selected AS itself, not the next AS
-        if(!found||distance<found.distance)
-          found={distance,junction};
-      }
-      passed+=span.toM-span.fromM;
-    }
-    return found?{lengthM:Math.round(found.distance),
-      label:"bis "+found.junction[0]+" "+found.junction[1]+" "+
-        found.junction[2],fromRealJunction:true}:null;
+    const road=byId.get(id),corridor=road&&motorwayCorridor(road,offsetM);
+    return corridor?{lengthM:Math.round(corridor.coveredLengthM),
+      label:corridor.fromLabel+" – "+corridor.toLabel,
+      fromRealJunction:true}:null;
   }
   function checkedEvent(raw){
     if(!raw||typeof raw!=="object")throw Error("Ereignisdaten fehlen");
@@ -750,6 +710,22 @@ function createLegacyTrafficScenario(data){
     }
     return Infinity;
   }
+  function blockedMovement(from,link){
+    updateEffects();
+    const target=edges[link.to];
+    if(!target)return false;
+    const toEffects=activeEffects.get(target.id)||NO_EFFECTS;
+    if(!toEffects.length)return false;
+    const upstream=activeEffects.get(from.id)||NO_EFFECTS;
+    return toEffects.some(item=>{
+      const buffer=item.event.kind==="closure"?140:0;
+      if(link.toM<item.fromM-buffer||link.toM>=item.toM-.05)return false;
+      if(item.event.kind!=="closure"&&
+        (item.event.closedLanes.length!==target.lanes||
+        item.event.shoulder==="open"))return false;
+      return !upstream.some(inside=>inside.event.id===item.event.id);
+    });
+  }
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
     updateEffects();
@@ -832,18 +808,7 @@ function createLegacyTrafficScenario(data){
         for(const link of edge.linksFrom[k]){
           if(receive[link.to][link.toCell]<=0)continue;
           const target=edges[link.to];
-          const targetM=link.toM;
-          const toEffects=activeEffects.get(target.id)||NO_EFFECTS;
-          const blocked=toEffects.filter(item=>
-            targetM>=item.fromM-140&&targetM<item.toM-.05&&
-            (item.event.kind==="closure"||
-              item.event.closedLanes.length===target.lanes&&
-              item.event.shoulder!=="open"));
-          if(blocked.length){
-            const upstream=activeEffects.get(edge.id)||[];
-            if(!blocked.some(item=>upstream.some(from=>
-              from.event.id===item.event.id)))continue;
-          }
+          if(blockedMovement(edge,link))continue;
           options.push(link);
         }
         if(!options.length)continue;
@@ -982,6 +947,11 @@ function createLegacyTrafficScenario(data){
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
     recommendedClosureLength,
+    movementBlocked:(fromId,toId)=>{
+      const from=byId.get(fromId);
+      return !!from&&from.links.some(link=>edges[link.to].id===toId&&
+        blockedMovement(from,link));
+    },
     incomingCount:id=>byId.get(id)?.incoming??0,
     entryIncomingCount:id=>byId.get(id)?.incomingAtStart??0,
     sourceIds:()=>sources.map(x=>x.id),
