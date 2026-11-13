@@ -73,7 +73,7 @@ async function startLegacyCanvas(existingMap=null){
   coverage.querySelector("b").textContent="Autobahnnetz · lokales Verkehrsmodell";
   const note=coverage.querySelector("small");
   if(note)note.textContent="OSM-Altbestand · "+format(scenario.reachableCount())+
-    " von "+format(scenario.edgeCount())+" Fahrwegen modelliert";
+    " von "+format(scenario.edgeCount())+" Fahrwegen mit simuliertem Zufluss";
   const info=$("map-bottom-info");
   if(info)info.hidden=true;
   const disclaimer=document.querySelector(".legend + .disclaimer");
@@ -238,16 +238,8 @@ async function startLegacyCanvas(existingMap=null){
       return;
     }
     if(phase==="speeds"){
-      // No model flow is NOT evidence of free-flow. Show still-visible
-      // but uncalibrated OSM ways in muted blue-grey, never false green.
-      context.beginPath();
-      let unmodelled=0;
-      for(const road of view)if(!scenario.reachable(road.id)){
-        appendRoad(road,scale);unmodelled++;
-      }
-      if(unmodelled){
-        context.lineWidth=line;context.strokeStyle="#8095a4";context.stroke();
-      }
+      // All OSM highways use the same normal green base. The current
+      // source model coverage never changes the physical road colour.
       // Draw all green roads BEFORE all slowdown bands. Previously green
       // ramps could paint over an actual red mainline queue at an interchange.
       for(const state of ["slow","jam","standstill"]){
@@ -392,24 +384,17 @@ async function startLegacyCanvas(existingMap=null){
       const scale=2**zoom;
       context.lineJoin="round";context.lineCap="round";
       const layers=[{roads:mainlines,
-        visible:mainlines.filter(road=>road!==selected&&inView(road,scale)),
+        visible:mainlines.filter(road=>inView(road,scale)),
         line:clamp(3.5+(zoom-10)*.65,2.2,7)}];
       if(zoom>=7.6)layers.push({roads:ramps,
-        visible:ramps.filter(road=>road!==selected&&inView(road,scale)),
+        visible:ramps.filter(road=>inView(road,scale)),
         line:clamp(1.5+(zoom-10)*.25,1,3.8)});
       // Two cheap batched background strokes per layer, followed by real
       // queue overlays and closures; never hide red beneath later green.
       for(const phase of ["base","speeds","closed"])
         for(const layer of layers)
           strokeGroup(layer.visible,layer.line,scale,phase);
-      for(const layer of layers){
-        if(selected&&layer.roads.includes(selected)&&inView(selected,scale)){
-          context.beginPath();
-          appendRoad(selected,scale);
-          context.lineWidth=layer.line+2;context.strokeStyle="#132c3a";context.stroke();
-          context.lineWidth=layer.line;context.strokeStyle="#ffe37c";context.stroke();
-        }
-      }
+      // Never redraw a selected Way over a full red/white closure.
       drawLabels();
       drawJamLabels();
       drawEventMarkers();
@@ -567,7 +552,7 @@ async function startLegacyCanvas(existingMap=null){
     $("map-status").textContent="Modell "+Math.floor(sec/60)+" min · "+
       format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz · "+
       format(Math.round(stats.waitingOutsideSources))+" vor Netzeinfahrten · "+
-      format(scenario.reachableCount())+"/"+format(scenario.edgeCount())+" Abschnitte angebunden";
+      format(scenario.reachableCount())+"/"+format(scenario.edgeCount())+" Abschnitte mit Modellzufluss";
     if(eventEditor)eventEditor.updateStatus();
     const timeMarker=$("sim-model-date");
     if(timeMarker&&window.StauEventSchedule)
