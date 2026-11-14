@@ -1090,13 +1090,14 @@ function createLegacyTrafficScenario(data){
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
     updateEffects();
+    buildDetourPlans();
     const anyClosureActive=[...activeEffects.values()].some(items=>
       items.some(item=>item.event.kind==="closure"));
     enteredStep.fill(0);departedStep.fill(0);
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],n=edge.n,stock=edge.stock;
       const s=send[j],r=receive[j],d=delta[j];
-      d.fill(0);
+      d.fill(0);divertDelta[j].fill(0);
       // w=32 km/h keeps the receiving branch consistent with 2200 Kfz/h/lane:
       // 22 km/h would cap free-flow receiving below the user-defined capacity.
       const wave=Math.min(1,(22/3.6)*dt/edge.cellLength);
@@ -1177,9 +1178,9 @@ function createLegacyTrafficScenario(data){
     // space, while exit splits share the originating cell's sending capacity.
     // This fixes mid-Way motorway junctions without creating new road geometry.
     const proposed=new Map(),splitSources=[],boundaryUsed=new Map();
-    const push=(to,toCell,from,fromCell,want)=>{
+    const push=(to,toCell,from,fromCell,want,mark=false)=>{
       const key=to+":"+toCell,arr=proposed.get(key)||[];
-      arr.push({to,toCell,from,fromCell,want});
+      arr.push({to,toCell,from,fromCell,want,mark});
       proposed.set(key,arr);
     };
     for(let j=0;j<edges.length;j++){
@@ -1211,7 +1212,7 @@ function createLegacyTrafficScenario(data){
         // previous 7-90% ramp split sent residual traffic into the barrier.
         // A saturated exit is still a valid destination: motorists must queue
         // for its receiving capacity, not skip past it into the closure.
-        let hasLegalClosureDetour=false;
+        let hasLegalClosureDetour=false,diversionIntent=0;
         if(edge.kind==="mainline"&&legalTurns.some(link=>
           edges[link.to].kind==="ramp"||
           edges[link.to].kind==="mainline"&&edges[link.to].ref!==edge.ref)){
@@ -1230,6 +1231,7 @@ function createLegacyTrafficScenario(data){
             });
           if(alternatives.length){
             hasLegalClosureDetour=Number.isFinite(distance);
+            diversionIntent=share;
             const alternateKey=new Set(alternatives.map(link=>
               link.to+":"+link.toCell));
             const rawExitWeight=alternatives.reduce((n,link)=>n+link.weight,0);
@@ -1254,17 +1256,36 @@ function createLegacyTrafficScenario(data){
           }
           }
         }
+        // Only tag newly diverted exit traffic when its real OSM ramp is
+        // connected to a verified downstream on-ramp return. Ordinary exits
+        // are counted as trips ending outside this motorway extract.
+        for(const opt of options)
+          if(opt.to!==j&&diversionIntent>0&&exitDetours.has(opt.to))
+            opt.mark=true;
         if(!options.length&&!outsideWeight)continue;
         if(options.length>1&&hasLegalClosureDetour)
           splitSources.push({from:j,cell:k,available,options});
         const sum=options.reduce((n,x)=>n+x.weight,0)+outsideWeight;
         for(const opt of options)
-          push(opt.to,opt.toCell,j,k,available*opt.weight/sum);
+          push(opt.to,opt.toCell,j,k,available*opt.weight/sum,opt.mark===true);
         if(outsideWeight){
           const leaving=available*outsideWeight/sum;
           delta[j][k]-=leaving;
           departedStep[j]+=leaving;
-          exited+=leaving;
+          // Tag accounting follows exactly the exiting subflow. No vehicle
+          // is re-created at an on-ramp: the same fraction stays conserved
+          // in the off-network travel inventory until reaching it.
+          const tagged=edge.stock[k]>1e-9?
+            Math.min(leaving,leaving*edge.divertStock[k]/edge.stock[k]):0;
+          divertDelta[j][k]-=tagged;
+          const plan=terminalDetours.get(j);
+          const rerouted=plan?tagged:0;
+          exited+=leaving-rerouted;
+          if(rerouted>0){
+            outsideVehicles+=rerouted;detouredVehicles+=rerouted;
+            detourTrips.push({reentry:plan.reentry,
+              readyAt:elapsed+dt+plan.durationS,vehicles:rerouted});
+          }
           const key=j+":"+k;
           boundaryUsed.set(key,(boundaryUsed.get(key)||0)+leaving);
         }
@@ -1278,6 +1299,11 @@ function createLegacyTrafficScenario(data){
       const ratio=required>accepting?accepting/required:1;
       for(const req of requests){
         const amount=req.want*ratio;
+        const fromEdge=edges[req.from],stock=fromEdge.stock[req.fromCell];
+        const originallyTagged=stock>1e-9?
+          amount*Math.min(1,fromEdge.divertStock[req.fromCell]/stock):0;
+        divertDelta[req.from][req.fromCell]-=originallyTagged;
+        divertDelta[to][toCell]+=req.mark?amount:originallyTagged;
         delta[req.from][req.fromCell]-=amount;
         delta[to][toCell]+=amount;
         const fromKey=req.from+":"+req.fromCell,toKey=to+":"+toCell;
@@ -1305,6 +1331,11 @@ function createLegacyTrafficScenario(data){
         const spare=receive[opt.to][opt.toCell]-(accepted.get(toKey)||0);
         if(spare<=1e-6)continue;
         const moved=Math.min(remaining,spare);
+        const sourceEdge=edges[split.from],old=sourceEdge.stock[split.cell];
+        const originallyTagged=old>1e-9?
+          moved*Math.min(1,sourceEdge.divertStock[split.cell]/old):0;
+        divertDelta[split.from][split.cell]-=originallyTagged;
+        divertDelta[opt.to][opt.toCell]+=opt.mark?moved:originallyTagged;
         delta[split.from][split.cell]-=moved;
         delta[opt.to][opt.toCell]+=moved;
         if(opt.to!==split.from){
@@ -1315,6 +1346,28 @@ function createLegacyTrafficScenario(data){
         remaining-=moved;
         if(remaining<=1e-6)break;
       }
+    }
+    // An off-network journey takes time. Only after that trip reaches its
+    // due time may it rejoin through an existing directed OSM on-ramp,
+    // subject to exactly the same physical receiving capacity as local cars.
+    // An overloaded re-entry queues OFF the motorway, rather than teleporting
+    // vehicles into full cells or multiplying the model inventory.
+    for(let i=detourTrips.length-1;i>=0;i--){
+      const trip=detourTrips[i];
+      if(trip.readyAt>elapsed+dt)continue;
+      const road=edges[trip.reentry];
+      const closed=(activeEffects.get(road.id)||NO_EFFECTS).some(x=>
+        x.event.kind==="closure"&&x.gate&&x.fromM<road.cellLength);
+      if(closed)continue;
+      const current=Math.max(0,delta[road.index][0]);
+      const room=Math.max(0,receive[road.index][0]-current);
+      const admitted=Math.min(trip.vehicles,room);
+      if(admitted<=0)continue;
+      delta[road.index][0]+=admitted;
+      enteredStep[road.index]+=admitted;
+      outsideVehicles-=admitted;returnedVehicles+=admitted;
+      trip.vehicles-=admitted;
+      if(trip.vehicles<1e-7)detourTrips.splice(i,1);
     }
     // Network boundaries were discharged as explicit movements above.
     // No internal phantom demand: source edges must be actual directed
@@ -1331,7 +1384,8 @@ function createLegacyTrafficScenario(data){
         sourceFactor(edge,clockMs())*dt/3600;
       generated+=offered;
       const available=edge.backlog+offered;
-      const admitted=Math.min(available,receive[j][0]);
+      const admitted=Math.min(available,
+        Math.max(0,receive[j][0]-Math.max(0,delta[j][0])));
       delta[j][0]+=admitted;
       enteredStep[j]+=admitted;
       edge.backlog=Math.max(0,available-admitted);
@@ -1352,6 +1406,8 @@ function createLegacyTrafficScenario(data){
         if(after < -1e-7||after>edge.jamPerCell+1e-6)
           throw Error("Ungültiger Fahrzeugbestand auf "+edge.id);
         edge.stock[k]=Math.max(0,after);
+        const diverted=edge.divertStock[k]+divertDelta[j][k];
+        edge.divertStock[k]=Math.min(edge.stock[k],Math.max(0,diverted));
       }
       // 2-minute exponential flow meter for inspectable scenario plausibility.
       edge.enteredVph+=alpha*(enteredStep[j]*3600/dt-edge.enteredVph);
@@ -1434,6 +1490,10 @@ function createLegacyTrafficScenario(data){
     normalizedReversedWays:()=>[...reversedWays],
     migrateLegacyEvent,
     diversionShare,
+    detourPlans:()=>[...exitDetours.values()].map(plan=>({
+      terminalEdgeId:edges[plan.terminal].id,
+      reentryEdgeId:edges[plan.reentry].id,
+      delaySeconds:plan.durationS,closureId:plan.closureId})),
     closureDistanceAhead:(id,offsetM=0,maxDistance=16000)=>{
       const edge=byId.get(id);
       return edge?closureDistanceAhead(edge,offsetM,maxDistance):Infinity;
