@@ -416,12 +416,16 @@ async function startLegacyCanvas(existingMap=null){
           placed.some(p=>Math.hypot(p[0]-x,p[1]-y)<25))continue;
         placed.push([x,y]);
         const begin=pin.type==="start";
-        context.beginPath();
-        context.arc(x,y,13,0,Math.PI*2);
-        context.fillStyle="#fff";context.fill();
-        context.beginPath();
-        context.arc(x,y,10,0,Math.PI*2);
-        context.fillStyle=begin?"#aa263b":"#178052";context.fill();
+        if(typeof context.arc==="function"&&typeof context.fill==="function"){
+          context.beginPath();context.arc(x,y,13,0,Math.PI*2);
+          context.fillStyle="#fff";context.fill();
+          context.beginPath();context.arc(x,y,10,0,Math.PI*2);
+          context.fillStyle=begin?"#aa263b":"#178052";context.fill();
+        }else{
+          context.fillStyle="#fff";context.fillRect(x-13,y-13,26,26);
+          context.fillStyle=begin?"#aa263b":"#178052";
+          context.fillRect(x-10,y-10,20,20);
+        }
         context.font="bold 13px system-ui,Apple Color Emoji,sans-serif";
         context.fillStyle="#fff";
         context.fillText(begin?"⛔":"↗",x,y+5,20);
