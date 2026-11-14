@@ -126,12 +126,16 @@ function createOfflineEventEditor(options){
       status.textContent="Gesamte Vollsperrung: "+nextClosureJunction.label+
         ". BEIDE AS-Grenzen automatisch verbindlich · "+
         "ausschließlich hineinführende Zufahrten werden mitgesperrt.";
+    }else if(isClosure&&current?.kind==="ramp"&&nextClosureJunction?.rampOnly){
+      status.textContent="Nur diese Auf-/Abfahrt ("+
+        nextClosureJunction.lengthM+" m) wird gesperrt. "+
+        "Die Autobahn-Hauptfahrbahn und andere Rampen bleiben offen.";
     }else if(isRoad){
       status.textContent="Kein sicherer Abschnitt zwischen zwei Anschlussstellen "+
         "ermittelbar. Eine Teilstück-Sperrung wird hier NICHT stillschweigend gesetzt.";
     }else if(isClosure){
-      status.textContent="Bitte eine Autobahn-Hauptfahrbahn auswählen. "+
-        "Eine einzelne Rampe kann nicht als Vollsperrungsabschnitt ausgewählt werden.";
+      status.textContent="Der ausgewählte Fahrweg ist nicht eindeutig verbunden; "+
+        "die Vollsperrung wird hier nicht gespeichert.";
     }else{
       status.textContent="Beginn am markierten OSM-Fahrweg ("+
         Math.round(currentOffset)+" m); Umfang nach eindeutig "+
@@ -228,7 +232,8 @@ function createOfflineEventEditor(options){
       const range=ev.kind==="closure"&&ev.closureFrom&&ev.closureTo?
         ev.closureFrom+" → "+ev.closureTo+" · ":"";
       info.textContent=range+"Sperrung: "+closure+
-        (ev.kind==="closure"?" · Abschnitt AS–AS":
+        (ev.kind==="closure"?(ev.closureFrom?" · Abschnitt AS–AS":
+          " · Nur ausgewählte Rampe"):
           " · "+ev.lengthM+" m · "+ev.speedKmh+" km/h") + " · "+
         (ev.shoulder==="open"?"Standstreifen freigegeben · ":"")+
         calendar.label(ev.schedule)+(ev.truncated?
@@ -296,8 +301,10 @@ function createOfflineEventEditor(options){
     try{
       clearFailure();
       const kindValue=kind.value,selected=selectedLanes();
-      if(kindValue==="closure"&&(!nextClosureJunction||current.kind!=="mainline"))
-        throw Error("Vollsperrung benötigt zwei verbundene Anschlussstellen auf einer Hauptfahrbahn.");
+      if(kindValue==="closure"&&!nextClosureJunction)
+        throw Error(current.kind==="mainline"?
+          "Vollsperrung benötigt zwei verbundene Anschlussstellen auf der Hauptfahrbahn.":
+          "Vollsperrung benötigt eine eindeutig verbundene Auf-/Abfahrt.");
       const all=Array.from({length:current.lanes},(_,i)=>i);
       const blocked=kindValue==="closure"?all:selected;
       const record={
