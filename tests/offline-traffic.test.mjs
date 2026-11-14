@@ -726,7 +726,9 @@ test("A3 Köln-Ost to Heumar motorway closure covers all connected Ways and feed
     speedKmh:0,shoulder:"normal",hasShoulder:false});
   assert.match(event.closureFrom,/A3 27 AK Köln-Ost/);
   assert.match(event.closureTo,/A3 28 AD Köln-Heumar/);
-  assert.ok(event.coveredLengthM>3500&&event.coveredLengthM<4300);
+  assert.ok(event.coveredLengthM>3500&&event.coveredLengthM<4300,
+    "observed physical closure length: "+Math.round(event.coveredLengthM)+
+    " metres; "+event.closureFrom+" -> "+event.closureTo);
   const closedWays=w.STAU_LEGACY_GEOMETRY.roads
     .filter(row=>row[1]==="mainline"&&sim.closureBands(row[0]).length);
   const closedRamps=w.STAU_LEGACY_GEOMETRY.roads
