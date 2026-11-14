@@ -544,15 +544,20 @@ function createLegacyTrafficScenario(data){
           onMerges.push(base+turn.toM);
       }
     }
-    const nearestGate=(candidates,mark,lower,upper)=>{
-      const viable=candidates.filter(at=>
-        at>=Math.max(0,mark-1500)&&at<=mark+1500&&
-        at>lower&&at<upper);
-      viable.sort((a,b)=>Math.abs(a-mark)-Math.abs(b-mark)||a-b);
-      return viable[0];
-    };
-    const startGate=nearestGate(offSplits,left.position,-1,point);
-    const endGate=nearestGate(onMerges,right.position,point,advance+1);
+    // Choose gates by ORDER IN THE DIRECTED ROAD GRAPH, never by a
+    // 1.5 km circle around the approximate AS/AD marker.
+    // An interchange may stretch several kilometres (AD Dernbach: the
+    // Cologne-bound A3->A48 off-ramp branches well BEFORE the AD label).
+    // The final usable exit before the tapped corridor is its entry gate;
+    // the first reentry after that corridor is its exit gate. No arbitrary
+    // restriction based on the distance between motorway junctions.
+    const priorMark=ix>=2?ordered[ix-2].position:-Infinity;
+    const followingMark=ix+1<ordered.length?
+      ordered[ix+1].position:Infinity;
+    const startGate=offSplits.filter(at=>at>=priorMark&&at<=point+.05)
+      .sort((a,b)=>b-a)[0];
+    const endGate=onMerges.filter(at=>at>=point-.05&&at<=followingMark)
+      .sort((a,b)=>a-b)[0];
     // Never let a guessed ramp gate reverse the tapped carriageway.
     const fromPosition=startGate??left.position;
     const toPosition=endGate??right.position;
