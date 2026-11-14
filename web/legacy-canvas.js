@@ -104,7 +104,7 @@ async function startLegacyCanvas(existingMap=null){
   const tiles=new Map();
   let width=0,height=0,zoom=8,center=merc([50.5,7.5]),
     request=null,visible=$("toggle-network").checked,
-    labels=junctionToggle.checked, selected=null;
+    labels=junctionToggle.checked, selected=null,selectedOffsetM=0;
   function requestDraw(){
     if(request!==null)return;
     request=requestAnimationFrame(()=>{request=null;draw();});
@@ -477,10 +477,10 @@ async function startLegacyCanvas(existingMap=null){
     selection.classList.remove("open");
     selection.setAttribute("aria-hidden","true");
     backdrop.hidden=true;
-    selected=null;requestDraw();
+    selected=null;selectedOffsetM=0;requestDraw();
   }
   function open(s,offsetM=0){
-    selected=s;
+    selected=s;selectedOffsetM=offsetM;
     eventEditor?.onRoadSelected(s,offsetM);
     $("detail-heading").textContent=s.name||s.ref||"Autobahnabschnitt";
     $("detail-type").textContent=s.kind==="ramp"?
@@ -490,11 +490,11 @@ async function startLegacyCanvas(existingMap=null){
       (s.meters/1000).toLocaleString("de-DE",{maximumFractionDigits:2})+" km":
       Math.round(s.meters)+" m";
     const modelSpeed=scenario.speed(s.id);
-    const activity=scenario.edgeActivity?.(s.id);
+    const activity=scenario.edgeActivity?.(s.id,offsetM);
     const flowInfo=$("detail-flow");
     if(flowInfo)flowInfo.textContent=!activity?.reachable?
       "Nicht mit Modellquellen verbunden":
-      "~"+Math.round(activity.enteredVph).toLocaleString("de-DE")+" Kfz/h · Modell";
+      "~"+Math.round(activity.sectionVph).toLocaleString("de-DE")+" Kfz/h · hier (2-Min.-Mittel, Modell)";
     $("detail-speed").textContent=!scenario.reachable(s.id)?
       "Teilnetz ohne Modellzufluss":modelSpeed===null?"Keine Modellwerte":
       Math.round(modelSpeed)+" km/h · berechnet";
@@ -614,9 +614,9 @@ async function startLegacyCanvas(existingMap=null){
       timeMarker.textContent="Modell-Datum: "+
         window.StauEventSchedule.localDateTime(scenario.clockMs()).replace("T"," ")+" Uhr";
     if(selected){
-      const flow=scenario.edgeActivity?.(selected.id);
+      const flow=scenario.edgeActivity?.(selected.id,selectedOffsetM);
       if(flow&&$("detail-flow"))$("detail-flow").textContent=flow.reachable?
-        "~"+Math.round(flow.enteredVph).toLocaleString("de-DE")+" Kfz/h · Modell":
+        "~"+Math.round(flow.sectionVph).toLocaleString("de-DE")+" Kfz/h · hier (2-Min.-Mittel, Modell)":
         "Nicht mit Modellquellen verbunden";
       const modelSpeed=scenario.speed(selected.id);
       if(modelSpeed!==null&&scenario.reachable(selected.id))
