@@ -1012,8 +1012,13 @@ function createLegacyTrafficScenario(data){
           if(ev.shoulder==="open"&&ev.hasShoulder)shoulderOpen=true;
           if(ev.shoulder==="blocked")shoulderBlocked=true;
           if(ev.speedKmh>0)permitted=Math.min(permitted,ev.speedKmh);
-          if((ev.kind==="closure"||ev.closedLanes.length===edge.lanes&&
-            ev.shoulder!=="open")&&item.gate&&item.fromM>=a-.001&&item.fromM<b+.001)
+          // Administrative closures block new arrivals across the precise
+          // boundary. They must NOT block the receiving room for vehicles
+          // already inside that same closure (including closed feeder ramps).
+          // Real full-width incidents still block the physical cell gate.
+          if(ev.kind!=="closure"&&ev.closedLanes.length===edge.lanes&&
+            ev.shoulder!=="open"&&item.gate&&
+            item.fromM>=a-.001&&item.fromM<b+.001)
             blockedAtGate=true;
         }
         if(shoulderBlocked)shoulderOpen=false;
@@ -1076,7 +1081,14 @@ function createLegacyTrafficScenario(data){
         const available=out[k];
         if(available<=0)continue;
         let options=[];
-        if(k<edge.n-1&&receive[j][k+1]>0)
+        // Never cross from an unclosed cell into a newly closed physical
+        // interval of this same long OSM Way. Receiving inside the closure
+        // remains available exclusively for pre-existing interior vehicles.
+        const crossesClosureGate=(activeEffects.get(edge.id)||NO_EFFECTS)
+          .some(x=>x.event.kind==="closure"&&x.gate&&
+            x.fromM>k*edge.cellLength+.001&&
+            x.fromM<=(k+1)*edge.cellLength+.001);
+        if(k<edge.n-1&&receive[j][k+1]>0&&!crossesClosureGate)
           options.push({to:j,toCell:k+1,weight:20});
         const legalTurns=edge.linksFrom[k].filter(link=>
           !blockedMovement(edge,link));
