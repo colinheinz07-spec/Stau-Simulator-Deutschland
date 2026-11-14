@@ -534,12 +534,46 @@ function createLegacyTrafficScenario(data){
     if(!left||!right)return null;
     if(!right||left.junction[1]===right.junction[1]||
       right.position-left.position<100)return null;
+    // An AS centre is only a map LABEL, never the true legal closure gate.
+    // Move upstream boundary to the last usable off-ramp split, and the
+    // downstream boundary to the first actual on-ramp merge. This also
+    // ensures the downstream exit is INSIDE the closure, while the on-ramp
+    // directly behind it remains OPEN to returning traffic.
+    const offSplits=[],onMerges=[];
+    for(const main of chain){
+      const base=starts.get(main.id);
+      for(const turn of main.links)
+        if(edges[turn.to].kind==="ramp")
+          offSplits.push(base+turn.fromM);
+    }
+    for(const ramp of edges){
+      if(ramp.kind!=="ramp")continue;
+      for(const turn of ramp.links){
+        const target=edges[turn.to],base=starts.get(target.id);
+        if(target.kind==="mainline"&&base!==undefined)
+          onMerges.push(base+turn.toM);
+      }
+    }
+    const nearestGate=(candidates,mark,lower,upper)=>{
+      const viable=candidates.filter(at=>
+        at>=Math.max(0,mark-1500)&&at<=mark+1500&&
+        at>lower&&at<upper);
+      viable.sort((a,b)=>Math.abs(a-mark)-Math.abs(b-mark)||a-b);
+      return viable[0];
+    };
+    const startGate=nearestGate(offSplits,left.position,-1,point);
+    const endGate=nearestGate(onMerges,right.position,point,advance+1);
+    // Never let a guessed ramp gate reverse the tapped carriageway.
+    const fromPosition=startGate??left.position;
+    const toPosition=endGate??right.position;
+    if(fromPosition>=point||toPosition<=point||
+      toPosition-fromPosition<100)return null;
     const spans=[];
     for(const road of chain){
       const begin=starts.get(road.id),end=begin+road.lengthM;
-      const fromM=Math.max(0,left.position-begin);
-      const toM=Math.min(road.lengthM,right.position-begin);
-      if(toM>fromM+.05&&end>=left.position&&begin<=right.position)
+      const fromM=Math.max(0,fromPosition-begin);
+      const toM=Math.min(road.lengthM,toPosition-begin);
+      if(toM>fromM+.05&&end>=fromPosition&&begin<=toPosition)
         spans.push({edgeId:road.id,fromM,toM,gate:spans.length===0});
     }
     if(!spans.length)return null;
@@ -753,12 +787,30 @@ function createLegacyTrafficScenario(data){
           }
         }
       }
-      for(const id of ramps){
+      // Off-ramps whose physical diverge occurs INSIDE the already closed
+      // mainline interval are closed to new entering traffic too. In contrast,
+      // the last off-ramp immediately BEFORE the gate stays OPEN and the
+      // first reentry on-ramp just AFTER the gate stays OPEN.
+      const downstreamExits=new Set();
+      for(const mainSpan of record.spans){
+        const main=byId.get(mainSpan.edgeId);
+        if(main?.kind!=="mainline")continue;
+        for(const turn of main.links){
+          const next=edges[turn.to];
+          if(next.kind==="ramp"&&
+            turn.fromM>mainSpan.fromM+.3&&
+            turn.fromM<mainSpan.toM-.05)
+            downstreamExits.add(next.id);
+        }
+      }
+      for(const id of [...ramps,...downstreamExits]){
         const edge=byId.get(id);
         const list=byEdge.get(id)||[];
-        // Closing the entrance does not delete vehicles already on a ramp.
-        list.push({edgeId:id,fromM:0,toM:edge.lengthM,gate:true,
-          derivedRampClosure:true,event:record.spec});
+        // Cars already inside the administrative closure may still flow
+        // out; the receiving gate blocks only NEW arrivals.
+        if(!list.some(span=>span.event.id===record.spec.id))
+          list.push({edgeId:id,fromM:0,toM:edge.lengthM,gate:true,
+            derivedRampClosure:true,event:record.spec});
         byEdge.set(id,list);
       }
     }
