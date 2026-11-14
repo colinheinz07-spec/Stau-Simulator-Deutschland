@@ -174,7 +174,7 @@ test("last usable AS exit still forces diversion if the next full closure is ove
     ["approach","mainline","A3",3,
       [[50,7],[50,7.010],[50,7.430]],"",1],
     ["closed","mainline","A3",3,[[50,7.430],[50,7.450]],"",2],
-    ["beyond","mainline","A3",3,[[50,7.450],[50,7.490]],"",3],
+    ["beyond","mainline","A3",3,[[50,7.450],[50,7.460],[50,7.490]],"",3],
     ["off","ramp","A3",1,
       [[50,7.010],[50.005,7.012]],"AS 1 Weit davor · Abfahrt von A3",4],
     ["in","ramp","A3",1,
