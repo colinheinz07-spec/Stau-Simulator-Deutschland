@@ -969,10 +969,15 @@ function createLegacyTrafficScenario(data){
         if(remaining<=1e-6)break;
       }
     }
-    // Only a true graph sink can discharge vehicles.
+    // ONLY a successor at the physical DOWNSTREAM endpoint prevents exit.
+    // Before this fix, a 26-km motorway with an off-ramp at kilometre 3
+    // was considered "not a sink" even if the actual network ended at km 26.
+    // Its last cell filled indefinitely and generated severe PHANTOM queues.
     for(let j=0;j<edges.length;j++){
       const edge=edges[j];
-      if(edge.links.length)continue;
+      const hasThroughAtEnd=edge.links.some(link=>
+        link.fromM>=edge.lengthM-.1);
+      if(hasThroughAtEnd)continue;
       const moved=send[j][edge.n-1];
       delta[j][edge.n-1]-=moved;
       departedStep[j]+=moved;
