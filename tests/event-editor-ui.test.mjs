@@ -120,4 +120,9 @@ test("iPhone incident editor saves exact lanes, shoulder, recurrence and edit/re
   handlers.get(actions.children[1].id+":click")();
   assert.equal(scenario.listEvents().length,0);
   assert.equal(JSON.parse(storage.get("stau-simulator-local-events-v3")).length,0);
+  handlers.get("button-closure:click")();
+  assert.equal(element("ev-length-field").hidden,true,
+    "full closure must not show a manual length input");
+  assert.equal(element("ev-length").disabled,true);
+  assert.match(element("ev-coverage").textContent,/Anschlussstellen/);
 });
