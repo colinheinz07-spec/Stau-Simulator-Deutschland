@@ -36,6 +36,7 @@ export class NetworkFlowEngine {
   private readonly waveKmh:number;
   private readonly cells=new Map<string,CellEdge>();
   private readonly moves=new Map<string,Move[]>();
+  private readonly openBoundarySinks=new Set<string>();
   private readonly sourceIds:string[]=[];
   private readonly sourceBacklog=new Map<string,number>();
   private generated=0;
@@ -75,6 +76,23 @@ export class NetworkFlowEngine {
       const arr=this.moves.get(from.edge.id)??[];
       arr.push({toId:to.edge.id,capacityVph:movement.capacityVph,weight});
       this.moves.set(from.edge.id,arr);
+    }
+    // The OSM extract is a WINDOW into the motorway network, not a
+    // motorway termination. If only an off-ramp remains at its downstream
+    // cut, unrestricted through traffic must still leave the simulated map.
+    const leadsToMainline=(id:string,seen=new Set<string>(),depth=0):boolean=>{
+      if(depth>8||seen.has(id))return false;
+      const current=this.cells.get(id)?.edge;
+      if(!current)return false;
+      if(current.kind==='mainline')return true;
+      seen.add(id);
+      return (this.moves.get(id)??[]).some(move=>leadsToMainline(move.toId,seen,depth+1));
+    };
+    for(const [id,state] of this.cells){
+      const downstream=this.moves.get(id)??[];
+      if(!downstream.length || state.edge.kind==='mainline'&&
+        !downstream.some(move=>leadsToMainline(move.toId)))
+        this.openBoundarySinks.add(id);
     }
     for(const id of this.cells.keys()){
       if(!incoming.has(id)){
@@ -233,10 +251,18 @@ export class NetworkFlowEngine {
         !corridor.blockedMovementKeys.has(id+'=>'+m.toId)&&
         (receive.get(m.toId)?.[0]??0)>0
       );
-      // An edge with graph successors is never treated as a sink, even when
-      // every successor is closed or jammed; vehicles remain at its end.
-      if(choices.length===0)continue;
-      const weightSum=choices.reduce((a,m)=>a+m.weight,0);
+      // A real motorway may continue outside the mapped network even when
+      // the extract retains its last one-lane off-ramp. Give the external
+      // continuation a through-lane turn weight, not the ramp's capacity.
+      const outsideWeight=this.openBoundarySinks.has(id)?20:0;
+      if(choices.length===0&&!outsideWeight)continue;
+      const weightSum=choices.reduce((a,m)=>a+m.weight,0)+outsideWeight;
+      if(outsideWeight){
+        const leaving=available*outsideWeight/weightSum;
+        const change=delta.get(id)!;
+        change[change.length-1]=change[change.length-1]!-leaving;
+        this.exited+=leaving;
+      }
       for(const choice of choices){
         const proposed=available*choice.weight/weightSum;
         const limited=Math.min(proposed,
@@ -260,17 +286,7 @@ export class NetworkFlowEngine {
       const receivedChanges=delta.get(toId)!;
       receivedChanges[0]=receivedChanges[0]!+total;
     }
-    // Leave the simulated network only at an actual directed graph sink.
-    // If an outgoing ramp is blocked, this is NOT an exit.
-    for(const [id,state] of this.cells){
-      if((this.moves.get(id)?.length??0)>0)continue;
-      const outgoing=send.get(id)!;
-      const discharged=outgoing[outgoing.length-1]!;
-      const dischargeChanges=delta.get(id)!;
-      const last=state.vehicles.length-1;
-      dischargeChanges[last]=dischargeChanges[last]!-discharged;
-      this.exited+=discharged;
-    }
+    // External motorway exits and real dead-end ramps were allocated above.
     // Enter demand at external nodes only; space/capacity may keep arrivals
     // in a tracked source backlog. No vehicles appear in ramp middle sections.
     for(const id of this.sourceIds){
