@@ -306,6 +306,99 @@ test("closed A3 redirects arrivals to the actual preceding open exit while prese
   conservation(scenario.totals());
 });
 
+test("diversion grows from 45 minutes to full willingness at 240 minutes",async()=>{
+  const scenario=(await engine())(network());
+  assert.equal(scenario.diversionShare(0),0);
+  assert.equal(scenario.diversionShare(44.99),0);
+  assert.equal(scenario.diversionShare(45),0);
+  assert.ok(scenario.diversionShare(90)>0&&scenario.diversionShare(90)<.3);
+  assert.ok(scenario.diversionShare(150)>.45&&scenario.diversionShare(150)<.7);
+  assert.equal(scenario.diversionShare(240),1);
+  assert.equal(scenario.diversionShare(360),1);
+});
+
+test("full closure sends ALL approaching demand to a legal exit, with ramp congestion instead of illegal driving",async()=>{
+  const scenario=(await engine())({roads:[
+    ["up","mainline","A3",3,[[50,7],[50,7.012],[50,7.02]],"",11],
+    ["blocked","mainline","A3",3,[[50,7.02],[50,7.04]],"",12],
+    ["exit","ramp","A3",1,[[50,7.012],[50.006,7.019]],"AS Beispiel · Abfahrt",13]
+  ]});
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  for(let i=0;i<5;i++)scenario.advance(12);
+  scenario.setEvent({id:"full",edgeId:"blocked",kind:"closure",
+    closedLanes:[0,1,2],offsetM:0,lengthM:1200,speedKmh:0,
+    shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<28;i++)scenario.advance(12);
+  assert.ok(scenario.edgeActivity("exit").enteredVph>500,
+    "open ramp remains a usable capacity-constrained escape");
+  assert.ok(scenario.edgeActivity("exit").enteredVph<=1550);
+  assert.ok(scenario.edgeActivity("blocked").enteredVph<20,
+    "none of the newer arrivals can drive into the fully closed road");
+  assert.ok(scenario.jamSummaries().some(x=>x.edgeId==="up"),
+    "excess cars must wait before the full exit, never teleport");
+  conservation(scenario.totals());
+  scenario.removeEvent("full");
+  for(let i=0;i<40;i++)scenario.advance(12);
+  conservation(scenario.totals());
+  assert.equal(scenario.jamSummaries().length,0,
+    "the physical queue dissolves after the motorway reopens");
+});
+
+test("A3 Heumar–Köln-Ost closure blocks the A59 feeder turn but leaves A59 through lanes open",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  const closure=sim.setEvent({id:"heumar-a3",edgeId:"A3-132624375",kind:"closure",
+    closedLanes:[0,1,2],offsetM:3,lengthM:200,
+    speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.match(closure.closureFrom,/A3 28 AD Köln-Heumar/);
+  assert.match(closure.closureTo,/A3 27 AK Köln-Ost/);
+  assert.equal(sim.closureBands("extra-a59-koeln").length,0,
+    "A59 mainline remains open and green");
+  assert.equal(sim.closureBands("A3-26164974").length,0,
+    "opposite A3 carriageway stays fully open");
+  const approaching=sim.closureDistanceAhead("extra-a59-koeln",0,50000);
+  assert.ok(Number.isFinite(approaching)&&approaching>0&&approaching<50000,
+    "A59 traffic must recognize a downstream A3 closure before reaching the Heumar junction");
+  assert.ok(sim.closureBands("A3-132624375").length>0,
+    "A3 section beyond A59 join is physically closed");
+  assert.equal(sim.movementBlocked("extra-a59-koeln","A3-132624375"),true,
+    "A59 vehicles cannot enter the closed A3 direction");
+  assert.ok(sim.closureAccessPoints().some(p=>p.edgeId==="extra-a59-koeln"),
+    "the unavailable transition is marked instead of painting A59 closed");
+});
+
+test("cars already inside a road closure evacuate, but a separate three-lane crash stops them",async()=>{
+  const make=await engine();
+  const roads={roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.018]],"",11],
+    ["b","mainline","A3",3,[[50,7.018],[50,7.058]],"",12]
+  ]};
+  const evacuated=make(structuredClone(roads));
+  const crashed=make(structuredClone(roads));
+  const date=Date.parse("2026-11-13T15:51:00Z");
+  for(const sim of [evacuated,crashed]){
+    sim.setSimulationStart(date);
+    sim.warmStart();
+    sim.setEvent({id:"road-closed",edgeId:"b",kind:"closure",
+      offsetM:0,lengthM:2600,closedLanes:[0,1,2],speedKmh:0,
+      hasShoulder:false,shoulder:"normal"});
+  }
+  crashed.setEvent({id:"full-crash",edgeId:"b",kind:"accident",
+    offsetM:600,lengthM:100,closedLanes:[0,1,2],speedKmh:0,
+    hasShoulder:false,shoulder:"normal"});
+  for(let i=0;i<3;i++){
+    evacuated.advance(12);
+    crashed.advance(12);
+  }
+  const freeExit=evacuated.edgeActivity("b",620).sectionVph;
+  const crashExit=crashed.edgeActivity("b",620).sectionVph;
+  assert.ok(freeExit>100,"existing cars can leave a closed but physically clear road");
+  assert.ok(crashExit<1,"a full lane-blocking accident prevents internal evacuation traffic");
+  conservation(evacuated.totals());conservation(crashed.totals());
+});
+
 test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and blocks A3 entering turn",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])

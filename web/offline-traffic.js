@@ -876,10 +876,10 @@ function createLegacyTrafficScenario(data){
     }
     return edge.profileFactor;
   }
-  function closureDistanceAhead(edge,offsetM,maxDistance=12000){
+  function closureDistanceAhead(edge,offsetM,maxDistance=16000){
     let current=edge,from=Math.max(0,offsetM),travelled=0;
     const visited=new Set();
-    for(let hops=0;hops<80&&travelled<=maxDistance;hops++){
+    for(let hops=0;hops<1200&&travelled<=maxDistance;hops++){
       if(visited.has(current.id))return Infinity;
       visited.add(current.id);
       const effects=activeEffects.get(current.id)||NO_EFFECTS;
@@ -888,10 +888,14 @@ function createLegacyTrafficScenario(data){
         const distance=travelled+item.fromM-from;
         if(distance<=maxDistance)return distance;
       }
-      const next=current.next.filter(link=>{
-        const target=edges[link.to];
-        return target.kind==="mainline"&&target.ref===edge.ref;
-      });
+      // Keep the same motorway where it continues. But when a route ends
+      // directly into exactly one OTHER motorway (e.g. A59→A3 at Heumar),
+      // look ahead across that true directed OSM connection as well. Without
+      // this, A59 cars would stop at the A3 barrier instead of exiting early.
+      const through=current.next.filter(link=>
+        edges[link.to].kind==="mainline"&&!visited.has(edges[link.to].id));
+      const same=through.filter(link=>edges[link.to].ref===current.ref);
+      const next=same.length===1?same:!same.length&&through.length===1?through:[];
       if(next.length!==1)return Infinity;
       travelled+=current.lengthM-from;
       current=edges[next[0].to];from=0;
@@ -914,6 +918,68 @@ function createLegacyTrafficScenario(data){
       return !upstream.some(inside=>inside.event.id===item.event.id);
     });
   }
+  // User scenario rule: below 45 minutes do not divert because of delay;
+  // at four hours the traffic willing to leave a jam reaches 100%.
+  // This is a willingness model, NOT a guarantee a usable exit has capacity.
+  function diversionShare(delayMin){
+    if(!Number.isFinite(delayMin)||delayMin<=45)return 0;
+    if(delayMin>=240)return 1;
+    const t=(delayMin-45)/195;
+    return t*t*(3-2*t);
+  }
+  const delayCache=new Map();
+  let delayCacheMinute=-1;
+  // Project excess travel time over physically consecutive same-direction OSM
+  // cells only. No guessing a detour over unimported public roads.
+  function measuredDelayAhead(edge,offsetM,maxDistance=50000){
+    const minute=Math.floor(elapsed/60);
+    if(minute!==delayCacheMinute){delayCache.clear();delayCacheMinute=minute;}
+    const key=edge.id+":"+Math.floor(offsetM/100);
+    if(delayCache.has(key))return delayCache.get(key);
+    let current=edge,from=Math.max(0,offsetM),distance=0,delay=0;
+    const seen=new Set();
+    for(let hops=0;hops<1200&&distance<maxDistance;hops++){
+      if(seen.has(current.id))break;
+      seen.add(current.id);
+      const start=Math.max(0,Math.floor(from/current.cellLength));
+      for(let i=start;i<current.n&&distance<maxDistance;i++){
+        const metres=Math.min(maxDistance-distance,
+          (i+1)*current.cellLength-Math.max(from,i*current.cellLength));
+        if(metres<=0)continue;
+        const occupied=current.stock[i]>=1;
+        const density=Math.min(1,current.stock[i]/Math.max(.001,current.jamPerCell));
+        const densitySpeed=current.freeKmh*(density<=.23?1:
+          Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
+        const v=occupied?Math.max(4,Math.min(densitySpeed,current.cellFlowSpeeds[i])):
+          current.freeKmh;
+        delay+=Math.max(0,metres/1000*60*(1/v-1/current.freeKmh));
+        distance+=metres;
+      }
+      const next=current.next.map(x=>edges[x.to]).filter(x=>
+        x.kind==="mainline"&&x.ref===edge.ref&&!seen.has(x.id));
+      if(next.length!==1)break;
+      current=next[0];from=0;
+    }
+    const result=Math.min(360,delay);
+    delayCache.set(key,result);
+    return result;
+  }
+  // A ramp is a usable diversion only if its genuine OSM turns do not lead
+  // exclusively into the closed sector. Existing open motorway branches or an
+  // actual external ramp end are acceptable; no artificial re-entry points.
+  function isUsableEscape(from,turn,visited=new Set(),depth=0){
+    if(depth>16||blockedMovement(from,turn))return false;
+    const target=edges[turn.to];
+    if(!target||visited.has(target.id))return false;
+    if(target.kind==="mainline")
+      return closureDistanceAhead(target,turn.toM,16000)===Infinity;
+    visited.add(target.id);
+    if(!target.links.length)return true;
+    for(const move of target.links){
+      if(isUsableEscape(target,move,new Set(visited),depth+1))return true;
+    }
+    return false;
+  }
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
     updateEffects();
@@ -932,12 +998,17 @@ function createLegacyTrafficScenario(data){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
         const local=effects.length?
           effects.filter(e=>e.fromM<b-.001&&e.toM>a+.001):NO_EFFECTS;
-        const closed=new Set();
+        const closed=new Set(),incidentClosed=new Set();
         let shoulderOpen=false,shoulderBlocked=false,blockedAtGate=false;
         let permitted=edge.freeKmh;
         for(const item of local){
           const ev=item.event;
-          for(const lane of ev.closedLanes)closed.add(lane);
+          for(const lane of ev.closedLanes){
+            closed.add(lane);
+            // A road closure bans new arrivals. A distinct crash/worksite
+            // may physically block cars already within that road section.
+            if(ev.kind!=="closure")incidentClosed.add(lane);
+          }
           if(ev.shoulder==="open"&&ev.hasShoulder)shoulderOpen=true;
           if(ev.shoulder==="blocked")shoulderBlocked=true;
           if(ev.speedKmh>0)permitted=Math.min(permitted,ev.speedKmh);
@@ -960,16 +1031,30 @@ function createLegacyTrafficScenario(data){
             breakdown?(open===1?.78:.87):
             roadworks?(open===1?.80:.90):1;
         }
-        const cap=open*edge.capacityPerLane*restriction*dt/3600;
+        // Discharge hysteresis: closely spaced queued vehicles require
+        // reaction/headway time after braking. Avoid a one-tick jump from a
+        // standstill queue to full free-flow service after event removal.
+        // 5–10% loss is a model assumption, not a measured regional factor.
+        const density=stock[k]/Math.max(.001,edge.jamPerCell);
+        const restartFactor=density>.60?.90:density>.42?.95:1;
+        const cap=open*edge.capacityPerLane*restriction*restartFactor*dt/3600;
         const moving=Math.min(1,(permitted/3.6)*dt/edge.cellLength);
         // Block receiving at the first closure cell, but let already-present
         // vehicles discharge through the closed section's downstream cells.
-        const evacuated=local.some(x=>x.event.kind==="closure"||
-          x.event.closedLanes.length===edge.lanes&&x.event.shoulder!=="open");
-        // Vehicles already behind a closure's entrance gate may exit the
-        // restricted area. Gate receiving is zero; interior flow can drain.
-        const transferCapacity=evacuated?
-          edge.lanes*edge.capacityPerLane*dt/3600:cap;
+        const evacuating=local.some(x=>x.event.kind==="closure");
+        // Cars within a road closure may leave on surviving physical lanes.
+        // BUT a separate full-width accident remains a real obstacle even
+        // if a road closure covers the same OSM cell. Never turn an accident
+        // into a harmless "evacuation" gate and silently pass cars through.
+        const openIncident=Math.max(0,edge.lanes-incidentClosed.size+
+          Number(shoulderOpen));
+        const accident=local.some(x=>x.event.kind==="accident");
+        const worksite=local.some(x=>x.event.kind==="roadworks");
+        const incidentFactor=incidentClosed.size>0?
+          (accident?(openIncident===1?.69:.79):
+            worksite?(openIncident===1?.80:.90):.87):1;
+        const transferCapacity=evacuating?
+          openIncident*edge.capacityPerLane*incidentFactor*restartFactor*dt/3600:cap;
         s[k]=Math.min(stock[k],transferCapacity,stock[k]*moving);
         const room=Math.max(0,edge.jamPerCell-stock[k]);
         r[k]=blockedAtGate?0:Math.min(room,transferCapacity,room*wave);
@@ -990,38 +1075,67 @@ function createLegacyTrafficScenario(data){
       for(let k=0;k<edge.n;k++){
         const available=out[k];
         if(available<=0)continue;
-        const options=[];
+        let options=[];
         if(k<edge.n-1&&receive[j][k+1]>0)
           options.push({to:j,toCell:k+1,weight:20});
-        for(const link of edge.linksFrom[k]){
-          if(receive[link.to][link.toCell]<=0)continue;
-          const target=edges[link.to];
-          if(blockedMovement(edge,link))continue;
-          options.push(link);
+        const legalTurns=edge.linksFrom[k].filter(link=>
+          !blockedMovement(edge,link));
+        for(const link of legalTurns){
+          if(receive[link.to][link.toCell]>0)options.push({...link});
         }
-        // The open virtual continuation takes through demand outside the map;
-        // a one-lane AS exit is NOT the motorway's entire downstream capacity.
+        // External map continuation is open only when a real motorway
+        // is not modelled beyond this location. Never turn it into a jam.
         const outsideWeight=k===edge.n-1&&boundaryExit[j]?
           (edge.kind==="mainline"?20:1):0;
-        if(!options.length&&!outsideWeight)continue;
-        // If a planned corridor closure lies downstream, approaching
-        // motorists can progressively take the LAST available open exit.
-        // Reweight ONLY real OSM turns; never teleport cars or create roads.
+        // A full motorway closure is a HARD route exclusion: on an upstream
+        // junction, all demand must take one of the legal escape turns. The
+        // previous 7-90% ramp split sent residual traffic into the barrier.
+        // A saturated exit is still a valid destination: motorists must queue
+        // for its receiving capacity, not skip past it into the closure.
         let hasLegalClosureDetour=false;
-        if(anyClosureActive&&edge.kind==="mainline"&&options.some(o=>
-          o.to!==j&&edges[o.to].kind==="ramp")){
-          const distance=closureDistanceAhead(edge,k*edge.cellLength);
-          if(distance<12000){
-            hasLegalClosureDetour=true;
-            const imminence=Math.max(0,1-distance/12000);
-            for(const option of options){
-              if(option.to===j)
-                option.weight=Math.max(.8,option.weight*(1-.92*imminence));
-              else if(edges[option.to].kind==="ramp")
-                option.weight=Math.max(option.weight,20*imminence*imminence);
+        if(edge.kind==="mainline"&&legalTurns.some(link=>
+          edges[link.to].kind==="ramp"||
+          edges[link.to].kind==="mainline"&&edges[link.to].ref!==edge.ref)){
+          const distance=anyClosureActive?
+            closureDistanceAhead(edge,k*edge.cellLength,16000):Infinity;
+          // Avoid expensive downstream route searches when there is no
+          // closure nearby and less than 45 min measured delay.
+          const share=Number.isFinite(distance)?1:
+            diversionShare(measuredDelayAhead(edge,k*edge.cellLength));
+          if(share>0){
+            const alternatives=legalTurns.filter(link=>{
+              const target=edges[link.to];
+              return (target.kind==="ramp"||
+                target.kind==="mainline"&&target.ref!==edge.ref)&&
+                isUsableEscape(edge,link);
+            });
+          if(alternatives.length){
+            hasLegalClosureDetour=Number.isFinite(distance);
+            const alternateKey=new Set(alternatives.map(link=>
+              link.to+":"+link.toCell));
+            const rawExitWeight=alternatives.reduce((n,link)=>n+link.weight,0);
+            const oldExitShare=rawExitWeight/(20+rawExitWeight);
+            const targetShare=oldExitShare+(1-oldExitShare)*share;
+            // In a full closure every open exit/other motorway is eligible,
+            // including a currently saturated turn. For merely long delays,
+            // normal receiving-limited choices remain in play.
+            options=share===1?alternatives.map(link=>({...link})):
+              options.concat(alternatives.filter(link=>
+                receive[link.to][link.toCell]<=0).map(link=>({...link})));
+            if(share===1){
+              // No through movement is legal beyond this last usable exit.
+              for(const turn of options)turn.weight=Math.max(.001,turn.weight);
+            }else{
+              for(const opt of options){
+                const isExit=alternateKey.has(opt.to+":"+opt.toCell);
+                opt.weight=isExit?(targetShare*20)*opt.weight/Math.max(.001,rawExitWeight):
+                  opt.to===j?(1-targetShare)*20:opt.weight*(1-share);
+              }
             }
           }
+          }
         }
+        if(!options.length&&!outsideWeight)continue;
         if(options.length>1&&hasLegalClosureDetour)
           splitSources.push({from:j,cell:k,available,options});
         const sum=options.reduce((n,x)=>n+x.weight,0)+outsideWeight;
@@ -1151,13 +1265,19 @@ function createLegacyTrafficScenario(data){
         Math.min(edge.lengthM-.001,metre)),eventId:id});
     }
     for(const edge of edges){
-      if(edge.kind!=="ramp")continue;
-      const own=(activeEffects.get(edge.id)||NO_EFFECTS)
-        .find(x=>x.derivedRampClosure);
-      if(own)add(edge,edge.lengthM*.7,own.event.id);
+      // Also mark an otherwise OPEN motorway that has one forbidden turn
+      // into a closed corridor (e.g. A59 → A3 at Köln-Heumar). Never paint
+      // the entire A59 red-white just because its A3 turn is closed.
+      if(edge.kind!=="ramp"&&edge.kind!=="mainline")continue;
+      if(edge.kind==="ramp"){
+        const own=(activeEffects.get(edge.id)||NO_EFFECTS)
+          .find(x=>x.derivedRampClosure);
+        if(own)add(edge,edge.lengthM*.7,own.event.id);
+      }
       for(const turn of edge.links){
         if(!blockedMovement(edge,turn))continue;
         const target=edges[turn.to];
+        if(edge.kind==="mainline"&&target.ref===edge.ref)continue;
         const match=(activeEffects.get(target.id)||NO_EFFECTS)
           .find(x=>x.event.kind==="closure");
         if(match)add(edge,turn.fromM,match.event.id);
@@ -1194,6 +1314,11 @@ function createLegacyTrafficScenario(data){
     sourceIds:()=>sources.map(x=>x.id),
     normalizedReversedWays:()=>[...reversedWays],
     migrateLegacyEvent,
+    diversionShare,
+    closureDistanceAhead:(id,offsetM=0,maxDistance=16000)=>{
+      const edge=byId.get(id);
+      return edge?closureDistanceAhead(edge,offsetM,maxDistance):Infinity;
+    },
     sourceProfiles:()=>sources.map(edge=>({id:edge.id,ref:edge.ref,
       direction:edge.directionKey,peakVph:edge.referencePeakVph,
       kind:edge.kind,name:edge.name})),
