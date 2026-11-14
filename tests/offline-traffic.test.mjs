@@ -251,6 +251,55 @@ test("a full corridor closure marks the exclusive feeder ramp chain but not the 
   for(let i=0;i<20;i++)scenario.advance(12);
   conservation(scenario.totals());
 });
+test("finger-selected off-ramp closure blocks the complete directed exit, not the motorway",async()=>{
+  const scenario=(await engine())({roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.015],[50,7.03]],"",11],
+    ["b","mainline","A3",3,[[50,7.03],[50,7.05]],"",12],
+    ["off-head","ramp","A3",1,[[50,7.015],[50.002,7.017]],
+      "AS Test · Abfahrt von A3",13],
+    ["off-tail","ramp","A3",1,[[50.002,7.017],[50.004,7.019]],
+      "AS Test · Rampenzweig",14],
+    ["on","ramp","A3",1,[[50.005,7.03],[50,7.03]],
+      "AS Test · Auffahrt auf A3",15]
+  ]});
+  const span=scenario.recommendedClosureLength("off-tail",30);
+  assert.equal(span.rampOnly,true);
+  assert.ok(span.lengthM>500,"the full off-ramp is longer than tapped fragment");
+  const ev=scenario.setEvent({id:"exit-only",edgeId:"off-tail",kind:"closure",
+    closedLanes:[0],offsetM:30,lengthM:100,speedKmh:0,
+    hasShoulder:false,shoulder:"normal",schedule:null});
+  assert.equal(ev.edgeId,"off-tail","the closure icon stays at the finger-selected ramp");
+  assert.equal(ev.offsetM,30,"do not silently move the marker to upstream AS");
+  assert.equal(ev.lengthM,span.lengthM);
+  assert.equal(scenario.closureBands("off-head").length,1);
+  assert.equal(scenario.closureBands("off-tail").length,1);
+  assert.equal(scenario.closureBands("a").length,0);
+  assert.equal(scenario.closureBands("b").length,0);
+  assert.equal(scenario.closureBands("on").length,0);
+  assert.equal(scenario.mode("a"),"none");
+  assert.ok(scenario.closureAccessPoints().some(p=>p.edgeId==="off-head"),
+    "access closure symbol at actual entrance to the exit ramp");
+  for(let i=0;i<6;i++)scenario.advance(12);
+  conservation(scenario.totals());
+});
+test("a closed ramp branch must not close its shared open approach or adjacent branch",async()=>{
+  const scenario=(await engine())({roads:[
+    ["a","mainline","A4",3,[[50,7],[50,7.015],[50,7.032]],"",11],
+    ["shared","ramp","A4",1,[[50,7.015],[50.002,7.018]],
+      "AK Test · Abfahrt",12],
+    ["left","ramp","A4",1,[[50.002,7.018],[50.005,7.018]],
+      "AK Test · Richtung Stadt",13],
+    ["right","ramp","A4",1,[[50.002,7.018],[50.002,7.025]],
+      "AK Test · Richtung Anschluss",14]
+  ]});
+  scenario.setEvent({id:"left-only",edgeId:"left",kind:"closure",
+    closedLanes:[0],offsetM:10,lengthM:100,speedKmh:0,
+    hasShoulder:false,shoulder:"normal",schedule:null});
+  assert.ok(scenario.closureBands("left").length);
+  for(const id of ["shared","right","a"])
+    assert.equal(scenario.closureBands(id).length,0,
+      "unselected accessible road must remain open: "+id);
+});
 test("published 2026/27 vacation windows and Easter public holidays change modeled daily traffic",async()=>{
   const window={};
   runInNewContext(await readFile("web/traffic-reference.js","utf8"),{window});
@@ -611,7 +660,8 @@ test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and 
   assert.match(event.closureFrom,/A59 31 AD Köln-Heumar/);
   assert.match(event.closureTo,/A59 32 Rath/);
   assert.ok(event.coveredLengthM>2000&&event.coveredLengthM<2400);
-  assert.ok(event.offsetM<150);
+  assert.equal(event.offsetM,950,
+    "keep user's originally tapped point rather than moving the event icon");
   const span=sim.closureBands("extra-a59-bonn")[0];
   assert.ok(span.toM-span.fromM>2000,"all 2.1 km must have red-white overlay");
   assert.equal(sim.closureBands("extra-a59-koeln").length,0,

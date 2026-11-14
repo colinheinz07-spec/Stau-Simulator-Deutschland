@@ -548,8 +548,53 @@ function createLegacyTrafficScenario(data){
       fromLabel:left.junction[0]+" "+left.junction[1]+" "+left.junction[2],
       toLabel:right.junction[0]+" "+right.junction[1]+" "+right.junction[2]};
   }
+  // A tap on an exit or entrance ramp closes only that directed ramp.
+  // Extend through physically joined ramp fragments, but never across a
+  // mainline, a public road or an ambiguous branch shared by another route.
+  const rampParents=new Map();
+  function rampSuccessors(edge){
+    if(edge.kind!=="ramp")return [];
+    return [...new Set(edge.links.filter(link=>
+      link.fromM>=edge.lengthM-.1&&link.toM<.1&&
+      edges[link.to].kind==="ramp").map(link=>edges[link.to]))];
+  }
+  for(const road of edges)if(road.kind==="ramp")
+    for(const next of rampSuccessors(road)){
+      const parents=rampParents.get(next.id)||[];
+      if(!parents.includes(road))parents.push(road);
+      rampParents.set(next.id,parents);
+    }
+  function rampCorridor(road){
+    if(road.kind!=="ramp")return null;
+    const chain=[road],visited=new Set([road.id]);
+    for(let i=0;i<100;i++){
+      const parents=(rampParents.get(chain[0].id)||[])
+        .filter(x=>!visited.has(x.id));
+      if(parents.length!==1||rampSuccessors(parents[0]).length!==1)break;
+      chain.unshift(parents[0]);visited.add(parents[0].id);
+    }
+    for(let i=0;i<100;i++){
+      const successors=rampSuccessors(chain.at(-1))
+        .filter(x=>!visited.has(x.id));
+      if(successors.length!==1||
+        (rampParents.get(successors[0].id)||[]).length!==1)break;
+      chain.push(successors[0]);visited.add(successors[0].id);
+    }
+    const spans=chain.map((edge,i)=>({
+      edgeId:edge.id,fromM:0,toM:edge.lengthM,gate:i===0
+    }));
+    return {spans,coveredLengthM:chain.reduce((n,e)=>n+e.lengthM,0),
+      truncated:false};
+  }
   function recommendedClosureLength(id,offsetM=0){
-    const road=byId.get(id),corridor=road&&motorwayCorridor(road,offsetM);
+    const road=byId.get(id);
+    if(!road)return null;
+    if(road.kind==="ramp"){
+      const ramp=rampCorridor(road);
+      return ramp?{lengthM:Math.round(ramp.coveredLengthM),
+        label:"ausgewählte Auf-/Abfahrt",rampOnly:true}:null;
+    }
+    const corridor=motorwayCorridor(road,offsetM);
     return corridor?{lengthM:Math.round(corridor.coveredLengthM),
       label:corridor.fromLabel+" – "+corridor.toLabel,
       fromRealJunction:true}:null;
@@ -601,18 +646,21 @@ function createLegacyTrafficScenario(data){
     // In the real road snapshot a motorway closure ALWAYS covers the exact
     // directed carriageway between the surrounding junctions. Ignore stale
     // 200 m saved events and hand-entered fragment lengths.
-    const physical=kind==="closure"&&edge.kind==="mainline"?
-      motorwayCorridor(edge,offset):null;
+    const physical=kind==="closure"?
+      edge.kind==="mainline"?motorwayCorridor(edge,offset):
+      edge.kind==="ramp"?rampCorridor(edge):null:null;
     if(kind==="closure"&&edge.kind==="mainline"&&
       (data.junctions||[]).some(j=>j[0]===edge.ref)&&!physical)
       throw Error("Vollsperrung nicht gesetzt: Zwei verbundene Anschlussstellen "+
         "in dieser Fahrtrichtung konnten nicht sicher ermittelt werden.");
     const traceResult=physical||trace(edge,offset,length);
     if(physical){
-      const first=physical.spans[0],newStart=byId.get(first.edgeId);
-      spec.edgeId=newStart.id;spec.offsetM=first.fromM;
+      // Preserve the finger-selected event marker even though the physical
+      // closure starts earlier. Rendering and physics read the SAME spans.
       spec.lengthM=Math.max(1,Math.round(physical.coveredLengthM));
-      spec.closureFrom=physical.fromLabel;spec.closureTo=physical.toLabel;
+      if(edge.kind==="mainline"){
+        spec.closureFrom=physical.fromLabel;spec.closureTo=physical.toLabel;
+      }
     }
     if(shoulder==="open"&&traceResult.spans.some(span=>
       byId.get(span.edgeId)?.shoulderTag==="no"))
@@ -656,6 +704,7 @@ function createLegacyTrafficScenario(data){
     // destination remains legal, and do not flood a whole interchange.
     const roadClosures=[...eventRecords.values()].filter(record=>
       record.spec.kind==="closure"&&
+      record.spans.some(span=>byId.get(span.edgeId)?.kind==="mainline")&&
       (!record.spec.schedule||
         global.StauEventSchedule.active(record.spec.schedule,time)));
     const fingerprint=roadClosures.map(x=>x.spec.id).sort().join("|");
@@ -674,8 +723,22 @@ function createLegacyTrafficScenario(data){
         // Only the actual physical closure interval counts. A closure
         // between A59 AS31 and AS32 must NEVER close AS35 at Wahn merely
         // because both touch the same 26 km OSM Way.
-        return (spansById.get(target.id)||[]).some(span=>
-          link.toM>=span.fromM-140&&link.toM<span.toM-.5);
+        return (spansById.get(target.id)||[]).some(span=>{
+          if(link.toM>=span.fromM-.05&&link.toM<span.toM-.05)
+            return true;
+          if(target.kind!=="mainline"||link.toM>=span.fromM)return false;
+          // A feeder may merge just BEFORE the closure on the same OSM
+          // Way. It is forbidden only if there is no legal exit between
+          // its real merge and the physical closure start.
+          const escape=target.links.some(turn=>{
+            const other=edges[turn.to];
+            return turn.fromM>=link.toM-.05&&turn.fromM<span.fromM-.05&&
+              !closed.has(other.id)&&
+              (other.kind==="ramp"||
+                other.kind==="mainline"&&other.ref!==target.ref);
+          });
+          return !escape;
+        });
       }
       // Repeated fixed-point resolution covers ramp->ramp->mainline chains,
       // independent of OSM Way fragments.
@@ -1026,8 +1089,28 @@ function createLegacyTrafficScenario(data){
     if(!toEffects.length)return false;
     const upstream=activeEffects.get(from.id)||NO_EFFECTS;
     return toEffects.some(item=>{
-      const buffer=item.event.kind==="closure"?140:0;
-      if(link.toM<item.fromM-buffer||link.toM>=item.toM-.05)return false;
+      if(link.toM>=item.toM-.05)return false;
+      if(link.toM<item.fromM-.05){
+        if(item.event.kind!=="closure"||target.kind!=="mainline"||
+          // On the same carriageway, cars may approach and queue at the
+          // real gate. A feeder from another motorway may NOT turn in.
+          (from.kind==="mainline"&&from.ref===target.ref))
+          return false;
+        // An early incoming motorway/feeder turn is blocked only if there
+        // is no legal open exit before the actual closure start. Geometry
+        // determines this, NOT an arbitrary 140-metre distance buffer.
+        const safeExit=target.links.some(turn=>{
+          if(turn.fromM<link.toM-.05||turn.fromM>=item.fromM-.05)
+            return false;
+          const other=edges[turn.to];
+          if(other.kind!=="ramp"&&
+            !(other.kind==="mainline"&&other.ref!==target.ref))return false;
+          return !(activeEffects.get(other.id)||NO_EFFECTS)
+            .some(closure=>closure.event.kind==="closure"&&
+              closure.event.id===item.event.id);
+        });
+        if(safeExit)return false;
+      }
       if(item.event.kind!=="closure"&&
         (item.event.closedLanes.length!==target.lanes||
         item.event.shoulder==="open"))return false;
@@ -1608,7 +1691,8 @@ function createLegacyTrafficScenario(data){
       if(edge.kind!=="ramp"&&edge.kind!=="mainline")continue;
       if(edge.kind==="ramp"){
         const own=(activeEffects.get(edge.id)||NO_EFFECTS)
-          .find(x=>x.derivedRampClosure);
+          .find(x=>x.derivedRampClosure||
+            (x.event.kind==="closure"&&x.gate));
         if(own){
           // A ramp starts at its true physical fork. Only pin the gate at
           // the first blocked access from an OPEN approach, not at 70% of
@@ -1625,6 +1709,10 @@ function createLegacyTrafficScenario(data){
         if(!blockedMovement(edge,turn))continue;
         const target=edges[turn.to];
         if(edge.kind==="mainline"&&target.ref===edge.ref)continue;
+        // The blocked ramp already has a pin at its own physical entrance.
+        // Do not put a second prohibition sign on the OPEN parent road.
+        if(target.kind==="ramp"&&(activeEffects.get(target.id)||NO_EFFECTS)
+          .some(x=>x.event.kind==="closure"&&x.fromM<.1))continue;
         const match=(activeEffects.get(target.id)||NO_EFFECTS)
           .find(x=>x.event.kind==="closure");
         if(match)add(edge,turn.fromM,match.event.id);
