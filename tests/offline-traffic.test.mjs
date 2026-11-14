@@ -349,9 +349,11 @@ test("A3 Heumar–Köln-Ost closure blocks the A59 feeder turn but leaves A59 th
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
     runInNewContext(await readFile(path,"utf8"),{window:w});
   const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
-  sim.setEvent({id:"heumar-a3",edgeId:"A3-26164974",kind:"closure",
-    closedLanes:[0,1,2],offsetM:460,lengthM:200,
+  const closure=sim.setEvent({id:"heumar-a3",edgeId:"A3-132624375",kind:"closure",
+    closedLanes:[0,1,2],offsetM:3,lengthM:200,
     speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.match(closure.closureFrom,/A3 28 AD Köln-Heumar/);
+  assert.match(closure.closureTo,/A3 27 AK Köln-Ost/);
   assert.equal(sim.closureBands("extra-a59-koeln").length,0,
     "A59 mainline remains open and green");
   assert.ok(sim.closureBands("A3-132624375").length>0,
