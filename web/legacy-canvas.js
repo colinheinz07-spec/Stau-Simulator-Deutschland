@@ -98,8 +98,9 @@ async function startLegacyCanvas(existingMap=null){
   const ramps=segments.filter(x=>x.kind==="ramp");
   $("chip-roads").textContent=format(segments.length)+" Fahrwege";
   $("chip-ramps").textContent=format(ramps.length)+" Rampen";
-  $("map-status").textContent=format(mainlines.length)+" Hauptfahrbahnen · "+
+  const baseMapStatus=format(mainlines.length)+" Hauptfahrbahnen · "+
     format(ramps.length)+" Rampen · "+scenario.sourceCount()+" Randzuflüsse";
+  $("map-status").textContent=baseMapStatus;
   $("sim-demand-value").textContent="100 %";
   const tiles=new Map();
   let width=0,height=0,zoom=8,center=merc([50.5,7.5]),
@@ -488,6 +489,15 @@ async function startLegacyCanvas(existingMap=null){
   }
   function draw(){
     if(!width||!height)return;
+    // Show how many distinct saved closures are ACTIVE. Otherwise several
+    // old locally stored incidents can look like one ghost closure spreading
+    // into distant roads when the user creates another SPCK test event.
+    const activeClosures=scenario.activeEvents().filter(e=>e.kind==="closure");
+    const mapStatus=baseMapStatus+(activeClosures.length?
+      " · "+activeClosures.length+
+      (activeClosures.length===1?" aktive Vollsperrung":" aktive Vollsperrungen"):"");
+    if($("map-status").textContent!==mapStatus)
+      $("map-status").textContent=mapStatus;
     const dpr=clamp(window.devicePixelRatio||1,1,2);
     context.setTransform(dpr,0,0,dpr,0,0);
     context.fillStyle="#dae5e1";
