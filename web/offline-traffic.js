@@ -1241,13 +1241,19 @@ function createLegacyTrafficScenario(data){
         Math.min(edge.lengthM-.001,metre)),eventId:id});
     }
     for(const edge of edges){
-      if(edge.kind!=="ramp")continue;
-      const own=(activeEffects.get(edge.id)||NO_EFFECTS)
-        .find(x=>x.derivedRampClosure);
-      if(own)add(edge,edge.lengthM*.7,own.event.id);
+      // Also mark an otherwise OPEN motorway that has one forbidden turn
+      // into a closed corridor (e.g. A59 → A3 at Köln-Heumar). Never paint
+      // the entire A59 red-white just because its A3 turn is closed.
+      if(edge.kind!=="ramp"&&edge.kind!=="mainline")continue;
+      if(edge.kind==="ramp"){
+        const own=(activeEffects.get(edge.id)||NO_EFFECTS)
+          .find(x=>x.derivedRampClosure);
+        if(own)add(edge,edge.lengthM*.7,own.event.id);
+      }
       for(const turn of edge.links){
         if(!blockedMovement(edge,turn))continue;
         const target=edges[turn.to];
+        if(edge.kind==="mainline"&&target.ref===edge.ref)continue;
         const match=(activeEffects.get(target.id)||NO_EFFECTS)
           .find(x=>x.event.kind==="closure");
         if(match)add(edge,turn.fromM,match.event.id);
@@ -1284,6 +1290,7 @@ function createLegacyTrafficScenario(data){
     sourceIds:()=>sources.map(x=>x.id),
     normalizedReversedWays:()=>[...reversedWays],
     migrateLegacyEvent,
+    diversionShare,
     sourceProfiles:()=>sources.map(edge=>({id:edge.id,ref:edge.ref,
       direction:edge.directionKey,peakVph:edge.referencePeakVph,
       kind:edge.kind,name:edge.name})),
