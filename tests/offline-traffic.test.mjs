@@ -302,3 +302,87 @@ test("A3 Köln-Ost to Heumar motorway closure covers all connected Ways and feed
     sum+sim.closureBands(row[0]).reduce((n,b)=>n+b.toM-b.fromM,0),0)-
     event.coveredLengthM)<1);
 });
+
+test("48 reversed A3/A48 OSM Ways are normalized into continuous directed motorway carriageways",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const scenario=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  assert.equal(scenario.normalizedReversedWays().length,48,
+    "the old import left exact endpoint-connected motorway segments pointing backward");
+  const main=w.STAU_LEGACY_GEOMETRY.roads.filter(r=>
+    r[1]==="mainline"&&(r[2]==="A3"||r[2]==="A48"));
+  assert.equal(main.length,970);
+  assert.equal(main.filter(r=>scenario.reachable(r[0])).length,970,
+    "real A3 and A48 OSM carriageways must not become dead-end subgraphs");
+  assert.ok(scenario.sourceProfiles().some(p=>p.direction==="A48-koblenz"));
+  assert.ok(scenario.sourceProfiles().some(p=>p.direction==="A48-dernbach"));
+});
+test("Saturday afternoon free motorways have no phantom jams; real 2-of-3-lane accident creates an upstream queue",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-14T13:00:00Z"));
+  const warm=s.warmStart();
+  assert.ok(warm.initialVehicles>1000,"old app's pre-existing traffic must occupy the network");
+  assert.equal(warm.generatedVehicles,0,"warm start must not claim that vehicles spawned during simulation");
+  const count=warm.initialVehicles;
+  assert.equal(s.warmStart().initialVehicles,count,"warm start only once");
+  conservation(s.totals());
+  for(let i=0;i<25;i++)s.advance(12);
+  assert.equal(s.jamSummaries().length,0,
+    "properly sized CTM connectors must not invent jams at tiny A3 ways or end ramps");
+  s.setEvent({id:"acc",edgeId:"A3-310863194",kind:"accident",
+    closedLanes:[0,1],offsetM:0,lengthM:120,speedKmh:40,
+    shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<25;i++)s.advance(12);
+  const jams=s.jamSummaries();
+  assert.ok(jams.some(j=>j.edgeId.startsWith("A3")&&j.lengthM>=350),
+    "one remaining lane must cause a real Saturday queue upstream of Montabaur");
+  assert.ok(s.edgeActivity("A3-310863194").enteredVph<=1550);
+  conservation(s.totals());
+});
+test("a workzone plus a further accident can block the actual remaining motorway lanes",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-14T13:00:00Z"));
+  s.warmStart();
+  s.setEvent({id:"works",edgeId:"A3-310863194",kind:"roadworks",
+    closedLanes:[0],offsetM:0,lengthM:300,speedKmh:80,
+    shoulder:"normal",hasShoulder:false});
+  s.setEvent({id:"acc",edgeId:"A3-310863194",kind:"accident",
+    closedLanes:[1,2],offsetM:0,lengthM:100,speedKmh:40,
+    shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<30;i++)s.advance(12);
+  assert.ok(s.jamSummaries().some(x=>x.lengthM>600&&x.delayMin>=1),
+    "closed remaining lanes must stop real flow and form a substantial upstream queue");
+  assert.ok(s.edgeActivity("A3-310863194").enteredVph<50,
+    "all three lanes are blocked collectively, not separately treated as two open events");
+  conservation(s.totals());
+});
+test("previously failing five-metre AS fragments now resolve full motorway sections including Bonn Auerberg",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  for(const {id,offset,from,to,minLength} of [
+    {id:"A3-23478515",offset:0,from:/A3 43 Limburg-Süd/,to:/A3 44 Bad Camberg/,minLength:14000},
+    {id:"A3-232272183",offset:50,from:/A3 39 AD Dernbach/,to:/A3 40 Montabaur/,minLength:5000},
+    {id:"A48-24351899",offset:150,from:/A48 9 AK Koblenz/,to:/A48 10 Koblenz-Nord/,minLength:5000},
+    {id:"extra-a565-siegburg",offset:1800,from:/A565 3 Bonn-Auerberg/,
+      to:/A565 2 Bonn-Beuel-Nord/,minLength:1600}
+  ]){
+    const road=w.STAU_LEGACY_GEOMETRY.roads.find(r=>r[0]===id);
+    const event=s.setEvent({id:"as_"+id,edgeId:id,kind:"closure",
+      offsetM:offset,lengthM:5,closedLanes:Array.from({length:road[3]},(_,i)=>i),
+      speedKmh:0,hasShoulder:false,shoulder:"normal"});
+    assert.match(event.closureFrom,from);
+    assert.match(event.closureTo,to);
+    assert.ok(event.coveredLengthM>=minLength,
+      "never save a five-metre closure when actual AS-to-AS corridor exists");
+    assert.equal(event.truncated,false);
+  }
+});
