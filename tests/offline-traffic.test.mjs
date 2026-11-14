@@ -399,6 +399,70 @@ test("cars already inside a road closure evacuate, but a separate three-lane cra
   conservation(evacuated.totals());conservation(crashed.totals());
 });
 
+test("a pre-existing car on an administratively blocked feeder ramp clears the corridor instead of staying at its red-white gate",async()=>{
+  const model=(await engine())({roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.02]],"",11],
+    ["b","mainline","A3",3,[[50,7.02],[50,7.05]],"",12],
+    ["on","ramp","A3",1,[[50.006,7.018],[50,7.02]],"AS 1 Beispiel · Auffahrt auf A3",13]
+  ]});
+  model.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  for(let i=0;i<12;i++)model.advance(12);
+  assert.ok(model.edgeActivity("on").vehicles>0,"the on-ramp contained traffic before the administrative closure");
+  model.setEvent({id:"close-b",edgeId:"b",kind:"closure",
+    closedLanes:[0,1,2],offsetM:0,lengthM:2000,speedKmh:0,
+    hasShoulder:false,shoulder:"normal"});
+  assert.ok(model.closureBands("on").length>0,"the exclusive feeder must close to *new* entrants");
+  const before=model.edgeActivity("on").vehicles;
+  for(let i=0;i<15;i++)model.advance(12);
+  assert.ok(model.edgeActivity("on").vehicles<before*.2,
+    "existing ramp traffic must be allowed to clear into the administratively closed, physically free corridor");
+  conservation(model.totals());
+});
+
+test("real OSM exit plus downstream real OSM on-ramp allow a conserved timed diversion with reentry",async()=>{
+  const model=(await engine())({roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.012],[50,7.020]],"",11],
+    ["b","mainline","A3",3,[[50,7.020],[50,7.040]],"",12],
+    ["c","mainline","A3",3,[[50,7.040],[50,7.048],[50,7.070]],"",13],
+    ["out","ramp","A3",1,[[50,7.012],[50.005,7.019]],"AS 1 Beispiel · Abfahrt von A3",14],
+    ["in","ramp","A3",1,[[50.005,7.048],[50,7.048]],"AS 2 Beispiel · Auffahrt auf A3",15]
+  ]});
+  model.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  model.warmStart();
+  model.setEvent({id:"close-b",edgeId:"b",kind:"closure",
+    closedLanes:[0,1,2],offsetM:0,lengthM:1100,speedKmh:0,
+    hasShoulder:false,shoulder:"normal"});
+  model.advance(12);
+  const plans=model.detourPlans();
+  assert.ok(plans.some(p=>p.terminalEdgeId==="out"&&p.reentryEdgeId==="in"),
+    "the diversion requires two real imported OSM access ramps, not fabricated geometry");
+  for(let i=0;i<28;i++)model.advance(12);
+  assert.ok(model.totals().detouredVehicles>10,"cars actually leave via the real exit");
+  assert.ok(model.totals().vehiclesOnDetours>0,"travel time is conserved outside the displayed model");
+  conservation(model.totals());
+  for(let i=0;i<24;i++)model.advance(12);
+  assert.ok(model.totals().returnedVehicles>5,"cars automatically return at the downstream real on-ramp");
+  assert.ok(model.edgeActivity("in").enteredVph>0);
+  conservation(model.totals());
+});
+
+test("no identified downstream OSM entrance means no invented returning cars",async()=>{
+  const model=(await engine())({roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.012],[50,7.020]],"",11],
+    ["b","mainline","A3",3,[[50,7.020],[50,7.040]],"",12],
+    ["out","ramp","A3",1,[[50,7.012],[50.005,7.019]],"AS 1 Beispiel · Abfahrt von A3",14]
+  ]});
+  model.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  model.setEvent({id:"close-b",edgeId:"b",kind:"closure",
+    closedLanes:[0,1,2],offsetM:0,lengthM:1100,speedKmh:0,
+    hasShoulder:false,shoulder:"normal"});
+  for(let i=0;i<25;i++)model.advance(12);
+  assert.deepEqual(model.detourPlans(),[]);
+  assert.equal(model.totals().returnedVehicles,0);
+  assert.equal(model.totals().vehiclesOnDetours,0);
+  conservation(model.totals());
+});
+
 test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and blocks A3 entering turn",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
