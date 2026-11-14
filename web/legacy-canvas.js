@@ -493,11 +493,12 @@ async function startLegacyCanvas(existingMap=null){
     // old locally stored incidents can look like one ghost closure spreading
     // into distant roads when the user creates another SPCK test event.
     const activeClosures=scenario.activeEvents().filter(e=>e.kind==="closure");
-    const mapStatus=baseMapStatus+(activeClosures.length?
-      " · "+activeClosures.length+
-      (activeClosures.length===1?" aktive Vollsperrung":" aktive Vollsperrungen"):"");
-    if($("map-status").textContent!==mapStatus)
-      $("map-status").textContent=mapStatus;
+    const closureChip=$("chip-closures");
+    if(closureChip){
+      closureChip.hidden=activeClosures.length===0;
+      closureChip.textContent=activeClosures.length+
+        (activeClosures.length===1?" aktive Vollsperrung":" aktive Vollsperrungen");
+    }
     const dpr=clamp(window.devicePixelRatio||1,1,2);
     context.setTransform(dpr,0,0,dpr,0,0);
     context.fillStyle="#dae5e1";
