@@ -38,6 +38,24 @@ test('Unfall reduziert reale Fahrstreifen, Stau entsteht physikalisch und bleibt
   assert.ok(speeds.some(x=>x.speedKmh<130));
   assert.ok(speeds.every(x=>Number.isFinite(x.speedKmh)));
 });
+test('Importierte Karte erzeugt Zuflüsse für getrennte echte Autobahnkomponenten',()=>{
+  const first=sampleNetwork();
+  const nodes=[...first.nodes];
+  const edges=[...first.edges];
+  const movements=[...first.movements];
+  const addPoint=(id,point)=>nodes.push({id,point});
+  addPoint('x',[50.8,7.9]);addPoint('y',[50.8,7.91]);addPoint('z',[50.8,7.92]);
+  const template=first.edges[0];
+  edges.push({...template,id:'second-west',fromNodeId:'x',toNodeId:'y',
+    geometry:[[50.8,7.9],[50.8,7.91]],osmWayIds:[91],lengthM:720});
+  edges.push({...template,id:'second-east',fromNodeId:'y',toNodeId:'z',
+    geometry:[[50.8,7.91],[50.8,7.92]],osmWayIds:[92],lengthM:720});
+  movements.push({incomingEdgeId:'second-west',outgoingEdgeId:'second-east',allowed:true});
+  const scenario=createTrafficScenario({...first,nodes,edges,movements});
+  assert.equal(scenario.sourceCount(),2,'je eigenständigem authentischem Autobahnkorridor eine Grenze');
+  assert.deepEqual(new Set(scenario.sourceProfiles().map(x=>x.id)),new Set(['a3-west','second-west']));
+});
+
 test('Vollsperrung sperrt nur betroffene gerichtete Kante und nicht offenen Alternativast',()=>{
   const s=createTrafficScenario(sampleNetwork());
   s.setMode('a3-east','closure');

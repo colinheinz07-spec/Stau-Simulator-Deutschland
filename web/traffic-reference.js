@@ -38,7 +38,10 @@ const REFERENCE_PEAKS = {
     'extra-a555-koeln': 1250, 'extra-a555-bonn': 1200,
     'extra-a559-gremberg': 3100, 'extra-a559-porz': 3000,
     'extra-a560-hennef': 2900, 'extra-a560-bonn': 3200,
-    'extra-a562-bonn': 2800, 'extra-a562-bonn-ost': 2700
+    'extra-a562-bonn': 2800, 'extra-a562-bonn-ost': 2700,
+    // Explicit scenario assumptions (not measured BASt data).
+    'extra-a61-nord': 2800, 'extra-a61-sued': 2700,
+    'extra-a565-nord': 2600, 'extra-a565-sued': 2600
 };
 
 const LOCAL_JUNCTION_PROFILES = [
@@ -195,6 +198,8 @@ function motorwayDirection(ref,points,name=""){
   if(ref==="A560")return /hennef/.test(route)?"extra-a560-hennef":
     /bonn/.test(route)?"extra-a560-bonn":dx>=0?"extra-a560-hennef":"extra-a560-bonn";
   if(ref==="A562")return dx>=0?"extra-a562-bonn-ost":"extra-a562-bonn";
+  if(ref==="A61")return dy>=0?"extra-a61-nord":"extra-a61-sued";
+  if(ref==="A565")return dy>=0?"extra-a565-nord":"extra-a565-sued";
   return ref+"-"+(Math.abs(dy)>=Math.abs(dx)?"lat":"lon")+(Math.abs(dy)>=Math.abs(dx)?Math.sign(dy):Math.sign(dx));
 }
 function regionFor(key,ref,points){

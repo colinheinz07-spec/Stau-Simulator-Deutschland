@@ -42,6 +42,57 @@ test("conservative local OSM network: no invented source, rest-area exit exclude
   assert.ok(result.exitedVehicles>0);
   conservation(result);
 });
+test("independent real motorway components both receive boundary traffic",async()=>{
+  const scenario=(await engine())({roads:[
+    ["west1","mainline","A3",3,[[50,7],[50,7.015]],"",1],
+    ["west2","mainline","A3",3,[[50,7.015],[50,7.035]],"",2],
+    ["east1","mainline","A3",3,[[50.5,7.4],[50.5,7.42]],"",3],
+    ["east2","mainline","A3",3,[[50.5,7.42],[50.5,7.45]],"",4]
+  ]});
+  assert.equal(scenario.sourceCount(),2,"separate physical corridors must have independent map-boundary input");
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  for(let i=0;i<20;i++)scenario.advance(12);
+  assert.ok(scenario.edgeActivity("west2",400).sectionVph>100);
+  assert.ok(scenario.edgeActivity("east2",400).sectionVph>100);
+  conservation(scenario.totals());
+});
+
+test("cut motorway lets through traffic leave the map despite a final one-lane exit",async()=>{
+  const scenario=(await engine())({roads:[
+    ["cut","mainline","A3",3,[[50,7],[50,7.015],[50,7.04]],"",11],
+    ["exit","ramp","A3",1,[[50,7.04],[50.005,7.046]],"AS Beispiel · Abfahrt",12]
+  ]});
+  assert.equal(scenario.sourceCount(),1);
+  assert.equal(scenario.edgeActivity("cut").boundaryExit,true);
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  for(let i=0;i<35;i++)scenario.advance(12);
+  assert.ok(scenario.edgeActivity("cut",2500).sectionVph>500);
+  assert.ok(scenario.totals().exitedVehicles>150);
+  assert.equal(scenario.jamSummaries().length,0,"map cut should not create queue");
+  conservation(scenario.totals());
+});
+
+test("a single long authentic Way on A565 has a modelled peak and open exit",async()=>{
+  const scenario=(await engine())({roads:[
+    ["single","mainline","A565",2,[[50.8,7.1],[50.8,7.14]],"",1]
+  ]});
+  assert.equal(scenario.sourceCount(),1);
+  scenario.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  for(let i=0;i<15;i++)scenario.advance(12);
+  assert.ok(scenario.edgeActivity("single",1000).sectionVph>100);
+  conservation(scenario.totals());
+});
+
+test("short orphan motorway fragment is never turned into a full 4000 vph generator",async()=>{
+  const scenario=(await engine())({roads:[
+    ["orphan","mainline","A3",3,[[50,7],[50,7.002]],"",1]
+  ]});
+  assert.equal(scenario.sourceCount(),0);
+  scenario.advance(12);
+  assert.equal(scenario.totals().generatedVehicles,0);
+  conservation(scenario.totals());
+});
+
 test("full closure blocks its physical cross-section; upstream density slows",async()=>{
   const scenario=(await engine())(network());
   // A valid alternative off-ramp can clear a Sunday-night closure without
