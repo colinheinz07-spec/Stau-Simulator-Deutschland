@@ -660,7 +660,8 @@ test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and 
   assert.match(event.closureFrom,/A59 31 AD Köln-Heumar/);
   assert.match(event.closureTo,/A59 32 Rath/);
   assert.ok(event.coveredLengthM>2000&&event.coveredLengthM<2400);
-  assert.ok(event.offsetM<150);
+  assert.equal(event.offsetM,950,
+    "keep user's originally tapped point rather than moving the event icon");
   const span=sim.closureBands("extra-a59-bonn")[0];
   assert.ok(span.toM-span.fromM>2000,"all 2.1 km must have red-white overlay");
   assert.equal(sim.closureBands("extra-a59-koeln").length,0,
