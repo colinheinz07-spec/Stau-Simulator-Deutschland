@@ -112,7 +112,7 @@ function createOfflineEventEditor(options){
       isClosure?100000:20000;
     length.max=String(max);
     const isRoad=isClosure&&current?.kind==="mainline";
-    nextClosureJunction=isRoad?
+    nextClosureJunction=isClosure&&current?
       scenario.recommendedClosureLength?.(current.id,currentOffset):null;
     lengthField.hidden=isClosure;
     length.disabled=isClosure;
