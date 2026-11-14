@@ -1044,8 +1044,13 @@ function createLegacyTrafficScenario(data){
         }
       }
       let reentry=null,minDistance=Infinity;
-      for(const ramp of sources){
-        if(ramp.kind!=="ramp"||
+      for(const ramp of edges){
+        // An actual signed OSM on-ramp may have several existing ramp
+        // fragments before its start. That does not make it an invalid
+        // place to return from the (unmapped) surface-road detour.
+        // Baseline traffic sources still require true exterior boundaries;
+        // external detour REENTRY only requires the signed OSM merge itself.
+        if(ramp.kind!=="ramp"||!/\b(?:auffahrt|zufahrt)\b/i.test(ramp.name)||
           (activeEffects.get(ramp.id)||NO_EFFECTS).some(e=>e.event.kind==="closure"))continue;
         for(const turn of ramp.links){
           const road=edges[turn.to],base=downstream.get(road.id);
