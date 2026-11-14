@@ -1522,7 +1522,17 @@ function createLegacyTrafficScenario(data){
       if(edge.kind==="ramp"){
         const own=(activeEffects.get(edge.id)||NO_EFFECTS)
           .find(x=>x.derivedRampClosure);
-        if(own)add(edge,edge.lengthM*.7,own.event.id);
+        if(own){
+          // A ramp starts at its true physical fork. Only pin the gate at
+          // the first blocked access from an OPEN approach, not at 70% of
+          // every small ramp fragment (which looked like a mid-ramp barrier).
+          const entering=edges.filter(from=>from.links.some(turn=>turn.to===edge.index));
+          const openApproach=entering.some(from=>
+            !(activeEffects.get(from.id)||NO_EFFECTS)
+              .some(effect=>effect.event.id===own.event.id));
+          if(openApproach||!entering.length)
+            add(edge,Math.min(12,edge.lengthM*.015),own.event.id);
+        }
       }
       for(const turn of edge.links){
         if(!blockedMovement(edge,turn))continue;
