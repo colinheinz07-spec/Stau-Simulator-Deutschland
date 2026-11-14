@@ -135,3 +135,33 @@ test("different taps between adjacent junctions select the same closure regardle
   assert.equal(closed(sim,"end-on"),false);
   assert.equal(closed(sim,"end-off"),true);
 });
+
+test("full closure spans physical AS gates even when junctions are only 2 metres apart",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const sim=window.createLegacyTrafficScenario({roads:[
+    ["main","mainline","A7",3,[[50,7],[50,7.000010],
+      [50,7.000020],[50,7.000030],[50,7.000040],
+      [50,7.000060]],"",11],
+    ["exit","ramp","A7",1,[[50,7.000010],[50.000020,7.000010]],
+      "AS 1 · Abfahrt",12],
+    ["entry","ramp","A7",1,[[50.000020,7.000040],[50,7.000040]],
+      "AS 2 · Auffahrt",13]
+  ],junctions:[
+    ["A7","1","Vorne",[50,7.000015]],
+    ["A7","2","Hinten",[50,7.000035]]
+  ]});
+  const projected=.000025*111194.93*Math.cos(50*Math.PI/180);
+  const suggestion=sim.recommendedClosureLength("main",projected);
+  assert.ok(suggestion,"no arbitrary 100-m minimum for adjoining AS gates");
+  const event=sim.setEvent({id:"tiny-real-gates",edgeId:"main",kind:"closure",
+    offsetM:projected,lengthM:suggestion.lengthM,
+    closedLanes:[0,1,2],speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.match(event.closureFrom,/Vorne/);
+  assert.match(event.closureTo,/Hinten/);
+  assert.ok(event.coveredLengthM>=1&&event.coveredLengthM<10,
+    "actual graph-derived AS closure length is only a few metres");
+  assert.equal(closed(sim,"entry"),false,
+    "next AS on-ramp is open regardless of AS separation");
+});
