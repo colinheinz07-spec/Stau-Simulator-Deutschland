@@ -117,8 +117,10 @@ test("feeder closure respects last open exit across OSM Way boundaries, never ro
     "ramp after last off-ramp cannot feed the physical closure on another OSM Way");
   assert.equal(sim.closureBands("return-on").length,0,
     "open motorway reentry after obstruction is unaffected");
-  assert.equal(sim.movementBlocked("late-on","intermediate"),true,
-    "closed on-ramp may not merge onto the later mainline in the closure direction");
+  assert.equal(sim.movementBlocked("late-on","intermediate"),false,
+    "cars already on this administratively closed ramp can evacuate into the open approach; new entries are forbidden at ramp start");
+  assert.equal(sim.movementBlocked("early-on","upstream"),false,
+    "traffic from an early unaffected on-ramp may continue to the last open exit");
   for(let i=0;i<12;i++)sim.advance(12);
   assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
 });
