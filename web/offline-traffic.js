@@ -956,7 +956,11 @@ function createLegacyTrafficScenario(data){
     // With no vehicle-specific OD assignments, don't let a saturated turn
     // with unused demand prevent flow along an available legal throughway.
     // Reallocate ONLY residual sending supply to remaining real receiving space.
-    for(const split of splitSources){
+    // Never route cars onto an exit merely because an accident/roadworks
+    // reduces throughflow! That previously dumped up to 1500 Kfz/h down a
+    // nearby ramp and ERASED the physical accident queue. Extra diversion
+    // is allowed only when there is an active announced corridor closure.
+    for(const split of (anyClosureActive?splitSources:[])){
       const fromKey=split.from+":"+split.cell;
       let remaining=split.available-(used.get(fromKey)||0);
       if(remaining<1e-6)continue;
