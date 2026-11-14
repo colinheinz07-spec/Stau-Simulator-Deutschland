@@ -795,7 +795,7 @@ function createLegacyTrafficScenario(data){
             turn.fromM>mainSpan.fromM+.3;
           if(next.kind==="ramp"&&beyondInitialGate&&
             turn.fromM>=mainSpan.fromM-.05&&
-            turn.fromM<mainSpan.toM-.05)
+            turn.fromM<=mainSpan.toM+.05)
             downstreamExits.add(next.id);
         }
       }
