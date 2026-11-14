@@ -356,6 +356,11 @@ test("A3 Heumar–Köln-Ost closure blocks the A59 feeder turn but leaves A59 th
   assert.match(closure.closureTo,/A3 27 AK Köln-Ost/);
   assert.equal(sim.closureBands("extra-a59-koeln").length,0,
     "A59 mainline remains open and green");
+  assert.equal(sim.closureBands("A3-26164974").length,0,
+    "opposite A3 carriageway stays fully open");
+  const approaching=sim.closureDistanceAhead("extra-a59-koeln",0,50000);
+  assert.ok(Number.isFinite(approaching)&&approaching>0&&approaching<50000,
+    "A59 traffic must recognize a downstream A3 closure before reaching the Heumar junction");
   assert.ok(sim.closureBands("A3-132624375").length>0,
     "A3 section beyond A59 join is physically closed");
   assert.equal(sim.movementBlocked("extra-a59-koeln","A3-132624375"),true,
