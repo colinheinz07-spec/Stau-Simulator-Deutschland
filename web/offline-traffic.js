@@ -21,8 +21,66 @@ const lengthM=pts=>{
   return length;
 };
 const finite=n=>Number.isFinite(n)&&n>=0;
+// The legacy OSM snapshot contains 48 A3/A48 mainline Ways with their
+// coordinate arrays opposite to the through-carriageway direction. The map
+// geometry looks continuous but a directed engine stops at every such pair.
+// Normalize ONLY simple end-to-end motorway chains, seeded by their existing
+// authentic exterior entrance. Never stitch geographically nearby Ways.
+function orientExistingMotorwayChains(data){
+  if(data._orientedMainlines)return data._orientationFlips||[];
+  const flipIds=[];
+  const groups=new Map();
+  for(const row of data.roads){
+    if(row[1]!=="mainline"||!row[2]||!Array.isArray(row[4])||row[4].length<2)
+      continue;
+    const list=groups.get(row[2])||[];
+    list.push(row);groups.set(row[2],list);
+  }
+  for(const rows of groups.values()){
+    if(rows.length<3)continue;
+    const vertices=new Map(),byRoad=new Map(rows.map(row=>[row[0],row]));
+    const key=p=>coord(p);
+    for(const row of rows){
+      for(const entry of [{node:row[4][0],start:true},
+        {node:row[4].at(-1),start:false}]){
+        const node=key(entry.node),list=vertices.get(node)||[];
+        list.push({id:row[0],start:entry.start});
+        vertices.set(node,list);
+      }
+    }
+    if([...vertices.values()].some(list=>list.length>2))continue;
+    const done=new Set();
+    // A proper motorway carriageway has one external OSM start. Walk from
+    // that real boundary and reverse only misplaced internal Way geometries.
+    for(const [node,items] of vertices){
+      if(items.length!==1||!items[0].start||done.has(items[0].id))continue;
+      let at=node;const planned=[],locallyDone=new Set();
+      for(let hops=0;hops<=rows.length;hops++){
+        const next=(vertices.get(at)||[]).filter(x=>!done.has(x.id)&&
+          !locallyDone.has(x.id));
+        if(!next.length)break;
+        if(next.length!==1){planned.length=0;break;}
+        const entry=next[0],row=byRoad.get(entry.id);
+        locallyDone.add(row[0]);
+        const flip=!entry.start;
+        planned.push({row,flip});
+        at=key(flip?row[4][0]:row[4].at(-1));
+      }
+      // Do not apply a partial or ambiguous walk.
+      if((vertices.get(at)||[]).length!==1)continue;
+      for(const {row,flip} of planned){
+        done.add(row[0]);
+        if(flip){row[4].reverse();flipIds.push(row[0]);}
+      }
+    }
+  }
+  Object.defineProperty(data,"_orientedMainlines",{value:true,configurable:true});
+  Object.defineProperty(data,"_orientationFlips",{value:flipIds,configurable:true});
+  return flipIds;
+}
 function createLegacyTrafficScenario(data){
   if(!data||!Array.isArray(data.roads))throw Error("Geprüfte lokale Kartendaten fehlen");
+  const reversedWays=orientExistingMotorwayChains(data);
   const edges=[],outByNode=new Map(),inByNode=new Map(),byId=new Map();
   const rowById=new Map(data.roads.map(row=>[String(row[0]),row]));
   const NO_EFFECTS=Object.freeze([]);
@@ -47,7 +105,7 @@ function createLegacyTrafficScenario(data){
        capacityPerLane:row[1]==="ramp"?1500:2200,
       freeKmh:row[1]==="ramp"?75:120,
       jamPerCell:130*lanes*(meters/count)/1000,
-      next:[],incoming:0,incomingAtStart:0,source:false,backlog:0,
+      next:[],incoming:0,incomingAtStart:0,mainlineIncomingAtStart:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
       links:[],linksFrom:Array.from({length:count},()=>[]),
       enteredVph:0,departedVph:0,
@@ -96,7 +154,11 @@ function createLegacyTrafficScenario(data){
     const link={to:to.index,fromCell,toCell,fromM,toM,weight};
     from.links.push(link);from.linksFrom[fromCell].push(link);
     to.incoming++;
-    if(toM<.01)to.incomingAtStart++;
+    if(toM<.01){
+      to.incomingAtStart++;
+      if(from.kind==="mainline"&&to.kind==="mainline"&&from.ref===to.ref)
+        to.mainlineIncomingAtStart++;
+    }
     // Preserve end-to-start successors for long-event tracing and old API.
     if(fromCell===from.n-1&&toCell===0&&fromM>=from.lengthM-.01&&toM<.01)
       from.next.push({to:to.index,weight});
@@ -164,7 +226,7 @@ function createLegacyTrafficScenario(data){
     return Math.abs(lat)>=Math.abs(lon)?-lat:-lon;
   }
   for(const edge of edges){
-    if(edge.kind!=="mainline"||!edge.ref||edge.incomingAtStart)continue;
+    if(edge.kind!=="mainline"||!edge.ref||edge.mainlineIncomingAtStart)continue;
     const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
     if(profile.peakVph<=0||!hasContinuousMainline(edge))continue;
     const rank=upstreamRank(edge,profile.key);
@@ -955,6 +1017,7 @@ function createLegacyTrafficScenario(data){
     incomingCount:id=>byId.get(id)?.incoming??0,
     entryIncomingCount:id=>byId.get(id)?.incomingAtStart??0,
     sourceIds:()=>sources.map(x=>x.id),
+    normalizedReversedWays:()=>[...reversedWays],
     sourceProfiles:()=>sources.map(edge=>({id:edge.id,ref:edge.ref,
       direction:edge.directionKey,peakVph:edge.referencePeakVph,
       kind:edge.kind,name:edge.name})),
