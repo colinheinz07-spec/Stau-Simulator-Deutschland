@@ -357,6 +357,8 @@ function createLegacyTrafficScenario(data){
   // reentered at a real OSM on-ramp, are conserved as external-road inventory.
   let outsideVehicles=0,detouredVehicles=0,returnedVehicles=0;
   const detourTrips=[];
+  // Combine same-minute arrivals to keep the simulator responsive on phones.
+  const detourBatchIndex=new Map();
   const terminalDetours=new Map(),exitDetours=new Map();
   let detourPlansKey=null;
   let warmedUp=false;
@@ -841,7 +843,8 @@ function createLegacyTrafficScenario(data){
   function reset(clearEvents=false){
     elapsed=0;generated=0;exited=0;initialVehicles=0;warmedUp=false;
     outsideVehicles=0;detouredVehicles=0;returnedVehicles=0;
-    detourTrips.length=0;terminalDetours.clear();exitDetours.clear();detourPlansKey=null;
+    detourTrips.length=0;detourBatchIndex.clear();
+    terminalDetours.clear();exitDetours.clear();detourPlansKey=null;
     for(const edge of edges){
       edge.stock.fill(0);edge.divertStock.fill(0);
       edge.backlog=0;edge.speed=edge.freeKmh;
@@ -1077,22 +1080,44 @@ function createLegacyTrafficScenario(data){
   // in a conserved off-map inventory, and returns only at a REAL directed
   // OSM on-ramp downstream of the closed section. The off-map duration is a
   // documented estimate, not an audited street-by-street shortest path.
+  function estimatedOutsideSeconds(exit,entrance){
+    // Unmapped local/urban road travel is an explicit travel-time estimate.
+    const firstPoint=rowById.get(exit.id)[4].at(-1);
+    const lastPoint=rowById.get(entrance.id)[4][0];
+    const lat1=firstPoint[0]*rad,lat2=lastPoint[0]*rad;
+    const dlat=lat2-lat1,dlon=(lastPoint[1]-firstPoint[1])*rad;
+    const straight=2*R*Math.asin(Math.min(1,Math.sqrt(
+      Math.sin(dlat/2)**2+Math.cos(lat1)*Math.cos(lat2)*
+      Math.sin(dlon/2)**2)));
+    return Math.max(300,Math.min(7200,
+      180+straight*1.55/(40/3.6)));
+  }
+  // Vehicle destinations are not yet individually known in the aggregate
+  // cell-flow engine. Route most through traffic to the FIRST real open
+  // motorway entrance beyond the obstruction, with a smaller assumed share
+  // returning later for more distant destinations. Neither distribution nor
+  // local road duration claims to be a measured OD survey.
+  function destinationWeights(count){
+    const defaults=[.82,.14,.04];
+    const out=defaults.slice(0,count),total=out.reduce((x,y)=>x+y,0);
+    return out.map(x=>x/total);
+  }
   function buildDetourPlans(){
-    const closed=[...eventRecords.values()].filter(record=>
-      record.spec.kind==="closure"&&record.spans.some(span=>
-        byId.get(span.edgeId)?.kind==="mainline")&&
+    const obstacles=[...eventRecords.values()].filter(record=>
+      record.spans.some(span=>byId.get(span.edgeId)?.kind==="mainline")&&
       (!record.spec.schedule||
-        global.StauEventSchedule.active(record.spec.schedule,clockMs())));
-    const key=closed.map(x=>x.spec.id+":"+x.spans.map(s=>
+        global.StauEventSchedule.active(record.spec.schedule,clockMs()))&&
+      ["closure","accident","roadworks","breakdown"].includes(record.spec.kind));
+    const key=obstacles.map(x=>x.spec.id+":"+x.spans.map(s=>
       s.edgeId+":"+Math.round(s.fromM)+":"+Math.round(s.toM)).join(",")).join("|");
     if(key===detourPlansKey)return;
     detourPlansKey=key;exitDetours.clear();
-    for(const closure of closed){
-      const last=closure.spans.at(-1),endEdge=byId.get(last.edgeId);
+    for(const obstacle of obstacles){
+      const last=obstacle.spans.at(-1),endEdge=byId.get(last.edgeId);
       if(!endEdge||endEdge.kind!=="mainline")continue;
-      // Traverse only EXISTING same-direction motorway links beyond the far
-      // closure boundary. A candidate ramp is legal only if its actual merge
-      // joins the downstream continuation, never an upstream or opposite road.
+      // Walk forward on the physically connected directed motorway only.
+      // The road after this event is traversable on the same carriageway;
+      // never switch to its opposite direction because it's nearby on a map.
       const downstream=new Map([[endEdge.id,0]]);
       const queue=[endEdge];
       for(let i=0;i<queue.length&&i<2000;i++){
@@ -1107,60 +1132,63 @@ function createLegacyTrafficScenario(data){
           downstream.set(next.id,metres);queue.push(next);
         }
       }
-      let reentry=null,minDistance=Infinity;
+      const optionsByJunction=new Map();
       for(const ramp of edges){
-        // An actual signed OSM on-ramp may have several existing ramp
-        // fragments before its start. That does not make it an invalid
-        // place to return from the (unmapped) surface-road detour.
-        // Baseline traffic sources still require true exterior boundaries;
-        // external detour REENTRY only requires the signed OSM merge itself.
-        if(ramp.kind!=="ramp"||!/\b(?:auffahrt|zufahrt)\b/i.test(ramp.name)||
-          (activeEffects.get(ramp.id)||NO_EFFECTS).some(e=>e.event.kind==="closure"))continue;
+        if(ramp.kind!=="ramp"||!/(?:auffahrt|zufahrt)/i.test(ramp.name)||
+          (activeEffects.get(ramp.id)||NO_EFFECTS).some(e=>
+            e.event.kind==="closure"))continue;
         for(const turn of ramp.links){
           const road=edges[turn.to],base=downstream.get(road.id);
           if(road.kind!=="mainline"||road.ref!==endEdge.ref||base===undefined)continue;
-          const d=road===endEdge?turn.toM-last.toM:base+turn.toM;
-          if(d>80&&d<minDistance&&d<60000){
-            reentry=ramp;minDistance=d;
-          }
+          const distance=road===endEdge?turn.toM-last.toM:base+turn.toM;
+          if(!(distance>80&&distance<60000))continue;
+          // A long OSM interchange can have several ramp pieces. Treat an
+          // Anschlussstelle as ONE candidate, not three phantom destinations.
+          const junction=(ramp.name.split(" · ")[0]||ramp.id)
+            .replace(/\s+/g," ").trim().toLowerCase();
+          const key=endEdge.ref+":"+junction;
+          const previous=optionsByJunction.get(key);
+          if(!previous||distance<previous.distance)
+            optionsByJunction.set(key,{ramp,distance,junction});
         }
       }
-      if(!reentry)continue;
-      // Find real upstream off-ramps with an *outside* terminus, not turns
-      // onto another represented Autobahn. A self-contained ramp chain is
-      // traced only through exact existing directed OSM links.
+      const candidates=[...optionsByJunction.values()]
+        .sort((a,b)=>a.distance-b.distance||a.ramp.id.localeCompare(b.ramp.id))
+        .slice(0,3);
+      if(!candidates.length)continue;
+      // Identify actual upstream off-ramps that terminate outside the limited
+      // motorway-only extract. Never invent a ramp or local street connection.
       for(const main of edges){
         if(main.kind!=="mainline")continue;
         for(const turn of main.links){
           const first=edges[turn.to];
-          if(first.kind!=="ramp"||
-            (closureDistanceAhead(main,turn.fromM,16000)===Infinity&&
-            closureExposureAhead(main,turn.fromM)===0))continue;
+          const fullClosure=obstacle.spec.kind==="closure";
+          const affected=fullClosure?
+            closureDistanceAhead(main,turn.fromM,16000)!==Infinity||
+              closureExposureAhead(main,turn.fromM)>0:
+            measuredDelayAhead(main,turn.fromM)>=45;
+          if(first.kind!=="ramp"||!affected)continue;
           const pending=[first],seen=new Set();
           for(let q=0;q<pending.length&&q<25;q++){
             const ramp=pending[q];
             if(seen.has(ramp.id))continue;
             seen.add(ramp.id);
-            // A genuine surface-road exit disappears from this motorway-only
-            // snapshot. Interchange ramps with a mapped mainline successor
-            // continue in the physical simulation instead.
             const successors=ramp.links.map(link=>edges[link.to]);
             if(!successors.length&&boundaryExit[ramp.index]){
-              const firstPoint=rowById.get(ramp.id)[4].at(-1);
-              const lastPoint=rowById.get(reentry.id)[4][0];
-              const lat1=firstPoint[0]*rad,lat2=lastPoint[0]*rad;
-              const dlat=lat2-lat1,dlon=(lastPoint[1]-firstPoint[1])*rad;
-              const straight=2*R*Math.asin(Math.min(1,Math.sqrt(
-                Math.sin(dlat/2)**2+Math.cos(lat1)*Math.cos(lat2)*
-                Math.sin(dlon/2)**2)));
-              // Assumed local-road progression incl. turns and signals.
-              const durationS=Math.max(300,Math.min(7200,
-                180+straight*1.55/(40/3.6)));
-              const plan={terminal:ramp.index,reentry:reentry.index,
-                durationS,closureId:closure.spec.id};
+              const weights=destinationWeights(candidates.length);
+              const entries=candidates.map((candidate,i)=>({
+                reentry:candidate.ramp.index,
+                distanceM:candidate.distance,
+                weight:weights[i],
+                durationS:estimatedOutsideSeconds(ramp,candidate.ramp),
+                junction:candidate.junction
+              }));
+              const plan={terminal:ramp.index,reentry:entries[0].reentry,
+                durationS:entries[0].durationS,entries,
+                closureId:obstacle.spec.id,kind:obstacle.spec.kind};
               exitDetours.set(first.index,plan);
-              // Keep the destination for vehicles already on their exit
-              // when the closure is lifted during their traversal.
+              // Keep an existing exit's intended downstream destination if
+              // its source closure finishes while the vehicle is on the ramp.
               terminalDetours.set(ramp.index,plan);
             }else if(successors.length&&successors.every(x=>x.kind==="ramp")){
               for(const next of successors)pending.push(next);
@@ -1372,8 +1400,18 @@ function createLegacyTrafficScenario(data){
           exited+=leaving-rerouted;
           if(rerouted>0){
             outsideVehicles+=rerouted;detouredVehicles+=rerouted;
-            detourTrips.push({reentry:plan.reentry,
-              readyAt:elapsed+dt+plan.durationS,vehicles:rerouted});
+            for(const entry of plan.entries){
+              const amount=rerouted*entry.weight;
+              if(amount<=0)continue;
+              const readyAt=Math.ceil((elapsed+dt+entry.durationS)/30)*30;
+              const key=entry.reentry+":"+readyAt;
+              const existing=detourBatchIndex.get(key);
+              if(existing)existing.vehicles+=amount;
+              else{
+                const trip={reentry:entry.reentry,readyAt,vehicles:amount,key};
+                detourTrips.push(trip);detourBatchIndex.set(key,trip);
+              }
+            }
           }
           const key=j+":"+k;
           boundaryUsed.set(key,(boundaryUsed.get(key)||0)+leaving);
@@ -1456,7 +1494,9 @@ function createLegacyTrafficScenario(data){
       enteredStep[road.index]+=admitted;
       outsideVehicles-=admitted;returnedVehicles+=admitted;
       trip.vehicles-=admitted;
-      if(trip.vehicles<1e-7)detourTrips.splice(i,1);
+      if(trip.vehicles<1e-7){
+        detourTrips.splice(i,1);detourBatchIndex.delete(trip.key);
+      }
     }
     // Network boundaries were discharged as explicit movements above.
     // No internal phantom demand: source edges must be actual directed
@@ -1592,7 +1632,12 @@ function createLegacyTrafficScenario(data){
     detourPlans:()=>[...exitDetours.values()].map(plan=>({
       terminalEdgeId:edges[plan.terminal].id,
       reentryEdgeId:edges[plan.reentry].id,
-      delaySeconds:plan.durationS,closureId:plan.closureId})),
+      delaySeconds:plan.durationS,closureId:plan.closureId,
+      kind:plan.kind,
+      reentries:plan.entries.map(entry=>({
+        edgeId:edges[entry.reentry].id,weight:entry.weight,
+        distanceM:entry.distanceM,delaySeconds:entry.durationS
+      }))})),
     closureExposureAhead:(id,offsetM=0,maxDistance=25000)=>{
       const edge=byId.get(id);
       return edge?closureExposureAhead(edge,offsetM,maxDistance):0;
