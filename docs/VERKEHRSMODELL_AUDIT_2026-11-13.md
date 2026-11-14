@@ -84,3 +84,21 @@ Stand: 13.11.2026. Für dieses Projekt gelten **bundesweite, nicht streckenspezi
 6. **iPhone-UI:** kleinere Fahrstreifen-Schaltflächen, sticky Aktionsleiste, weniger verdeckte Kartenfläche, kleine Sperricons auf realen gesperrten Rampen bei Zoom.
 
 **Ausstehend:** Nicht alle A565-/NRW-Teilstrecken sind mit kalibrierten Zielrouten-/Zuflussprofilen ausgestattet; automatische Tests sind kein manueller iPhone-Bildnachweis.
+
+
+## Nachtrag 14.11.2026 – regionaler Quellfluss und offene Modellgrenzen
+
+**Ursache der gemeldeten 0–2 Kfz/h auf Teilstrecken:** Der lokale Adapter und der importbasierte Kartencontroller deduplizierten zuvor externe Hauptfahrbahnquellen nach einem **deutschlandweit gemeinsamen Richtungsnamen** (etwa `A3-koeln`). Räumlich getrennte, in der Karte tatsächlich vorhandene Autobahnkomponenten derselben Richtung hatten anschließend keinen dauerhaften Zufluss. Hinzu kam, dass die SPCK-Detailanzeige die Zuflüsse am *Anfang* eines mitunter kilometerlangen OSM-Ways auswies, nicht den Durchfluss am angetippten Ort.
+
+**Abhilfe:** Je tatsächlich durch OSM-Fahrbeziehungen zusammenhängender, mindestens 1,5 km langer Autobahnkomponente wird eine externe Hauptfahrbahnquelle ausgewählt. Unbestätigte kurze Straßenfragmente erhalten keine automatische volle Fernverkehrsnachfrage. Das SPCK-Modell misst den fließenden Verkehr jetzt pro Straßenmodellzelle (gleitendes Zwei-Minuten-Mittel, Kfz/h) und zeigt ihn ortsgenau an. Der Import-Kartencontroller unterscheidet ebenfalls einzelne Modellkorridore. Die Regeln bleiben bundesweit auf Autobahnkomponenten anwendbar.
+
+**Offene Netzkanten:** Endet das importierte Autobahnnetz an einem Kartenausschnitt und führt von der letzten Hauptfahrbahn nur noch eine modellierte Abfahrt weg, wird die Fahrbahn außerhalb des betrachteten Ausschnitts als *externer Abfluss* behandelt. Der übrige Anteil kann die echte Abfahrt benutzen, begrenzt durch deren Kapazität. Es werden weder Straßen erfunden noch Fahrzeuge zusätzlich generiert. Verbindungen zu einer tatsächlich importierten nächsten Autobahn bleiben intern. Fahrzeugbilanz und Stauereignisse sind regressionstestiert.
+
+**Wichtige Kalibrierungsgrenze:** Die Werte in `web/traffic-reference.js` sind nach wie vor **angenommene richtungsbezogene Spitzenstundenverkehre**. A61-/A565-Profile wurden als zusätzliche Prototypannahmen ergänzt. Die BASt stellt für das spätere Datenfundament automatische Dauerzählstellen mit richtungsbezogenen Stundenwerten (Kfz/h) sowie DTV (Kfz/24 h) bereit; die Daten sind nach Standort, Jahr, Datenqualität, Fahrtrichtung und Fahrzeugart zuzuordnen. Vor einer Kalibrierung müssen fehlende Stationen durch benachbarte belastbare Zählpunkte oder ein OD-Verteilungsmodell geschätzt, DTV und Spitzenstunde sauber getrennt sowie Auf-/Abfahrtsanteile validiert werden. Die hier behobene technische Unterversorgung ist **keine** abgeschlossene BASt-Kalibrierung, keine Echtzeitmessung und keine Garantie für jedes unvollständige Teilnetz.
+
+Datenquellen:
+- BASt, automatische Dauerzählstellen und Stundendaten: https://www.bast.de/DE/Publikationen/Daten/Verkehrstechnik/DZ.html
+- BASt, Zählstellen/DTV: https://www.bast.de/DE/Themen/Digitales/HF_1/Massnahmen/verkehrszaehlung/zaehl_node.html
+- Offener Datensatz-Katalog: https://www.govdata.de/suche?publisher=Bundesanstalt+f%C3%BCr+Stra%C3%9Fen-+und+Verkehrswesen+%28BASt%29
+
+**Abnahme:** CI testet zusätzlich unabhängige Modellkomponenten, über die sichtbare Karte hinausgehende Hauptfahrbahnen trotz letzter Abfahrt, reale Zellflussmessung, ein langes Einzel-Way sowie konservierte Fahrzeugbilanz. Manuelle SPCK-Ansicht und stationsgenaue Messdatenvalidierung stehen noch aus.
