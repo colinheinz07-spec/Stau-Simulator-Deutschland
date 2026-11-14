@@ -97,3 +97,33 @@ test("full closure: through traffic continues past earlier off-ramps to LAST law
   assert.ok(lastFlow>300,"last open exit carries the diverted vehicles");
   assert.ok(Math.abs(model.totals().conservationResidual)<1e-6);
 });
+
+test("finger tap slightly AFTER AS centre but BEFORE its reentry stays in preceding closure",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const sim=window.createLegacyTrafficScenario({roads:[
+    ["main","mainline","A7",3,
+      [[50,7],[50,7.010],[50,7.014],[50,7.016],[50,7.028],
+      [50,7.031],[50,7.034],[50,7.045]],"",11],
+    ["before-off","ramp","A7",1,[[50,7.010],[50.005,7.010]],"AS 1 · Abfahrt",12],
+    ["before-on","ramp","A7",1,[[50.005,7.016],[50,7.016]],"AS 1 · Auffahrt",13],
+    ["end-off","ramp","A7",1,[[50,7.028],[50.005,7.028]],"AS 2 · Abfahrt",14],
+    ["end-on","ramp","A7",1,[[50.005,7.034],[50,7.034]],"AS 2 · Auffahrt",15]
+  ],junctions:[
+    ["A7","1","Vorne",[50,7.014]],
+    ["A7","2","Hinten",[50,7.031]]
+  ]});
+  const metresPerDegree=111194.93*Math.cos(50*Math.PI/180);
+  const justBefore=sim.recommendedClosureLength("main",.029*metresPerDegree);
+  const justAfterLabel=sim.recommendedClosureLength("main",.032*metresPerDegree);
+  assert.ok(justBefore&&justAfterLabel,
+    "both touches before the physical on-ramp merge are in the same closure");
+  assert.equal(justAfterLabel.label,justBefore.label,
+    "a label projection must not move closure into a different junction sector");
+  const evt=full(sim,"physical-centre","main",.032*metresPerDegree);
+  assert.match(evt.closureFrom,/Vorne/);
+  assert.match(evt.closureTo,/Hinten/);
+  assert.equal(closed(sim,"end-on"),false);
+  assert.equal(closed(sim,"end-off"),true);
+});
