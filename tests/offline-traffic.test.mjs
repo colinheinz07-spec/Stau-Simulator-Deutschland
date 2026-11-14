@@ -457,7 +457,7 @@ test("no identified downstream OSM entrance means no invented returning cars",as
     closedLanes:[0,1,2],offsetM:0,lengthM:1100,speedKmh:0,
     hasShoulder:false,shoulder:"normal"});
   for(let i=0;i<25;i++)model.advance(12);
-  assert.deepEqual(model.detourPlans(),[]);
+  assert.equal(model.detourPlans().length,0,"without a mapped downstream ramp there is no reentry plan");
   assert.equal(model.totals().returnedVehicles,0);
   assert.equal(model.totals().vehiclesOnDetours,0);
   conservation(model.totals());
