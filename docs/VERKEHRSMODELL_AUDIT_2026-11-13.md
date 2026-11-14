@@ -73,3 +73,14 @@ Stand: 13.11.2026. Für dieses Projekt gelten **bundesweite, nicht streckenspezi
 - **Sperrendarstellung:** Stau-/Sperr-Overlay wird nach der kompletten grünen Straßenbasis gezeichnet. Die Auswahl-Markierung zeichnet nicht mehr nachträglich über die rot-weißen Sperrstreifen.
 - Die lokale Rampensperrung verwendet jetzt die tatsächliche Einmündungsposition innerhalb eines langen OSM-Ways. Die bloße Zugehörigkeit zum selben 26-km-Way genügt nicht mehr als Sperrgrund.
 - **Noch offen:** flächendeckende Validierung aller Knoten und echte OD-Umleitungsplanung. Bei einem unklaren AS-Korridor wird jetzt eine eindeutige Fehlermeldung statt einer falschen 200-m-Sperrung ausgegeben.
+
+## 14.11.2026 – SPCK 0.9: Screenshot-Regressionen
+
+1. **Fehlende Unfallstaus:** Es gab 48 Hauptfahrbahn-Ways mit verkehrter Richtung im alten Geometriedatensatz. Nach Normierung exakt gemeinsamer OSM-Endpunkte sind alle 821 A3- und 149 A48-Hauptfahrbahn-Ways im gerichteten Modell erreichbar.
+2. **Phantomstaus:** Das CTM hat zu kurze OSM-Ways mit einer Speicherkapazität unter der Fünf-Sekunden-Fahrzeugmenge behandelt. Außerdem verhinderten Innenabfahrten irrtümlich die Ausfahrt von Fahrzeugen am tatsächlichen Ende der Kartengeometrie. Virtuelles Zelllager und echte Netzend-Erkennung verhindern dies. Samstag 14 Uhr, 25 simulierte Minuten, ohne Ereignis: null Staugruppen im Snapshot.
+3. **Ereignis-Staumechanik:** Der Rückstau wird jetzt anhand der tatsächlichen Zellabflüsse und Bestände in eine beobachtete Geschwindigkeit übersetzt. Zufluss vor dem 2/3-Spuren-Unfall auf der dreispurigen A3 kann die Restkapazität von rund 1518 Kfz/h überschreiten und erzeugt Rückstau. Überlagerte Baustelle + Unfall können die Restkapazität noch stärker einschränken. Automatischer Abfahrts-Bypass ist nur für vorher bekannte Korridorsperrungen aktiviert.
+4. **Fehlerhafte AS-zu-AS-Sperrung:** Mehrfachprojektion derselben AS wurde dedupliziert, und die 75-km-Längenbegrenzung wurde entfernt. A3 AD Dernbach–Montabaur, A48 AK Koblenz–Koblenz-Nord und A565 Bonn-Auerberg–Bonn-Beuel-Nord sind regressionstestiert. Wenn der gerichtete Korridor tatsächlich unvollständig ist, muss weiter eine Fehlermeldung statt einer falschen Sperrung erscheinen.
+5. **Alte App-Regeln übernommen:** vorhandener Anfangsbestand (mit Bilanz), Verkehrsstrom/Bestands-Tempo, receiving/sending der Zellen, kollisionsfreie Platzierung der Stauhinweise und deduplizierte Darstellung. Keine blind übernommenen streckenspezifischen Sonderfälle.
+6. **iPhone-UI:** kleinere Fahrstreifen-Schaltflächen, sticky Aktionsleiste, weniger verdeckte Kartenfläche, kleine Sperricons auf realen gesperrten Rampen bei Zoom.
+
+**Ausstehend:** Nicht alle A565-/NRW-Teilstrecken sind mit kalibrierten Zielrouten-/Zuflussprofilen ausgestattet; automatische Tests sind kein manueller iPhone-Bildnachweis.
