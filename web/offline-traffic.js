@@ -1092,6 +1092,34 @@ function createLegacyTrafficScenario(data){
     for(let i=0;i<steps;i++)result=step(5,i===steps-1);
     return result;
   }
+  // Exact blocked access points for closure symbols. A closure can occupy
+  // only an interval of a long motorway Way; do NOT mark every ramp feeding
+  // the same Way outside that interval.
+  function closureAccessPoints(){
+    updateEffects();
+    const points=[],seen=new Set();
+    function add(edge,metre,id){
+      const key=edge.id+":"+Math.round(metre/20);
+      if(seen.has(key))return;
+      seen.add(key);
+      points.push({edgeId:edge.id,offsetM:Math.max(0,
+        Math.min(edge.lengthM-.001,metre)),eventId:id});
+    }
+    for(const edge of edges){
+      if(edge.kind!=="ramp")continue;
+      const own=(activeEffects.get(edge.id)||NO_EFFECTS)
+        .find(x=>x.derivedRampClosure);
+      if(own)add(edge,edge.lengthM*.7,own.event.id);
+      for(const turn of edge.links){
+        if(!blockedMovement(edge,turn))continue;
+        const target=edges[turn.to];
+        const match=(activeEffects.get(target.id)||NO_EFFECTS)
+          .find(x=>x.event.kind==="closure");
+        if(match)add(edge,turn.fromM,match.event.id);
+      }
+    }
+    return points;
+  }
   function edgeActivity(id){
     const edge=byId.get(id);
     if(!edge)return null;
@@ -1108,7 +1136,7 @@ function createLegacyTrafficScenario(data){
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
-    recommendedClosureLength,
+    recommendedClosureLength,closureAccessPoints,
     movementBlocked:(fromId,toId)=>{
       const from=byId.get(fromId);
       return !!from&&from.links.some(link=>edges[link.to].id===toId&&
