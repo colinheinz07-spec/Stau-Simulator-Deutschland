@@ -98,8 +98,9 @@ async function startLegacyCanvas(existingMap=null){
   const ramps=segments.filter(x=>x.kind==="ramp");
   $("chip-roads").textContent=format(segments.length)+" Fahrwege";
   $("chip-ramps").textContent=format(ramps.length)+" Rampen";
-  $("map-status").textContent=format(mainlines.length)+" Hauptfahrbahnen · "+
+  const baseMapStatus=format(mainlines.length)+" Hauptfahrbahnen · "+
     format(ramps.length)+" Rampen · "+scenario.sourceCount()+" Randzuflüsse";
+  $("map-status").textContent=baseMapStatus;
   $("sim-demand-value").textContent="100 %";
   const tiles=new Map();
   let width=0,height=0,zoom=8,center=merc([50.5,7.5]),
@@ -403,6 +404,36 @@ async function startLegacyCanvas(existingMap=null){
       context.fillText(symbols[event.kind]||"⚠️",x,y+6,25);
       eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,offsetM:event.offsetM});
     }
+    // Two endpoint markers per FULL motorway closure make the actual
+    // physical closed interval unmistakable: RED start at the last fork
+    // and GREEN return at the next real on-ramp. Never render another
+    // phantom closure at the junction-name label or at the finger tap.
+    if(zoom>=10.2&&typeof scenario.closureGatePoints==="function"){
+      for(const pin of scenario.closureGatePoints()){
+        const road=segmentById.get(pin.edgeId);
+        if(!road||!inView(road,scale))continue;
+        const [x,y]=pointAt(pointAlong(road,pin.offsetM));
+        if(x<18||x>width-18||y<109||y>height-59||
+          placed.some(p=>Math.hypot(p[0]-x,p[1]-y)<25))continue;
+        placed.push([x,y]);
+        const begin=pin.type==="start";
+        if(typeof context.arc==="function"&&typeof context.fill==="function"){
+          context.beginPath();context.arc(x,y,13,0,Math.PI*2);
+          context.fillStyle="#fff";context.fill();
+          context.beginPath();context.arc(x,y,10,0,Math.PI*2);
+          context.fillStyle=begin?"#aa263b":"#178052";context.fill();
+        }else{
+          context.fillStyle="#fff";context.fillRect(x-13,y-13,26,26);
+          context.fillStyle=begin?"#aa263b":"#178052";
+          context.fillRect(x-10,y-10,20,20);
+        }
+        context.font="bold 13px system-ui,Apple Color Emoji,sans-serif";
+        context.fillStyle="#fff";
+        context.fillText(begin?"⛔":"↗",x,y+5,20);
+        eventTargets.push({x,y,id:pin.eventId,edgeId:pin.edgeId,
+          offsetM:pin.offsetM});
+      }
+    }
     // Smaller access markers are shown ONLY on real blocked feeder ramp
     // geometry. Never scatter arbitrary ban icons across a whole OSM Way.
     if(zoom>=10.2){
@@ -458,6 +489,16 @@ async function startLegacyCanvas(existingMap=null){
   }
   function draw(){
     if(!width||!height)return;
+    // Show how many distinct saved closures are ACTIVE. Otherwise several
+    // old locally stored incidents can look like one ghost closure spreading
+    // into distant roads when the user creates another SPCK test event.
+    const activeClosures=scenario.activeEvents().filter(e=>e.kind==="closure");
+    const closureChip=$("chip-closures");
+    if(closureChip){
+      closureChip.hidden=activeClosures.length===0;
+      closureChip.textContent=activeClosures.length+
+        (activeClosures.length===1?" aktive Vollsperrung":" aktive Vollsperrungen");
+    }
     const dpr=clamp(window.devicePixelRatio||1,1,2);
     context.setTransform(dpr,0,0,dpr,0,0);
     context.fillStyle="#dae5e1";

@@ -80,6 +80,17 @@ function orientExistingMotorwayChains(data){
 }
 function createLegacyTrafficScenario(data){
   if(!data||!Array.isArray(data.roads))throw Error("Geprüfte lokale Kartendaten fehlen");
+  // Four imported motorway carriageways carry a readable motorway ID in
+  // their road NAME but a blank OSM 'ref' (e.g. A560, A559). Do not strand
+  // them outside the same generic AS-to-AS closure algorithm. Only infer a
+  // missing mainline ref when the signed ID is also corroborated by the
+  // imported junction catalog; never invent a ref from geographic proximity.
+  const knownRefs=new Set((data.junctions||[]).map(j=>j[0]));
+  for(const row of data.roads){
+    if(row[1]!=="mainline"||row[2])continue;
+    const match=/^A\d{1,3}\b/.exec(String(row[5]||""));
+    if(match&&knownRefs.has(match[0]))row[2]=match[0];
+  }
   const reversedWays=orientExistingMotorwayChains(data);
   const edges=[],outByNode=new Map(),inByNode=new Map(),byId=new Map();
   const rowById=new Map(data.roads.map(row=>[String(row[0]),row]));
@@ -522,8 +533,10 @@ function createLegacyTrafficScenario(data){
     const ix=ordered.findIndex(mark=>mark.position>=point);
     if(ix<=0)return null;
     const left=ordered[ix-1],right=ordered[ix];
+    // Distinct physical junctions may be centimetres or many kilometres
+    // apart. No minimum AS-to-AS length; only directed ordering matters.
     if(!right||left.junction[1]===right.junction[1]||
-      right.position-left.position<100)return null;
+      right.position<=left.position+.001)return null;
     // An AS centre is only a map LABEL, never the true legal closure gate.
     // Move upstream boundary to the last usable off-ramp split, and the
     // downstream boundary to the first actual on-ramp merge. This also
@@ -544,20 +557,38 @@ function createLegacyTrafficScenario(data){
           onMerges.push(base+turn.toM);
       }
     }
-    const nearestGate=(candidates,mark,lower,upper)=>{
-      const viable=candidates.filter(at=>
-        at>=Math.max(0,mark-1500)&&at<=mark+1500&&
-        at>lower&&at<upper);
-      viable.sort((a,b)=>Math.abs(a-mark)-Math.abs(b-mark)||a-b);
-      return viable[0];
+    // Assign *real* fork/merge graph nodes to their respective adjoining
+    // Anschlussstelle. The junction labels are approximate anchors, not gates.
+    // No fixed 140m / 450m / 1500m buffer is allowed to cut a long AD/AK
+    // in half or to leak the closure to the previous/next junction.
+    const nearestJunctionIndex=position=>{
+      let best=0,distance=Infinity;
+      for(let i=0;i<ordered.length;i++){
+        const delta=Math.abs(position-ordered[i].position);
+        if(delta<distance){distance=delta;best=i;}
+      }
+      return best;
     };
-    const startGate=nearestGate(offSplits,left.position,-1,point);
-    const endGate=nearestGate(onMerges,right.position,point,advance+1);
+    const startExits=offSplits.filter(at=>
+      nearestJunctionIndex(at)===ix-1&&at<point+.05);
+    // Last legal exit at the upstream junction is the START of closure.
+    const startGate=startExits.sort((a,b)=>b-a)[0];
+    // The downstream AS exit must lie INSIDE the closed interval. Only its
+    // subsequent on-ramp is the reentry gate. A merge from an earlier
+    // crossing interchange does not prematurely finish this section.
+    const downstreamExit=offSplits.filter(at=>
+      nearestJunctionIndex(at)===ix&&at>=point-.05)
+      .sort((a,b)=>a-b)[0];
+    const endMerges=onMerges.filter(at=>
+      nearestJunctionIndex(at)===ix&&
+      at>point+.05&&
+      (downstreamExit===undefined||at>downstreamExit+.05));
+    const endGate=endMerges.sort((a,b)=>a-b)[0];
     // Never let a guessed ramp gate reverse the tapped carriageway.
     const fromPosition=startGate??left.position;
     const toPosition=endGate??right.position;
     if(fromPosition>=point||toPosition<=point||
-      toPosition-fromPosition<100)return null;
+      toPosition<=fromPosition+.001)return null;
     const spans=[];
     for(const road of chain){
       const begin=starts.get(road.id),end=begin+road.lengthM;
@@ -619,7 +650,7 @@ function createLegacyTrafficScenario(data){
         label:"ausgewählte Auf-/Abfahrt",rampOnly:true}:null;
     }
     const corridor=motorwayCorridor(road,offsetM);
-    return corridor?{lengthM:Math.round(corridor.coveredLengthM),
+    return corridor?{lengthM:Math.max(1,Math.round(corridor.coveredLengthM)),
       label:corridor.fromLabel+" – "+corridor.toLabel,
       fromRealJunction:true}:null;
   }
@@ -644,8 +675,11 @@ function createLegacyTrafficScenario(data){
     if(kind==="closure"&&
       (closedLanes.length!==edge.lanes||shoulder==="open"))
       throw Error("Vollsperrung muss sämtliche vorhandenen Fahrstreifen schließen");
+    // For closures the physical AS-to-AS graph defines the length, NOT an
+    // editor-supplied metre cap. This also supports very short or long AS
+    // intervals without any distance-dependent closure behavior.
     const max=kind==="accident"||kind==="breakdown"?200:
-      kind==="roadworks"?20000:100000;
+      kind==="roadworks"?20000:Number.MAX_SAFE_INTEGER;
     const length=Number(raw.lengthM),offset=Number(raw.offsetM??0);
     if(!Number.isInteger(length)||length<1||length>max)
       throw Error("Ereignislänge muss zwischen 1 und "+max+" Metern liegen");
@@ -674,9 +708,10 @@ function createLegacyTrafficScenario(data){
       edge.kind==="mainline"?motorwayCorridor(edge,offset):
       edge.kind==="ramp"?rampCorridor(edge):null:null;
     if(kind==="closure"&&edge.kind==="mainline"&&
-      (data.junctions||[]).some(j=>j[0]===edge.ref)&&!physical)
+      (data.junctions||[]).length>0&&!physical)
       throw Error("Vollsperrung nicht gesetzt: Zwei verbundene Anschlussstellen "+
-        "in dieser Fahrtrichtung konnten nicht sicher ermittelt werden.");
+        "in dieser Fahrtrichtung konnten nicht sicher ermittelt werden. "+
+        "Fehlende OSM-Knoten werden nicht durch eine willkürliche Teilsperrung ersetzt.");
     const traceResult=physical||trace(edge,offset,length);
     if(physical){
       // Preserve the finger-selected event marker even though the physical
@@ -741,28 +776,47 @@ function createLegacyTrafficScenario(data){
         const arr=spansById.get(span.edgeId)||[];
         arr.push(span);spansById.set(span.edgeId,arr);
       }
+      // Follow the exact directed through-carriageway across arbitrarily
+      // many OSM Way boundaries. A 10-km-upstream on-ramp must remain OPEN
+      // when a later real exit exists before the gate; conversely, a ramp
+      // with NO legal exit until the barrier must be closed. Neither rule
+      // depends on a search radius, road fragment length or junction name.
+      const mainlineReachMemo=new Map();
       function leadsIntoClosed(link){
         const target=edges[link.to];
         if(closed.has(target.id))return true;
-        // Only the actual physical closure interval counts. A closure
-        // between A59 AS31 and AS32 must NEVER close AS35 at Wahn merely
-        // because both touch the same 26 km OSM Way.
-        return (spansById.get(target.id)||[]).some(span=>{
-          if(link.toM>=span.fromM-.05&&link.toM<span.toM-.05)
-            return true;
-          if(target.kind!=="mainline"||link.toM>=span.fromM)return false;
-          // A feeder may merge just BEFORE the closure on the same OSM
-          // Way. It is forbidden only if there is no legal exit between
-          // its real merge and the physical closure start.
-          const escape=target.links.some(turn=>{
+        if(target.kind!=="mainline")return false;
+        let current=target,position=link.toM;
+        const visited=new Set(),history=[];
+        const result=value=>{
+          for(const key of history)mainlineReachMemo.set(key,value);
+          return value;
+        };
+        for(let hops=0;hops<=edges.length;hops++){
+          const key=current.id+":"+Math.round(position*100);
+          if(mainlineReachMemo.has(key))
+            return result(mainlineReachMemo.get(key));
+          if(visited.has(key))return result(false);
+          visited.add(key);history.push(key);
+          const span=(spansById.get(current.id)||[])
+            .find(s=>s.toM>position+.05);
+          if(span&&position>=span.fromM-.05)
+            return result(true);
+          const gate=span?span.fromM:current.lengthM;
+          const escape=current.links.some(turn=>{
+            if(turn.fromM<position-.05||turn.fromM>gate+.05)return false;
             const other=edges[turn.to];
-            return turn.fromM>=link.toM-.05&&turn.fromM<span.fromM-.05&&
-              !closed.has(other.id)&&
+            return !closed.has(other.id)&&
               (other.kind==="ramp"||
-                other.kind==="mainline"&&other.ref!==target.ref);
+                other.kind==="mainline"&&other.ref!==current.ref);
           });
-          return !escape;
-        });
+          if(escape)return result(false);
+          if(span)return result(true);
+          const next=mainlineNext.get(current.id)||[];
+          if(next.length!==1)return result(false);
+          current=next[0];position=0;
+        }
+        return result(false);
       }
       // Repeated fixed-point resolution covers ramp->ramp->mainline chains,
       // independent of OSM Way fragments.
@@ -770,6 +824,9 @@ function createLegacyTrafficScenario(data){
       let changed=true,iterations=0;
       while(changed&&iterations++<edges.length){
         changed=false;
+        // Newly closed exclusive ramp branches can invalidate an earlier
+        // apparent "escape"; recompute reachability to fixed point.
+        mainlineReachMemo.clear();
         for(const edge of edges){
           if(edge.kind!=="ramp"||closed.has(edge.id)||!edge.links.length)continue;
           if(edge.links.every(leadsIntoClosed)){
@@ -1219,13 +1276,58 @@ function createLegacyTrafficScenario(data){
     const target=edges[turn.to];
     if(!target||visited.has(target.id))return false;
     if(target.kind==="mainline")
-      return closureDistanceAhead(target,turn.toM,16000)===Infinity;
+      return closureDistanceAhead(target,turn.toM,Infinity)===Infinity;
     visited.add(target.id);
     if(!target.links.length)return true;
     for(const move of target.links){
       if(isUsableEscape(target,move,new Set(visited),depth+1))return true;
     }
     return false;
+  }
+  // Do not force diverted vehicles off at every AS on the approach.
+  // Find whether a LATER usable exit/alternative fork exists BEFORE the
+  // first physical closure gate, following only real directed through-links.
+  // No kilometre or radius threshold decides which AS is the last exit.
+  const laterExitMemo=new Map();
+  let laterExitEpoch=-1;
+  function laterUsableExitBeforeClosure(road,offset){
+    if(laterExitEpoch!==exposureEpoch){
+      laterExitMemo.clear();laterExitEpoch=exposureEpoch;
+    }
+    const key=road.id+":"+Math.round(offset*100);
+    if(laterExitMemo.has(key))return laterExitMemo.get(key);
+    const pending=[{edge:road,offset}],visited=new Set();
+    let result=false;
+    for(let i=0;i<pending.length&&i<2000&&!result;i++){
+      const {edge,offset:from}=pending[i];
+      const visit=edge.id+":"+Math.round(from*10);
+      if(visited.has(visit))continue;
+      visited.add(visit);
+      let gate=edge.lengthM+.1;
+      for(const item of activeEffects.get(edge.id)||NO_EFFECTS){
+        if(item.event.kind!=="closure")continue;
+        if(item.fromM<=from+.01&&item.toM>from+.01){
+          gate=from;break;
+        }
+        if(item.fromM>from+.01)gate=Math.min(gate,item.fromM);
+      }
+      if(gate<=from+.05)continue;
+      for(const link of edge.links){
+        const next=edges[link.to];
+        if(link.fromM>from+.05&&link.fromM<gate-.05&&
+          (next.kind==="ramp"||
+            next.kind==="mainline"&&next.ref!==road.ref)&&
+          isUsableEscape(edge,link)){
+          result=true;break;
+        }
+        if(next.kind==="mainline"&&next.ref===road.ref&&
+          link.fromM>=edge.lengthM-.1&&
+          link.fromM<=gate+.05&&!blockedMovement(edge,link))
+          pending.push({edge:next,offset:link.toM});
+      }
+    }
+    laterExitMemo.set(key,result);
+    return result;
   }
   // Macro detours: the SPCK file contains true OSM motorway exits/entrances
   // but NOT all intervening city and country roads. We therefore do not draw
@@ -1292,7 +1394,7 @@ function createLegacyTrafficScenario(data){
           if(next.kind!=="mainline"||next.ref!==endEdge.ref||
             downstream.has(next.id))continue;
           const metres=base+Math.max(0,remaining);
-          if(metres>60000)continue;
+          if(metres>60000&&obstacle.spec.kind!=="closure")continue;
           downstream.set(next.id,metres);queue.push(next);
         }
       }
@@ -1309,7 +1411,8 @@ function createLegacyTrafficScenario(data){
           // exact end of the blocked mainline (distance 0). Requiring
           // 80 metres beyond the closure silently discarded that ramp and
           // stranded diverted drivers despite a lawful open reentry.
-          if(!(distance>=-.05&&distance<60000))continue;
+          if(!(distance>=-.05&&
+            (obstacle.spec.kind==="closure"||distance<60000)))continue;
           // A long OSM interchange can have several ramp pieces. Treat an
           // Anschlussstelle as ONE candidate, not three phantom destinations.
           const junction=(ramp.name.split(" · ")[0]||ramp.id)
@@ -1332,8 +1435,8 @@ function createLegacyTrafficScenario(data){
           const first=edges[turn.to];
           const fullClosure=obstacle.spec.kind==="closure";
           const affected=fullClosure?
-            closureDistanceAhead(main,turn.fromM,16000)!==Infinity||
-              closureExposureAhead(main,turn.fromM)>0:
+            closureDistanceAhead(main,turn.fromM,Infinity)!==Infinity||
+              closureExposureAhead(main,turn.fromM,Infinity)>0:
             measuredDelayAhead(main,turn.fromM)>=45;
           if(first.kind!=="ramp"||!affected)continue;
           const pending=[first],seen=new Set();
@@ -1496,7 +1599,7 @@ function createLegacyTrafficScenario(data){
           edges[link.to].kind==="ramp"||
           edges[link.to].kind==="mainline"&&edges[link.to].ref!==edge.ref)){
           const distance=anyClosureActive?
-            closureDistanceAhead(edge,k*edge.cellLength,16000):Infinity;
+            closureDistanceAhead(edge,k*edge.cellLength,Infinity):Infinity;
           // Avoid expensive downstream route searches when there is no
           // closure nearby and less than 45 min measured delay.
           // At a last Autobahn-to-Autobahn split, keep the OPEN direction
@@ -1504,8 +1607,21 @@ function createLegacyTrafficScenario(data){
           // enters the closed one. Earlier same-ref mainline exits can absorb
           // that diversion before vehicles reach the terminal interchange.
           const closureShare=Number.isFinite(distance)?1:
-            anyClosureActive?closureExposureAhead(edge,k*edge.cellLength):0;
-          const share=Math.max(closureShare,
+            anyClosureActive?closureExposureAhead(edge,k*edge.cellLength,Infinity):0;
+          // If motorists can still leave at a later OPEN AS/AK fork before
+          // the closure, they must not all be forced off here kilometres
+          // upstream. Ordinary local AS traffic retains its usual split.
+          // Only at the LAST legal exit does the closure force 100% of
+          // obstructed through traffic onto an alternative.
+          const currentAlternatives=legalTurns.filter(link=>{
+            const next=edges[link.to];
+            return (next.kind==="ramp"||
+              next.kind==="mainline"&&next.ref!==edge.ref)&&
+              isUsableEscape(edge,link);
+          });
+          const hasLaterExit=closureShare>0&&currentAlternatives.some(link=>
+            laterUsableExitBeforeClosure(edge,link.fromM));
+          const share=hasLaterExit?0:Math.max(closureShare,
             diversionShare(measuredDelayAhead(edge,k*edge.cellLength)));
           if(share>0){
             const alternatives=legalTurns.filter(link=>{
@@ -1723,6 +1839,28 @@ function createLegacyTrafficScenario(data){
     for(let i=0;i<steps;i++)result=step(5,i===steps-1);
     return result;
   }
+  // Physical gate endpoints for the map. One START and one REOPEN per
+  // directed motorway closure; they come from the exact same OSM spans
+  // that the physics and red/white overlay use. No invented map points.
+  function closureGatePoints(){
+    const result=[],at=clockMs();
+    for(const record of eventRecords.values()){
+      if(record.spec.kind!=="closure"||
+        record.spec.schedule&&
+          !global.StauEventSchedule.active(record.spec.schedule,at))continue;
+      const mainSpans=record.spans.filter(span=>
+        byId.get(span.edgeId)?.kind==="mainline");
+      if(!mainSpans.length)continue;
+      const first=mainSpans[0],last=mainSpans.at(-1);
+      const endRoad=byId.get(last.edgeId);
+      result.push({eventId:record.spec.id,type:"start",
+        edgeId:first.edgeId,offsetM:first.fromM});
+      result.push({eventId:record.spec.id,type:"reopen",
+        edgeId:last.edgeId,
+        offsetM:Math.max(0,Math.min(endRoad.lengthM-.001,last.toM))});
+    }
+    return result;
+  }
   // Exact blocked access points for closure symbols. A closure can occupy
   // only an interval of a long motorway Way; do NOT mark every ramp feeding
   // the same Way outside that interval.
@@ -1790,7 +1928,7 @@ function createLegacyTrafficScenario(data){
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
-    recommendedClosureLength,closureAccessPoints,
+    recommendedClosureLength,closureAccessPoints,closureGatePoints,
     movementBlocked:(fromId,toId)=>{
       const from=byId.get(fromId);
       return !!from&&from.links.some(link=>edges[link.to].id===toId&&

@@ -109,7 +109,7 @@ function createOfflineEventEditor(options){
   function refreshLength(){
     const isClosure=kind.value==="closure";
     const max=kind.value==="accident"||kind.value==="breakdown"?200:
-      isClosure?100000:20000;
+      isClosure?Number.MAX_SAFE_INTEGER:20000;
     length.max=String(max);
     const isRoad=isClosure&&current?.kind==="mainline";
     nextClosureJunction=isClosure&&current?
@@ -127,8 +127,7 @@ function createOfflineEventEditor(options){
         ". BEIDE AS-Grenzen automatisch verbindlich · "+
         "ausschließlich hineinführende Zufahrten werden mitgesperrt.";
     }else if(isClosure&&current?.kind==="ramp"&&nextClosureJunction?.rampOnly){
-      status.textContent="Nur diese Auf-/Abfahrt ("+
-        nextClosureJunction.lengthM+" m) wird gesperrt. "+
+      status.textContent="Nur diese Auf-/Abfahrt wird gesperrt. "+
         "Die Autobahn-Hauptfahrbahn und andere Rampen bleiben offen.";
     }else if(isRoad){
       status.textContent="Kein sicherer Abschnitt zwischen zwei Anschlussstellen "+
@@ -258,7 +257,13 @@ function createOfflineEventEditor(options){
   function save(ev){
     const result=scenario.setEvent(ev);
     persist();renderList();redraw();closeForm();closeDrawer();
-    notify(result.truncated?
+    if(result.kind==="closure"){
+      notify("Vollsperrung gespeichert: "+
+        (result.closureFrom&&result.closureTo?
+          result.closureFrom+" → "+result.closureTo:
+          "ausschließlich die ausgewählte Rampe")+
+        " · "+calendar.label(result.schedule));
+    }else notify(result.truncated?
       "Ereignis gespeichert, aber nur "+Math.round(result.coveredLengthM)+
       " von "+result.lengthM+" m topologisch eindeutig nutzbar.":
       "Ereignis gespeichert: "+NAMES[result.kind]+
