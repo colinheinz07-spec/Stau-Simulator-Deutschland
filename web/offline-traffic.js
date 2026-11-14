@@ -888,10 +888,14 @@ function createLegacyTrafficScenario(data){
         const distance=travelled+item.fromM-from;
         if(distance<=maxDistance)return distance;
       }
-      const next=current.next.filter(link=>{
-        const target=edges[link.to];
-        return target.kind==="mainline"&&target.ref===edge.ref;
-      });
+      // Keep the same motorway where it continues. But when a route ends
+      // directly into exactly one OTHER motorway (e.g. A59→A3 at Heumar),
+      // look ahead across that true directed OSM connection as well. Without
+      // this, A59 cars would stop at the A3 barrier instead of exiting early.
+      const through=current.next.filter(link=>
+        edges[link.to].kind==="mainline"&&!visited.has(edges[link.to].id));
+      const same=through.filter(link=>edges[link.to].ref===current.ref);
+      const next=same.length===1?same:!same.length&&through.length===1?through:[];
       if(next.length!==1)return Infinity;
       travelled+=current.lengthM-from;
       current=edges[next[0].to];from=0;
@@ -1022,7 +1026,13 @@ function createLegacyTrafficScenario(data){
             breakdown?(open===1?.78:.87):
             roadworks?(open===1?.80:.90):1;
         }
-        const cap=open*edge.capacityPerLane*restriction*dt/3600;
+        // Discharge hysteresis: closely spaced queued vehicles require
+        // reaction/headway time after braking. Avoid a one-tick jump from a
+        // standstill queue to full free-flow service after event removal.
+        // 5–10% loss is a model assumption, not a measured regional factor.
+        const density=stock[k]/Math.max(.001,edge.jamPerCell);
+        const restartFactor=density>.60?.90:density>.42?.95:1;
+        const cap=open*edge.capacityPerLane*restriction*restartFactor*dt/3600;
         const moving=Math.min(1,(permitted/3.6)*dt/edge.cellLength);
         // Block receiving at the first closure cell, but let already-present
         // vehicles discharge through the closed section's downstream cells.
@@ -1292,6 +1302,10 @@ function createLegacyTrafficScenario(data){
     normalizedReversedWays:()=>[...reversedWays],
     migrateLegacyEvent,
     diversionShare,
+    closureDistanceAhead:(id,offsetM=0,maxDistance=16000)=>{
+      const edge=byId.get(id);
+      return edge?closureDistanceAhead(edge,offsetM,maxDistance):Infinity;
+    },
     sourceProfiles:()=>sources.map(edge=>({id:edge.id,ref:edge.ref,
       direction:edge.directionKey,peakVph:edge.referencePeakVph,
       kind:edge.kind,name:edge.name})),
