@@ -1675,6 +1675,10 @@ function createLegacyTrafficScenario(data){
         if(!blockedMovement(edge,turn))continue;
         const target=edges[turn.to];
         if(edge.kind==="mainline"&&target.ref===edge.ref)continue;
+        // The blocked ramp already has a pin at its own physical entrance.
+        // Do not put a second prohibition sign on the OPEN parent road.
+        if(target.kind==="ramp"&&(activeEffects.get(target.id)||NO_EFFECTS)
+          .some(x=>x.event.kind==="closure"&&x.fromM<.1))continue;
         const match=(activeEffects.get(target.id)||NO_EFFECTS)
           .find(x=>x.event.kind==="closure");
         if(match)add(edge,turn.fromM,match.event.id);
