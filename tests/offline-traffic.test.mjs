@@ -446,6 +446,38 @@ test("real OSM exit plus downstream real OSM on-ramp allow a conserved timed div
   conservation(model.totals());
 });
 
+test("traffic uses FIRST lawful post-closure on-ramp by default; farther OD groups return later with conservation",async()=>{
+  const sim=(await engine())({roads:[
+    ["up","mainline","A3",3,[[50,7],[50,7.012],[50,7.020]],"",11],
+    ["closed","mainline","A3",3,[[50,7.020],[50,7.040]],"",12],
+    ["after","mainline","A3",3,[[50,7.040],[50,7.046],[50,7.056],[50,7.066],[50,7.080]],"",13],
+    ["off","ramp","A3",1,[[50,7.012],[50.006,7.014]],"AS 10 Test-Ausfahrt · Abfahrt von A3",14],
+    ["near","ramp","A3",1,[[50.006,7.046],[50,7.046]],"AS 11 Direkt dahinter · Auffahrt auf A3",15],
+    ["far","ramp","A3",1,[[50.006,7.056],[50,7.056]],"AS 12 Weiterfahrt · Auffahrt auf A3",16],
+    ["farthest","ramp","A3",1,[[50.006,7.066],[50,7.066]],"AS 13 Fernziel · Auffahrt auf A3",17]
+  ]});
+  sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  sim.warmStart();
+  sim.setEvent({id:"closure",edgeId:"closed",kind:"closure",
+    offsetM:0,lengthM:1100,closedLanes:[0,1,2],speedKmh:0,
+    hasShoulder:false,shoulder:"normal"});
+  sim.advance(1);
+  const plan=sim.detourPlans().find(p=>p.terminalEdgeId==="off");
+  assert.ok(plan,"real upstream exit must be used");
+  assert.equal(plan.reentryEdgeId,"near","default return must be at the NEXT motorway entrance");
+  assert.equal(plan.reentries.length,3);
+  assert.deepEqual(Array.from(plan.reentries,x=>x.edgeId),["near","far","farthest"]);
+  assert.ok(plan.reentries[0].weight>.8,"most journeys should return at the first usable AS");
+  assert.ok(Math.abs(plan.reentries.reduce((n,x)=>n+x.weight,0)-1)<1e-10);
+  for(let i=0;i<100;i++)sim.advance(12);
+  assert.ok(sim.totals().detouredVehicles>20);
+  assert.ok(sim.totals().returnedVehicles>10);
+  assert.ok(sim.edgeActivity("near").enteredVph>0||
+    sim.edgeActivity("far").enteredVph>0);
+  assert.ok(sim.totals().vehiclesOnDetours>=0);
+  conservation(sim.totals());
+});
+
 test("no identified downstream OSM entrance means no invented returning cars",async()=>{
   const model=(await engine())({roads:[
     ["a","mainline","A3",3,[[50,7],[50,7.012],[50,7.020]],"",11],
