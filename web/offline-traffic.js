@@ -80,6 +80,17 @@ function orientExistingMotorwayChains(data){
 }
 function createLegacyTrafficScenario(data){
   if(!data||!Array.isArray(data.roads))throw Error("Geprüfte lokale Kartendaten fehlen");
+  // Four imported motorway carriageways carry a readable motorway ID in
+  // their road NAME but a blank OSM 'ref' (e.g. A560, A559). Do not strand
+  // them outside the same generic AS-to-AS closure algorithm. Only infer a
+  // missing mainline ref when the signed ID is also corroborated by the
+  // imported junction catalog; never invent a ref from geographic proximity.
+  const knownRefs=new Set((data.junctions||[]).map(j=>j[0]));
+  for(const row of data.roads){
+    if(row[1]!=="mainline"||row[2])continue;
+    const match=/^A\\d{1,3}\\b/.exec(String(row[5]||""));
+    if(match&&knownRefs.has(match[0]))row[2]=match[0];
+  }
   const reversedWays=orientExistingMotorwayChains(data);
   const edges=[],outByNode=new Map(),inByNode=new Map(),byId=new Map();
   const rowById=new Map(data.roads.map(row=>[String(row[0]),row]));
