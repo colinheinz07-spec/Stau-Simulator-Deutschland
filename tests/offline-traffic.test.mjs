@@ -467,7 +467,10 @@ test("traffic uses FIRST lawful post-closure on-ramp by default; farther OD grou
   assert.equal(plan.reentryEdgeId,"near","default return must be at the NEXT motorway entrance");
   assert.equal(plan.reentries.length,3);
   assert.deepEqual(Array.from(plan.reentries,x=>x.edgeId),["near","far","farthest"]);
-  assert.ok(plan.reentries[0].weight>.8,"most journeys should return at the first usable AS");
+  assert.equal(plan.reentries[0].weight,1,
+    "without real OD data ALL through traffic returns at the first lawful AS");
+  assert.equal(plan.reentries[1].weight,0);
+  assert.equal(plan.reentries[2].weight,0);
   assert.ok(Math.abs(plan.reentries.reduce((n,x)=>n+x.weight,0)-1)<1e-10);
   for(let i=0;i<100;i++)sim.advance(12);
   assert.ok(sim.totals().detouredVehicles>20);
