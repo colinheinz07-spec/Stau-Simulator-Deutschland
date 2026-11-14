@@ -94,3 +94,14 @@ npm run check
 Die Prüfkette baut zunächst TypeScript, führt Modelltests aus und prüft die Fahrbeziehungen.
 
 *OSM-Daten werden künftig unter Einhaltung der ODbL und geeigneter Quellenhinweise eingebunden.*
+
+
+## SPCK 0.9.1 – Stauauflösung, Abfahrten und Sperrampeln
+
+- Die lokale Zellfluss-Simulation und die Darstellung sind getrennt: kurze isolierte verlangsamte OSM-Ways werden bei Übersichtsstufen nicht mehr als rote Punkte gezeichnet. Zusammenhängende Staus und die Stauwerte bleiben modellberechnet; höhere Zoomstufen bleiben detaillierter.
+- Bei einer Vollsperrung zwischen **zwei realen Anschlussstellen** werden alle real erfassten Einfahrten und Fahrbeziehungen in die geschlossene Richtung blockiert. Die offene Gegenfahrbahn und offene andere Autobahnen bleiben in Betrieb. So ist beispielsweise A59→A3 im betroffenen Kölner-Heumar-Fall verboten, ohne die gesamte A59 zu schließen.
+- Vor einem erkannten Vollsperrungsabschnitt wird der vorhandene Verkehr an der nächsten erreichbaren **zulässigen** Umleitungsmöglichkeit abgeleitet. Eine volle einspurige Abfahrt verursacht stattdessen einen physisch beschränkten Rückstau vor der Verzweigung; Fahrzeuge dürfen deswegen nicht an der Ausfahrt vorbei in die Sperrung fahren. Schon innerhalb der Vollsperrung befindliche Fahrzeuge fließen wie bisher ab.
+- Die Annahme für **freiwillige** Abfahrten bei Verzögerungen wird ab 45 Minuten erhöht und erreicht bei 240 Minuten 100 % Umleitungsbereitschaft. Dies ist eine Verhaltensregel, keine gemessene Deutschlandquote; tatsächlich stattfindende Abbiegungen bleiben auf vorhandene, legal fahrbare OSM-Verbindungen und Rampenkapazitäten beschränkt.
+- Leichte modellierte Anfahrverluste bei sehr hohen Zelldichten vermeiden eine schlagartige Vollkapazität nach Stauauflösung. Vorhandene Unfall- und Baustellen-Engpässe bleiben kapazitätsgesteuert und fahrzeugbilanziert.
+
+**Wichtige fachliche Einschränkung:** Die lokale Karte enthält Autobahnen und Rampen, aber kein lückenloses Straßennetz zwischen allen Anschlussstellen. Eine Ausfahrt in eine unmodellierte Straße ist ein Netzabfluss; das Fahrzeug kann ohne echte weiterführende Geometrie und belastbare OD-Ziele **nicht** hinter dem Stau wieder aufgefahren werden. Für vollständige Autobahn-zu-Autobahn-Umleitungen mit wiederkehrenden Fahrten braucht die spätere importbasierte OD-Engine reale Alternativrouten und Zielwahl. Außerdem muss der Vollständigkeitsstatus der Kölner Verbindungsketten auf dem iPhone weiterhin geprüft werden.
