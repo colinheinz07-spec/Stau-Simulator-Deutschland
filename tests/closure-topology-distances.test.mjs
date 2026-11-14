@@ -83,3 +83,41 @@ test("missing AS topology rejects motorway full closure instead of painting arbi
   assert.equal(sim.closureBands("unknown").length,0,
     "no arbitrary partial closure or unrelated no-entry badges");
 });
+
+test("feeder closure respects last open exit across OSM Way boundaries, never road length",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const sim=window.createLegacyTrafficScenario({roads:[
+    ["upstream","mainline","A3",3,
+      [[50,7],[50,7.015],[50,7.020]],"",1],
+    ["intermediate","mainline","A3",3,
+      [[50,7.020],[50,7.030],[50,7.035],[50,7.040]],"",2],
+    ["blocked","mainline","A3",3,
+      [[50,7.040],[50,7.060]],"",3],
+    ["beyond","mainline","A3",3,
+      [[50,7.060],[50,7.070]],"",4],
+    ["early-on","ramp","A3",1,
+      [[50.004,7.015],[50,7.015]],"AS Früh · Auffahrt auf A3",11],
+    ["last-off","ramp","A3",1,
+      [[50,7.030],[50.005,7.030]],"AS Letzte · Abfahrt von A3",12],
+    ["late-on","ramp","A3",1,
+      [[50.004,7.035],[50,7.035]],"AS Zu spät · Auffahrt auf A3",13],
+    ["return-on","ramp","A3",1,
+      [[50.004,7.070],[50,7.070]],"AS Hinten · Auffahrt auf A3",14]
+  ]});
+  sim.setEvent({id:"multi-way",edgeId:"blocked",kind:"closure",
+    offsetM:0,lengthM:700,closedLanes:[0,1,2],
+    speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.equal(sim.closureBands("early-on").length,0,
+    "incoming ramp before LAST available off-ramp stays OPEN even over other OSM Ways");
+  assert.equal(sim.closureBands("last-off").length,0,
+    "last off-ramp must be usable");
+  assert.ok(sim.closureBands("late-on").length>0,
+    "ramp after last off-ramp cannot feed the physical closure on another OSM Way");
+  assert.equal(sim.closureBands("return-on").length,0,
+    "open motorway reentry after obstruction is unaffected");
+  assert.equal(sim.movementBlocked("intermediate","late-on"),true);
+  for(let i=0;i<12;i++)sim.advance(12);
+  assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
+});
