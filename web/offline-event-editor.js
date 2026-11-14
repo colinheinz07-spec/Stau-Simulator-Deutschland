@@ -109,7 +109,7 @@ function createOfflineEventEditor(options){
   function refreshLength(){
     const isClosure=kind.value==="closure";
     const max=kind.value==="accident"||kind.value==="breakdown"?200:
-      isClosure?100000:20000;
+      isClosure?Number.MAX_SAFE_INTEGER:20000;
     length.max=String(max);
     const isRoad=isClosure&&current?.kind==="mainline";
     nextClosureJunction=isClosure&&current?
