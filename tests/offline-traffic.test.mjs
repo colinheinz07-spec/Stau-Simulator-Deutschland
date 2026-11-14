@@ -369,6 +369,36 @@ test("A3 Heumar–Köln-Ost closure blocks the A59 feeder turn but leaves A59 th
     "the unavailable transition is marked instead of painting A59 closed");
 });
 
+test("cars already inside a road closure evacuate, but a separate three-lane crash stops them",async()=>{
+  const make=await engine();
+  const roads={roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.018]],"",11],
+    ["b","mainline","A3",3,[[50,7.018],[50,7.058]],"",12]
+  ]};
+  const evacuated=make(structuredClone(roads));
+  const crashed=make(structuredClone(roads));
+  const date=Date.parse("2026-11-13T15:51:00Z");
+  for(const sim of [evacuated,crashed]){
+    sim.setSimulationStart(date);
+    sim.warmStart();
+    sim.setEvent({id:"road-closed",edgeId:"b",kind:"closure",
+      offsetM:0,lengthM:2600,closedLanes:[0,1,2],speedKmh:0,
+      hasShoulder:false,shoulder:"normal"});
+  }
+  crashed.setEvent({id:"full-crash",edgeId:"b",kind:"accident",
+    offsetM:600,lengthM:100,closedLanes:[0,1,2],speedKmh:0,
+    hasShoulder:false,shoulder:"normal"});
+  for(let i=0;i<3;i++){
+    evacuated.advance(12);
+    crashed.advance(12);
+  }
+  const freeExit=evacuated.edgeActivity("b",620).sectionVph;
+  const crashExit=crashed.edgeActivity("b",620).sectionVph;
+  assert.ok(freeExit>100,"existing cars can leave a closed but physically clear road");
+  assert.ok(crashExit<1,"a full lane-blocking accident prevents internal evacuation traffic");
+  conservation(evacuated.totals());conservation(crashed.totals());
+});
+
 test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and blocks A3 entering turn",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
