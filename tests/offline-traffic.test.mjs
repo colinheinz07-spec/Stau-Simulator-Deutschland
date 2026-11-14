@@ -483,6 +483,30 @@ test("real Montabaur full closure identifies real upstream ramp and downstream m
   conservation(sim.totals());
 });
 
+test("real A3 Heumar to Köln-Ost closure offers a genuine A59 upstream off-ramp and A3 reentry",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  const event=sim.setEvent({id:"koeln-heumar",edgeId:"A3-132624375",
+    kind:"closure",closedLanes:[0,1,2],offsetM:3,lengthM:200,
+    speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  assert.match(event.closureFrom,/A3 28 AD Köln-Heumar/);
+  assert.match(event.closureTo,/A3 27 AK Köln-Ost/);
+  sim.advance(1);
+  const plans=sim.detourPlans();
+  assert.ok(plans.some(x=>x.closureId==="koeln-heumar"&&
+    x.terminalEdgeId.startsWith("extra-heumar-")&&
+    x.reentryEdgeId.startsWith("extra-heumar-")),
+    "must identify real A59 off-ramp and after-closure A3 entrance; actual "+
+    JSON.stringify(plans.slice(0,10))+"; A3 ramp sources="+
+    JSON.stringify(sim.sourceProfiles().filter(x=>x.kind==="ramp"&&
+      (x.ref==="A3"||x.ref==="A59")).map(x=>({id:x.id,name:x.name,direction:x.direction})).slice(0,28))+
+    "; A59 lookahead "+sim.closureDistanceAhead("extra-a59-koeln",16000,16000));
+  conservation(sim.totals());
+});
+
 test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and blocks A3 entering turn",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
