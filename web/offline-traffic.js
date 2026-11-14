@@ -1245,6 +1245,51 @@ function createLegacyTrafficScenario(data){
     }
     return false;
   }
+  // Do not force diverted vehicles off at every AS on the approach.
+  // Find whether a LATER usable exit/alternative fork exists BEFORE the
+  // first physical closure gate, following only real directed through-links.
+  // No kilometre or radius threshold decides which AS is the last exit.
+  const laterExitMemo=new Map();
+  let laterExitEpoch=-1;
+  function laterUsableExitBeforeClosure(road,offset){
+    if(laterExitEpoch!==exposureEpoch){
+      laterExitMemo.clear();laterExitEpoch=exposureEpoch;
+    }
+    const key=road.id+":"+Math.round(offset*100);
+    if(laterExitMemo.has(key))return laterExitMemo.get(key);
+    const pending=[{edge:road,offset}],visited=new Set();
+    let result=false;
+    for(let i=0;i<pending.length&&i<2000&&!result;i++){
+      const {edge,offset:from}=pending[i];
+      const visit=edge.id+":"+Math.round(from*10);
+      if(visited.has(visit))continue;
+      visited.add(visit);
+      let gate=edge.lengthM+.1;
+      for(const item of activeEffects.get(edge.id)||NO_EFFECTS){
+        if(item.event.kind!=="closure")continue;
+        if(item.fromM<=from+.01&&item.toM>from+.01){
+          gate=from;break;
+        }
+        if(item.fromM>from+.01)gate=Math.min(gate,item.fromM);
+      }
+      if(gate<=from+.05)continue;
+      for(const link of edge.links){
+        const next=edges[link.to];
+        if(link.fromM>from+.05&&link.fromM<gate-.05&&
+          (next.kind==="ramp"||
+            next.kind==="mainline"&&next.ref!==road.ref)&&
+          isUsableEscape(edge,link)){
+          result=true;break;
+        }
+        if(next.kind==="mainline"&&next.ref===road.ref&&
+          link.fromM>=edge.lengthM-.1&&
+          link.fromM<=gate+.05&&!blockedMovement(edge,link))
+          pending.push({edge:next,offset:link.toM});
+      }
+    }
+    laterExitMemo.set(key,result);
+    return result;
+  }
   // Macro detours: the SPCK file contains true OSM motorway exits/entrances
   // but NOT all intervening city and country roads. We therefore do not draw
   // fictitious streets. Eligible traffic uses its REAL OSM off-ramp, travels
@@ -1523,7 +1568,20 @@ function createLegacyTrafficScenario(data){
           // that diversion before vehicles reach the terminal interchange.
           const closureShare=Number.isFinite(distance)?1:
             anyClosureActive?closureExposureAhead(edge,k*edge.cellLength):0;
-          const share=Math.max(closureShare,
+          // If motorists can still leave at a later OPEN AS/AK fork before
+          // the closure, they must not all be forced off here kilometres
+          // upstream. Ordinary local AS traffic retains its usual split.
+          // Only at the LAST legal exit does the closure force 100% of
+          // obstructed through traffic onto an alternative.
+          const currentAlternatives=legalTurns.filter(link=>{
+            const next=edges[link.to];
+            return (next.kind==="ramp"||
+              next.kind==="mainline"&&next.ref!==edge.ref)&&
+              isUsableEscape(edge,link);
+          });
+          const hasLaterExit=closureShare>0&&currentAlternatives.some(link=>
+            laterUsableExitBeforeClosure(edge,link.fromM));
+          const share=hasLaterExit?0:Math.max(closureShare,
             diversionShare(measuredDelayAhead(edge,k*edge.cellLength)));
           if(share>0){
             const alternatives=legalTurns.filter(link=>{
