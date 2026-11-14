@@ -505,6 +505,12 @@ test("AD Dernbach A3 Frankfurt closure closes FULL A48 to Frankfurt ramp and blo
     "A48 traffic near AS Höhr-Grenzhausen must anticipate Frankfurt closure "+
     "before the final AD Dernbach fork, risk "+approaching);
   sim.warmStart();
+  sim.advance(1);
+  const plans=sim.detourPlans();
+  assert.ok(plans.some(p=>/extra-heumar-/.test(p.terminalEdgeId)&&
+    /extra-heumar-/.test(p.reentryEdgeId)),
+    "a real early A48 exit must be offered as a detour to real A3 after closure; "+
+    JSON.stringify(plans.slice(0,8)));
   const initial=sim.edgeActivity(frankfurt).vehicles;
   for(let i=0;i<9;i++)sim.advance(12);
   assert.ok(sim.edgeActivity(frankfurt).vehicles<Math.max(.2,initial*.1),
