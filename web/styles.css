@@ -233,3 +233,44 @@
 #detail-flow{font-variant-numeric:tabular-nums;font-size:12px;line-height:1.35}
 
 .legend-swatch.unknown{background:#8095a4}
+
+/* v0.9: compact mobile traffic scenario editor, without horizontal controls.
+ * Keep the form usable while long 3-lane incidents and schedules are visible. */
+@media(max-width:850px){
+  .canvas-preview .coverage{
+    max-width:min(225px,65vw);box-shadow:0 5px 15px #0c1b2c2a;
+    border-radius:12px;
+  }
+  .canvas-preview .map-chips{max-width:105px;font-size:10px}
+  .canvas-preview .map-status{
+    max-width:calc(100% - 92px);font-size:10px;line-height:1.4;
+    border-radius:10px;padding:6px 9px;
+  }
+  .detail-drawer{
+    padding:14px 14px calc(20px + env(safe-area-inset-bottom));
+    border-radius:19px 19px 0 0;
+  }
+  .detail-drawer .drawer-handle{margin-bottom:7px}
+  .incident-form{margin-top:10px;padding-top:10px}
+  .event-lane-set{margin:8px 0;padding:9px}
+  .event-lanes{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .event-check{min-height:44px;padding:7px;gap:6px;font-size:11px}
+  .event-check input{width:17px;height:17px}
+  .field-label{font-size:11px;margin:8px 0}
+  .field-label input,.field-label select{font-size:13px;min-height:43px}
+  .incident-form .event-help{
+    padding:9px 11px;border-radius:9px;background:#233b4f;
+    line-height:1.55;font-size:11px;
+  }
+  .event-form-actions{
+    position:sticky;bottom:0;z-index:2;
+    background:#14283aea;padding:10px 0 calc(5px + env(safe-area-inset-bottom));
+    margin-top:10px;backdrop-filter:blur(8px);
+    border-top:1px solid #43546a;
+  }
+  .event-form-actions button{min-height:47px}
+  .event-error{font-size:12px;line-height:1.5;padding:10px}
+}
+@media(min-width:460px) and (max-width:850px){
+  .event-lanes{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
