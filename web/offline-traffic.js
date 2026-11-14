@@ -284,11 +284,20 @@ function createLegacyTrafficScenario(data){
     if(edge.kind!=="ramp"||edge.incomingAtStart||!edge.links.length)continue;
     if(!/\b(?:auffahrt|zufahrt)\b/i.test(edge.name)||/rampenzweig/i.test(edge.name))
       continue;
-    const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
-    const peak=traffic.junctionEntryPeak(row);
-    if(peak<=0||!edge.links.some(link=>
-      edges[link.to].kind==="mainline"&&
-      hasContinuousMainline(edges[link.to])))continue;
+    const row=rowById.get(edge.id);
+    const realDestinations=edge.links.map(link=>edges[link.to]).filter(target=>
+      target.kind==="mainline"&&target.ref&&hasContinuousMainline(target));
+    if(!realDestinations.length)continue;
+    // OSM motorway_link may lack a ref even when its real directed merge
+    // unambiguously joins an A3/A4/... carriageway. Infer the DESTINATION's
+    // motorway from that real mapped movement, never from geographic proximity.
+    const refs=new Set(realDestinations.map(target=>target.ref));
+    const inferredRef=edge.ref||refs.size===1?[...refs][0]:null;
+    if(!inferredRef)continue;
+    const rowWithRef=[row[0],row[1],inferredRef,row[3],row[4],row[5]];
+    const profile=traffic.referenceForRoad(rowWithRef);
+    const peak=traffic.junctionEntryPeak(rowWithRef);
+    if(peak<=0)continue;
     // Repeated copies/fragments for the same signed AS→direction must never
     // create repeated independent 500 Kfz/h traffic generators.
     const label=edge.name.replace(/\s+/g," ").trim().toLowerCase();
@@ -298,7 +307,11 @@ function createLegacyTrafficScenario(data){
   }
   for(const {edge,profile,peak} of distinctOnramps.values()){
     edge.source=true;edge.referencePeakVph=peak;
-    edge.directionKey=profile.key;sources.push(edge);
+    edge.directionKey=profile.key;
+    // The link has one confirmed receiving motorway even if its Way omitted
+    // a ref tag, allowing the correct time-of-day demand profile.
+    if(!edge.ref)edge.ref=profile.ref;
+    sources.push(edge);
   }
   // A motorway does not terminate merely because our displayed OSM extract
   // stops. Keep genuine modelled interchanges internal, but allow an external
