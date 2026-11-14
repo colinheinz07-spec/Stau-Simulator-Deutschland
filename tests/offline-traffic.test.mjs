@@ -463,6 +463,63 @@ test("no identified downstream OSM entrance means no invented returning cars",as
   conservation(model.totals());
 });
 
+test("AD Dernbach A3 Frankfurt closure closes FULL A48 to Frankfurt ramp and blocks A48 approach, not open Köln ramp",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const data=w.STAU_LEGACY_GEOMETRY;
+  const sim=w.createLegacyTrafficScenario(data);
+  sim.setSimulationStart(Date.parse("2026-11-14T17:00:00Z"));
+  const closure=sim.setEvent({id:"dernbach-frankfurt",edgeId:"A3-232272183",kind:"closure",
+    offsetM:50,lengthM:200,closedLanes:[0,1,2],speedKmh:0,
+    shoulder:"normal",hasShoulder:false});
+  assert.match(closure.closureFrom,/A3 39 AD Dernbach/);
+  assert.match(closure.closureTo,/A3 40 Montabaur/);
+  const frankfurt="ramp-a48-to-frankfurt",koeln="ramp-a48-to-koeln";
+  const ramp=data.roads.find(x=>x[0]===frankfurt);
+  const fullLength=ramp[4].slice(1).reduce((n,p,i)=>{
+    const q=ramp[4][i],dy=(p[0]-q[0])*111100,
+      dx=(p[1]-q[1])*111100*Math.cos(p[0]*Math.PI/180);
+    return n+Math.hypot(dy,dx);
+  },0);
+  const bands=sim.closureBands(frankfurt);
+  assert.equal(bands.length,1,"one full red-white ramp, no fragment gaps");
+  assert.ok(bands[0].fromM<.05&&bands[0].toM>fullLength-2,
+    "entire Frankfurt ramp from the A48 split to its A3 merge must be closed: "+
+    JSON.stringify(bands)+" vs "+fullLength);
+  assert.equal(sim.closureBands(koeln).length,0,
+    "the independent turn A48 to A3 Köln remains open");
+  assert.equal(sim.movementBlocked("A48-127602519",frankfurt),true,
+    "A48 traffic may not enter the closed ramp at the Dernbach fork");
+  assert.equal(sim.movementBlocked("A48-127602519",koeln),false,
+    "legal A48 to Köln exit remains available");
+  assert.equal(sim.closureExposureAhead(frankfurt),1,
+    "physical Frankfurt connector leads only into the closed destination");
+  assert.equal(sim.closureExposureAhead(koeln),0,
+    "physical Köln connector reaches an open destination");
+  const splitRisk=sim.closureExposureAhead("A48-127602519");
+  assert.ok(splitRisk>.2&&splitRisk<.8,
+    "A48 approach must foresee closed Frankfurt vs OPEN Köln ramps; risk "+splitRisk);
+  const approaching=sim.closureExposureAhead("A48-224110323");
+  assert.ok(approaching>.2&&approaching<.8,
+    "A48 traffic near AS Höhr-Grenzhausen must anticipate Frankfurt closure "+
+    "before the final AD Dernbach fork, risk "+approaching);
+  sim.warmStart();
+  sim.advance(1);
+  const plans=sim.detourPlans();
+  assert.ok(plans.some(p=>/extra-heumar-/.test(p.terminalEdgeId)&&
+    /extra-heumar-/.test(p.reentryEdgeId)),
+    "a real early A48 exit must be offered as a detour to real A3 after closure; "+
+    JSON.stringify(plans.slice(0,8)));
+  const initial=sim.edgeActivity(frankfurt).vehicles;
+  for(let i=0;i<9;i++)sim.advance(12);
+  assert.ok(sim.edgeActivity(frankfurt).vehicles<Math.max(.2,initial*.1),
+    "cars already on the ramp must evacuate rather than form a permanent queue");
+  assert.ok(sim.jamSummaries().every(x=>x.edgeId!==frankfurt),
+    "no phantom jam at the administrative ramp closure");
+  conservation(sim.totals());
+});
+
 test("real Montabaur full closure identifies real upstream ramp and downstream motorway reentry",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])

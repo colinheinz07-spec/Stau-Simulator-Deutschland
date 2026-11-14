@@ -323,6 +323,10 @@ function createLegacyTrafficScenario(data){
     seen.add(index);
     return edge.links.some(turn=>leadsToMainline(turn.to,seen,depth+1));
   }
+  // Stable graph index: prevent O(edges²) pin scans on every mobile draw.
+  const incomingTurnEdges=edges.map(()=>[]);
+  for(const from of edges)for(const turn of from.links)
+    incomingTurnEdges[turn.to].push(from);
   const boundaryExit=edges.map(edge=>{
     const outgoing=edge.links.filter(link=>link.fromM>=edge.lengthM-.1);
     if(!outgoing.length)return true;
@@ -347,6 +351,7 @@ function createLegacyTrafficScenario(data){
   const departedStep=new Float64Array(edges.length);
   const eventRecords=new Map();
   let activeEffects=new Map(),effectsStamp=null,simStart=Date.now();
+  let exposureEpoch=0,closureFingerprint="";
   let elapsed=0,generated=0,exited=0,demandPercent=100,initialVehicles=0;
   // Trips that have left the *displayed* motorway network, but have not yet
   // reentered at a real OSM on-ramp, are conserved as external-road inventory.
@@ -618,6 +623,7 @@ function createLegacyTrafficScenario(data){
       throw Error("Maximal 150 Ereignisse im mobilen Prototyp");
     const valid=checkedEvent(spec);
     eventRecords.set(valid.spec.id,valid);effectsStamp=null;detourPlansKey=null;
+    exposureEpoch++;
     updateEffects();
     recomputeSpeeds();
     return {...valid.spec,coveredLengthM:valid.coveredLengthM,
@@ -625,6 +631,7 @@ function createLegacyTrafficScenario(data){
   }
   function removeEvent(id){
     const removed=eventRecords.delete(id);effectsStamp=null;detourPlansKey=null;
+    if(removed)exposureEpoch++;
     updateEffects();recomputeSpeeds();return removed;
   }
   function updateEffects(){
@@ -649,6 +656,10 @@ function createLegacyTrafficScenario(data){
       record.spec.kind==="closure"&&
       (!record.spec.schedule||
         global.StauEventSchedule.active(record.spec.schedule,time)));
+    const fingerprint=roadClosures.map(x=>x.spec.id).sort().join("|");
+    if(fingerprint!==closureFingerprint){
+      closureFingerprint=fingerprint;exposureEpoch++;
+    }
     for(const record of roadClosures){
       const closed=new Set(),spansById=new Map();
       for(const span of record.spans){
@@ -929,6 +940,59 @@ function createLegacyTrafficScenario(data){
     }
     return Infinity;
   }
+  // A motorway may end at a genuine interchange fork instead of continuing
+  // as another same-ref mainline. Follow the REAL directed ramp successors to
+  // find the share of onward destinations that would enter a closed corridor.
+  // E.g. A48→A3 Frankfurt is closed while A48→A3 Köln remains open. Returning
+  // risk 0.5 lets AS traffic divert BEFORE the final A48 fork, not pile up on
+  // the 1-lane Köln connector. This computes no fictional OSM movements.
+  const exposureCache=new Map();let exposureStamp=null;
+  function closureExposureAhead(edge,offsetM=0,maxDistance=25000){
+    // Traffic exposure only changes when the closure catalog or active
+    // schedule changes, NOT on every 5-second CTM tick. Keep this graph
+    // analysis cached across timesteps for iPhone/SPCK performance.
+    const stamp=exposureEpoch;
+    if(exposureStamp!==stamp){exposureCache.clear();exposureStamp=stamp;}
+    const cacheKey=edge.id+":"+Math.floor(offsetM/100)+":"+maxDistance;
+    if(exposureCache.has(cacheKey))return exposureCache.get(cacheKey);
+    const examine=(current,from,remaining,seen,depth)=>{
+      if(depth>=160||remaining<=0||seen.has(current.id))return 0;
+      for(const effect of activeEffects.get(current.id)||NO_EFFECTS){
+        if(effect.event.kind!=="closure"||effect.toM<from+.01)continue;
+        if(effect.fromM-from<=remaining)return 1;
+      }
+      const distance=Math.max(0,current.lengthM-from);
+      if(distance>=remaining)return 0;
+      const candidates=current.next.filter(link=>{
+        const next=edges[link.to];
+        return !seen.has(next.id);
+      });
+      // Along a motorway ignore incidental service/exit ramps while its real
+      // same-direction continuation exists. At a genuine motorway END, inspect
+      // all physical continuation ramps into other motorways. This is the
+      // relevant branch distribution for closure advance notification.
+      const through=current.kind==="mainline"?candidates.filter(link=>
+        edges[link.to].kind==="mainline"&&edges[link.to].ref===current.ref):[];
+      const choices=through.length?through:
+        current.kind==="mainline"?candidates.filter(link=>
+          edges[link.to].kind==="mainline"||edges[link.to].kind==="ramp"):
+        candidates;
+      if(!choices.length)return 0;
+      const visited=new Set(seen);visited.add(current.id);
+      let blocked=0,total=0;
+      for(const link of choices){
+        const next=edges[link.to];
+        const weight=1; // currently unknown destination mix, NOT BASt share
+        blocked+=weight*examine(next,0,remaining-distance,visited,depth+1);
+        total+=weight;
+      }
+      return total?blocked/total:0;
+    };
+    const share=Math.max(0,Math.min(1,examine(edge,Math.max(0,offsetM),
+      maxDistance,new Set(),0)));
+    exposureCache.set(cacheKey,share);
+    return share;
+  }
   function blockedMovement(from,link){
     updateEffects();
     const target=edges[link.to];
@@ -1070,7 +1134,8 @@ function createLegacyTrafficScenario(data){
         for(const turn of main.links){
           const first=edges[turn.to];
           if(first.kind!=="ramp"||
-            closureDistanceAhead(main,turn.fromM,16000)===Infinity)continue;
+            (closureDistanceAhead(main,turn.fromM,16000)===Infinity&&
+            closureExposureAhead(main,turn.fromM)===0))continue;
           const pending=[first],seen=new Set();
           for(let q=0;q<pending.length&&q<25;q++){
             const ramp=pending[q];
@@ -1238,8 +1303,14 @@ function createLegacyTrafficScenario(data){
             closureDistanceAhead(edge,k*edge.cellLength,16000):Infinity;
           // Avoid expensive downstream route searches when there is no
           // closure nearby and less than 45 min measured delay.
-          const share=Number.isFinite(distance)?1:
-            diversionShare(measuredDelayAhead(edge,k*edge.cellLength));
+          // At a last Autobahn-to-Autobahn split, keep the OPEN direction
+          // active and reroute only the proportion whose real continuation
+          // enters the closed one. Earlier same-ref mainline exits can absorb
+          // that diversion before vehicles reach the terminal interchange.
+          const closureShare=Number.isFinite(distance)?1:
+            anyClosureActive?closureExposureAhead(edge,k*edge.cellLength):0;
+          const share=Math.max(closureShare,
+            diversionShare(measuredDelayAhead(edge,k*edge.cellLength)));
           if(share>0){
             const alternatives=legalTurns.filter(link=>{
               const target=edges[link.to];
@@ -1465,7 +1536,17 @@ function createLegacyTrafficScenario(data){
       if(edge.kind==="ramp"){
         const own=(activeEffects.get(edge.id)||NO_EFFECTS)
           .find(x=>x.derivedRampClosure);
-        if(own)add(edge,edge.lengthM*.7,own.event.id);
+        if(own){
+          // A ramp starts at its true physical fork. Only pin the gate at
+          // the first blocked access from an OPEN approach, not at 70% of
+          // every small ramp fragment (which looked like a mid-ramp barrier).
+          const entering=incomingTurnEdges[edge.index];
+          const openApproach=entering.some(from=>
+            !(activeEffects.get(from.id)||NO_EFFECTS)
+              .some(effect=>effect.event.id===own.event.id));
+          if(openApproach||!entering.length)
+            add(edge,Math.min(12,edge.lengthM*.015),own.event.id);
+        }
       }
       for(const turn of edge.links){
         if(!blockedMovement(edge,turn))continue;
@@ -1512,6 +1593,10 @@ function createLegacyTrafficScenario(data){
       terminalEdgeId:edges[plan.terminal].id,
       reentryEdgeId:edges[plan.reentry].id,
       delaySeconds:plan.durationS,closureId:plan.closureId})),
+    closureExposureAhead:(id,offsetM=0,maxDistance=25000)=>{
+      const edge=byId.get(id);
+      return edge?closureExposureAhead(edge,offsetM,maxDistance):0;
+    },
     closureDistanceAhead:(id,offsetM=0,maxDistance=16000)=>{
       const edge=byId.get(id);
       return edge?closureDistanceAhead(edge,offsetM,maxDistance):Infinity;

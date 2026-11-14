@@ -291,13 +291,16 @@ async function startLegacyCanvas(existingMap=null){
     if(closed.length){
       context.beginPath();
       for(const part of closed)appendRange(part.road,part.fromM,part.toM,scale);
-      context.lineWidth=line+2;
-      if(typeof context.setLineDash==="function"){
-        context.setLineDash([10,9]);context.lineDashOffset=0;
-      }
+      // Cover the GREEN base road with an uninterrupted, highly visible
+      // red carriageway all the way back to the first blocked ramp vertex.
+      // The old alternation drew only red/white dashes over green gaps,
+      // visually suggesting the first half of a connector was still open.
+      const closureWidth=Math.max(line+2,3.5);
+      context.lineWidth=closureWidth;
       context.strokeStyle="#d52b3e";context.stroke();
       if(typeof context.setLineDash==="function"){
-        context.lineDashOffset=10;
+        context.lineWidth=closureWidth*.68;
+        context.setLineDash([10,10]);context.lineDashOffset=0;
         context.strokeStyle="#ffffff";context.stroke();
         context.setLineDash([]);context.lineDashOffset=0;
       }
