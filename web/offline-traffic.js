@@ -1114,15 +1114,13 @@ function createLegacyTrafficScenario(data){
     return Math.max(300,Math.min(7200,
       180+straight*1.55/(40/3.6)));
   }
-  // Vehicle destinations are not yet individually known in the aggregate
-  // cell-flow engine. Route most through traffic to the FIRST real open
-  // motorway entrance beyond the obstruction, with a smaller assumed share
-  // returning later for more distant destinations. Neither distribution nor
-  // local road duration claims to be a measured OD survey.
+  // The aggregate cell-flow engine does not yet know individual OD pairs.
+  // Without that information, ALL vehicles continuing on this motorway must
+  // return at the FIRST lawful on-ramp after the obstruction. Later ramps are
+  // retained as physical candidates for future real OD-route assignments,
+  // but do not receive arbitrary invented 82/14/4 destination shares.
   function destinationWeights(count){
-    const defaults=[.82,.14,.04];
-    const out=defaults.slice(0,count),total=out.reduce((x,y)=>x+y,0);
-    return out.map(x=>x/total);
+    return Array.from({length:count},(_,i)=>i===0?1:0);
   }
   function buildDetourPlans(){
     const events=[...eventRecords.values()].filter(record=>
