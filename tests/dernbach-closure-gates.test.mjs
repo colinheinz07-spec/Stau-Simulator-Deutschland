@@ -24,7 +24,7 @@ test("AD Dernbach to AS Ransbach Köln begins EXACTLY at A3/A48 diverge, Koblenz
   assert.match(event.closureTo,/A3 38 Ransbach-Baumbach/);
   const boundaries=sim.closureGatePoints().filter(p=>
     p.eventId==="ad-dernbach-ransbach");
-  assert.deepEqual(boundaries.map(p=>p.type),["start","reopen"],
+  assert.equal(boundaries.map(p=>p.type).join(","),"start,reopen",
     "map must show ONE road closure start and ONE downstream reopening");
   assert.equal(boundaries[0].edgeId,"A3-31352382",
     "physical closure gate on A3 must be at the directed A3/A48 fork");
