@@ -818,10 +818,11 @@ function createLegacyTrafficScenario(data){
       if(!g){
         g={lengthM:0,delayMin:0,worstKmh:Infinity,
           edgeId:piece.edgeId,offsetM:(piece.fromM+piece.toM)/2,
-          longestM:0};
+          longestM:0,segments:[]};
         groups.set(key,g);
       }
       const len=piece.toM-piece.fromM;
+      g.segments.push(piece);
       g.lengthM+=len;g.delayMin+=piece.delayMin;
       g.worstKmh=Math.min(g.worstKmh,piece.worstKmh);
       if(len>g.longestM){
@@ -831,7 +832,28 @@ function createLegacyTrafficScenario(data){
     }
     return [...groups.values()].filter(g=>g.lengthM>=350&&g.delayMin>=.5)
       .sort((a,b)=>b.delayMin-a.delayMin)
-      .map(({longestM,...g})=>g);
+      .map(g=>{
+        // The queue label sits at its longest cell; the downstream HEAD of
+        // the queue is a different point. A detour must reenter AFTER that
+        // actual head, even when a jam crosses 40 short OSM Ways.
+        const memberIds=new Set(g.segments.map(x=>x.edgeId));
+        const terminal=g.segments.filter(piece=>{
+          const road=byId.get(piece.edgeId);
+          if(piece.toM<road.lengthM-.02)return true;
+          return !road.next.some(turn=>{
+            const target=edges[turn.to];
+            return target.kind===road.kind&&target.ref===road.ref&&
+              memberIds.has(target.id);
+          });
+        });
+        const head=terminal.length===1?terminal[0]:null;
+        const {longestM,segments,...publicGroup}=g;
+        if(head){
+          publicGroup.endEdgeId=head.edgeId;
+          publicGroup.endOffsetM=head.toM;
+        }
+        return publicGroup;
+      });
   }
   function visualBands(id){return byId.get(id)?.visualBands||[];}
   function closureBands(id){
@@ -1103,11 +1125,24 @@ function createLegacyTrafficScenario(data){
     return out.map(x=>x/total);
   }
   function buildDetourPlans(){
-    const obstacles=[...eventRecords.values()].filter(record=>
+    const events=[...eventRecords.values()].filter(record=>
       record.spans.some(span=>byId.get(span.edgeId)?.kind==="mainline")&&
       (!record.spec.schedule||
         global.StauEventSchedule.active(record.spec.schedule,clockMs()))&&
       ["closure","accident","roadworks","breakdown"].includes(record.spec.kind));
+    // Unplanned recurrent congestion can also induce diversions. Use the
+    // actual downstream queue head (not the display-label midpoint). Do not
+    // make a second phantom obstruction on a route already carrying an event.
+    const eventRefs=new Set(events.flatMap(event=>event.spans.map(span=>
+      byId.get(span.edgeId)?.ref).filter(Boolean)));
+    const queues=jamGroups.filter(group=>group.delayMin>=45&&group.lengthM>=500&&
+      group.endEdgeId&&!eventRefs.has(byId.get(group.endEdgeId)?.ref)&&
+      byId.get(group.endEdgeId)?.kind==="mainline").slice(0,3)
+      .map(group=>({spec:{id:"queue:"+group.endEdgeId+":"+
+        Math.round(group.endOffsetM/100),kind:"congestion"},spans:[{
+          edgeId:group.endEdgeId,fromM:group.endOffsetM,
+          toM:group.endOffsetM}]}));
+    const obstacles=[...events,...queues];
     const key=obstacles.map(x=>x.spec.id+":"+x.spans.map(s=>
       s.edgeId+":"+Math.round(s.fromM)+":"+Math.round(s.toM)).join(",")).join("|");
     if(key===detourPlansKey)return;
