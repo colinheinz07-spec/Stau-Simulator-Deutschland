@@ -589,6 +589,9 @@ async function startLegacyCanvas(existingMap=null){
   }
   function startSimulation(){
     if(simRunning)return;
+    // Old simulator initialized the entire motorway with cars already
+    // driving at the selected date/hour; these are not additional sources.
+    scenario.warmStart?.();
     simRunning=true;
     $("sim-toggle").textContent="Ⅱ Simulation anhalten";
     $("sim-toggle").classList.add("running");
