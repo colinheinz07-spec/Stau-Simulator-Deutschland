@@ -365,7 +365,7 @@ test("real A3 Dierdorf to Neuwied: last exit open, both entry/exit gates correct
      walked+=Math.hypot(x,y);
    }
    const info=sim.recommendedClosureLength(row[0],Math.max(0,offset));
-   if(info&&/A3 37 Dierdorf/.test(info.label)&&/A3 36 Neuwied/.test(info.label)){
+   if(info&&/A3 37 Dierdorf\s*–\s*A3 36 Neuwied/.test(info.label)){
      chosen={id:row[0],offset,info};break;
    }
  }
