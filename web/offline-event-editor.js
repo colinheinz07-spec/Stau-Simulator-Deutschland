@@ -127,7 +127,7 @@ function createOfflineEventEditor(options){
         ". BEIDE AS-Grenzen automatisch verbindlich · "+
         "ausschließlich hineinführende Zufahrten werden mitgesperrt.";
     }else if(isClosure&&current?.kind==="ramp"&&nextClosureJunction?.rampOnly){
-      status.textContent="Nur die ausgewählte Auf-/Abfahrt wird gesperrt. "+
+      status.textContent="Nur diese Auf-/Abfahrt wird gesperrt. "+
         "Die Autobahn-Hauptfahrbahn und andere Rampen bleiben offen.";
     }else if(isRoad){
       status.textContent="Kein sicherer Abschnitt zwischen zwei Anschlussstellen "+
