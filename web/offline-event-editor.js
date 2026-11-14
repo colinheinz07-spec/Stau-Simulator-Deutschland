@@ -15,7 +15,7 @@ function createOfflineEventEditor(options){
   if(!calendar)throw Error("Kalender für Ereignisse fehlt");
   const form=$("event-form"),kind=$("ev-kind"),lanes=$("ev-lanes");
   const exists=$("ev-has-shoulder"),shoulder=$("ev-shoulder");
-  const length=$("ev-length"),speed=$("ev-speed"),schedule=$("ev-schedule");
+  const length=$("ev-length"),lengthField=$("ev-length-field"),speed=$("ev-speed"),schedule=$("ev-schedule");
   const error=$("ev-error"),startClock=$("sim-start");
   const list=$("planned-events");
   let current=null,currentOffset=0,editingId=null,sequence=0;
@@ -114,7 +114,8 @@ function createOfflineEventEditor(options){
     const isRoad=isClosure&&current?.kind==="mainline";
     nextClosureJunction=isRoad?
       scenario.recommendedClosureLength?.(current.id,currentOffset):null;
-    length.disabled=!!nextClosureJunction;
+    lengthField.hidden=isClosure;
+    length.disabled=isClosure;
     if(nextClosureJunction){
       length.value=String(nextClosureJunction.lengthM);
     }else if(Number(length.value)>max){
@@ -123,12 +124,14 @@ function createOfflineEventEditor(options){
     const status=$("ev-coverage");
     if(isRoad&&nextClosureJunction){
       status.textContent="Gesamte Vollsperrung: "+nextClosureJunction.label+
-        ". "+nextClosureJunction.lengthM.toLocaleString("de-DE")+
-        " m · BEIDE AS-Grenzen automatisch verbindlich · "+
+        ". BEIDE AS-Grenzen automatisch verbindlich · "+
         "ausschließlich hineinführende Zufahrten werden mitgesperrt.";
     }else if(isRoad){
       status.textContent="Kein sicherer Abschnitt zwischen zwei Anschlussstellen "+
         "ermittelbar. Eine Teilstück-Sperrung wird hier NICHT stillschweigend gesetzt.";
+    }else if(isClosure){
+      status.textContent="Bitte eine Autobahn-Hauptfahrbahn auswählen. "+
+        "Eine einzelne Rampe kann nicht als Vollsperrungsabschnitt ausgewählt werden.";
     }else{
       status.textContent="Beginn am markierten OSM-Fahrweg ("+
         Math.round(currentOffset)+" m); Umfang nach eindeutig "+
@@ -224,8 +227,9 @@ function createOfflineEventEditor(options){
         ev.closedLanes.map(x=>"F"+(x+1)).join(", "):"keine Fahrstreifen";
       const range=ev.kind==="closure"&&ev.closureFrom&&ev.closureTo?
         ev.closureFrom+" → "+ev.closureTo+" · ":"";
-      info.textContent=range+"Sperrung: "+closure+" · "+
-        ev.lengthM+" m · "+ev.speedKmh+" km/h · "+
+      info.textContent=range+"Sperrung: "+closure+
+        (ev.kind==="closure"?" · Abschnitt AS–AS":
+          " · "+ev.lengthM+" m · "+ev.speedKmh+" km/h") + " · "+
         (ev.shoulder==="open"?"Standstreifen freigegeben · ":"")+
         calendar.label(ev.schedule)+(ev.truncated?
         " · Achtung: Netzübergang ungeklärt, nur "+Math.round(ev.coveredLengthM)+" m wirksam":"");
@@ -292,12 +296,14 @@ function createOfflineEventEditor(options){
     try{
       clearFailure();
       const kindValue=kind.value,selected=selectedLanes();
+      if(kindValue==="closure"&&(!nextClosureJunction||current.kind!=="mainline"))
+        throw Error("Vollsperrung benötigt zwei verbundene Anschlussstellen auf einer Hauptfahrbahn.");
       const all=Array.from({length:current.lanes},(_,i)=>i);
       const blocked=kindValue==="closure"?all:selected;
       const record={
         id:editingId||("e"+Date.now().toString(36)+"_"+(++sequence)),
         edgeId:current.id,kind:kindValue,closedLanes:blocked,
-        offsetM:currentOffset,lengthM:Number(length.value),
+        offsetM:currentOffset,lengthM:kindValue==="closure"?nextClosureJunction.lengthM:Number(length.value),
         speedKmh:Number(speed.value),hasShoulder:exists.checked,
         shoulder:shoulder.value,schedule:readSchedule()
       };

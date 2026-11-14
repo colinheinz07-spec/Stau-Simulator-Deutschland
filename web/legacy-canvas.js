@@ -82,7 +82,7 @@ async function startLegacyCanvas(existingMap=null){
   if(eventActions)eventActions.hidden=false;
   const simulationNote=document.querySelector(".simulation-controls .disclaimer");
   if(simulationNote)simulationNote.textContent=
-    "Experimenteller Zellfluss mit realer OSM-Geometrie, Kapazität und Fahrzeugbilanz. Noch keine vollständige Anschlussstellen-Nachfrage oder Zielrouten.";
+    "Zellfluss über echte OSM-Rampen. Umleitungen auf nicht dargestellten Ortsstraßen haben angenommene Fahrtzeiten; Wiederauffahrt nur an vorhandenen Rampen.";
   const demoNote=document.querySelector(".demo-box p");
   if(demoNote)demoNote.textContent=
     "Autobahnabschnitt antippen und Unfall, Baustelle oder Vollsperrung setzen. Fahrzeuge stauen sich nur dort, wo die berechnete Kapazität nicht reicht.";
@@ -629,9 +629,11 @@ async function startLegacyCanvas(existingMap=null){
     $("sim-clock").textContent=Math.floor(sec/60)+":"+String(sec%60).padStart(2,"0");
     $("sim-vehicles").textContent=format(Math.round(stats.vehiclesOnNetwork));
     $("sim-outside").textContent=format(Math.round(stats.waitingOutsideSources));
+    $("sim-detours").textContent=format(Math.round(stats.vehiclesOnDetours||0));
     $("map-status").textContent="Modell "+Math.floor(sec/60)+" min · "+
       format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz · "+
       format(Math.round(stats.waitingOutsideSources))+" vor Netzeinfahrten · "+
+      format(Math.round(stats.vehiclesOnDetours||0))+" auf Ausweichwegen · "
       format(scenario.reachableCount())+"/"+format(scenario.edgeCount())+" Abschnitte mit Modellzufluss";
     if(eventEditor)eventEditor.updateStatus();
     const timeMarker=$("sim-model-date");

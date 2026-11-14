@@ -101,6 +101,9 @@ function createLegacyTrafficScenario(data){
       first:row[4][0],lengthM:meters,
       n:count,cellLength:meters/count,
       stock:new Float64Array(count),
+      // A tagged subflow of real cell occupancy: vehicles committed to an
+      // actual open off-ramp and its verified downstream model on-ramp.
+      divertStock:new Float64Array(count),
       // User-defined unrestricted motorway service, not a speed threshold.
        capacityPerLane:row[1]==="ramp"?1500:2200,
       freeKmh:row[1]==="ramp"?75:120,
@@ -281,11 +284,20 @@ function createLegacyTrafficScenario(data){
     if(edge.kind!=="ramp"||edge.incomingAtStart||!edge.links.length)continue;
     if(!/\b(?:auffahrt|zufahrt)\b/i.test(edge.name)||/rampenzweig/i.test(edge.name))
       continue;
-    const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
-    const peak=traffic.junctionEntryPeak(row);
-    if(peak<=0||!edge.links.some(link=>
-      edges[link.to].kind==="mainline"&&
-      hasContinuousMainline(edges[link.to])))continue;
+    const row=rowById.get(edge.id);
+    const realDestinations=edge.links.map(link=>edges[link.to]).filter(target=>
+      target.kind==="mainline"&&target.ref&&hasContinuousMainline(target));
+    if(!realDestinations.length)continue;
+    // OSM motorway_link may lack a ref even when its real directed merge
+    // unambiguously joins an A3/A4/... carriageway. Infer the DESTINATION's
+    // motorway from that real mapped movement, never from geographic proximity.
+    const refs=new Set(realDestinations.map(target=>target.ref));
+    const inferredRef=edge.ref||refs.size===1?[...refs][0]:null;
+    if(!inferredRef)continue;
+    const rowWithRef=[row[0],row[1],inferredRef,row[3],row[4],row[5]];
+    const profile=traffic.referenceForRoad(rowWithRef);
+    const peak=traffic.junctionEntryPeak(rowWithRef);
+    if(peak<=0)continue;
     // Repeated copies/fragments for the same signed AS→direction must never
     // create repeated independent 500 Kfz/h traffic generators.
     const label=edge.name.replace(/\s+/g," ").trim().toLowerCase();
@@ -295,7 +307,11 @@ function createLegacyTrafficScenario(data){
   }
   for(const {edge,profile,peak} of distinctOnramps.values()){
     edge.source=true;edge.referencePeakVph=peak;
-    edge.directionKey=profile.key;sources.push(edge);
+    edge.directionKey=profile.key;
+    // The link has one confirmed receiving motorway even if its Way omitted
+    // a ref tag, allowing the correct time-of-day demand profile.
+    if(!edge.ref)edge.ref=profile.ref;
+    sources.push(edge);
   }
   // A motorway does not terminate merely because our displayed OSM extract
   // stops. Keep genuine modelled interchanges internal, but allow an external
@@ -326,11 +342,18 @@ function createLegacyTrafficScenario(data){
   const send=edges.map(edge=>new Float64Array(edge.n));
   const receive=edges.map(edge=>new Float64Array(edge.n));
   const delta=edges.map(edge=>new Float64Array(edge.n));
+  const divertDelta=edges.map(edge=>new Float64Array(edge.n));
   const enteredStep=new Float64Array(edges.length);
   const departedStep=new Float64Array(edges.length);
   const eventRecords=new Map();
   let activeEffects=new Map(),effectsStamp=null,simStart=Date.now();
   let elapsed=0,generated=0,exited=0,demandPercent=100,initialVehicles=0;
+  // Trips that have left the *displayed* motorway network, but have not yet
+  // reentered at a real OSM on-ramp, are conserved as external-road inventory.
+  let outsideVehicles=0,detouredVehicles=0,returnedVehicles=0;
+  const detourTrips=[];
+  const terminalDetours=new Map(),exitDetours=new Map();
+  let detourPlansKey=null;
   let warmedUp=false;
   let jamGroups=[];
   function totals(){
@@ -339,10 +362,11 @@ function createLegacyTrafficScenario(data){
       for(const n of edge.stock)inside+=n;
       backlog+=edge.backlog;
     }
-    const residual=initialVehicles+generated-exited-inside-backlog;
+    const residual=initialVehicles+generated-exited-inside-backlog-outsideVehicles;
     return {simSeconds:elapsed,initialVehicles,
       generatedVehicles:generated,exitedVehicles:exited,
       vehiclesOnNetwork:inside,waitingOutsideSources:backlog,
+      vehiclesOnDetours:outsideVehicles,detouredVehicles,returnedVehicles,
       conservationResidual:Math.abs(residual)<1e-7?0:residual,
       sources:sources.length,edges:edges.length,excludedRest,
       motorwaySourceComponents:sourceComponents,unservedMotorwayComponents:unservedComponents};
@@ -593,14 +617,14 @@ function createLegacyTrafficScenario(data){
     if(eventRecords.size>=150&&!eventRecords.has(spec?.id))
       throw Error("Maximal 150 Ereignisse im mobilen Prototyp");
     const valid=checkedEvent(spec);
-    eventRecords.set(valid.spec.id,valid);effectsStamp=null;
+    eventRecords.set(valid.spec.id,valid);effectsStamp=null;detourPlansKey=null;
     updateEffects();
     recomputeSpeeds();
     return {...valid.spec,coveredLengthM:valid.coveredLengthM,
       truncated:valid.truncated};
   }
   function removeEvent(id){
-    const removed=eventRecords.delete(id);effectsStamp=null;
+    const removed=eventRecords.delete(id);effectsStamp=null;detourPlansKey=null;
     updateEffects();recomputeSpeeds();return removed;
   }
   function updateEffects(){
@@ -805,8 +829,11 @@ function createLegacyTrafficScenario(data){
   }
   function reset(clearEvents=false){
     elapsed=0;generated=0;exited=0;initialVehicles=0;warmedUp=false;
+    outsideVehicles=0;detouredVehicles=0;returnedVehicles=0;
+    detourTrips.length=0;terminalDetours.clear();exitDetours.clear();detourPlansKey=null;
     for(const edge of edges){
-      edge.stock.fill(0);edge.backlog=0;edge.speed=edge.freeKmh;
+      edge.stock.fill(0);edge.divertStock.fill(0);
+      edge.backlog=0;edge.speed=edge.freeKmh;
       edge.cellFlowSpeeds.fill(edge.freeKmh);
       edge.cellThroughVph.fill(0);
       edge.lastProfileMinute=-1;edge.profileFactor=0;
@@ -980,16 +1007,110 @@ function createLegacyTrafficScenario(data){
     }
     return false;
   }
+  // Macro detours: the SPCK file contains true OSM motorway exits/entrances
+  // but NOT all intervening city and country roads. We therefore do not draw
+  // fictitious streets. Eligible traffic uses its REAL OSM off-ramp, travels
+  // in a conserved off-map inventory, and returns only at a REAL directed
+  // OSM on-ramp downstream of the closed section. The off-map duration is a
+  // documented estimate, not an audited street-by-street shortest path.
+  function buildDetourPlans(){
+    const closed=[...eventRecords.values()].filter(record=>
+      record.spec.kind==="closure"&&record.spans.some(span=>
+        byId.get(span.edgeId)?.kind==="mainline")&&
+      (!record.spec.schedule||
+        global.StauEventSchedule.active(record.spec.schedule,clockMs())));
+    const key=closed.map(x=>x.spec.id+":"+x.spans.map(s=>
+      s.edgeId+":"+Math.round(s.fromM)+":"+Math.round(s.toM)).join(",")).join("|");
+    if(key===detourPlansKey)return;
+    detourPlansKey=key;exitDetours.clear();
+    for(const closure of closed){
+      const last=closure.spans.at(-1),endEdge=byId.get(last.edgeId);
+      if(!endEdge||endEdge.kind!=="mainline")continue;
+      // Traverse only EXISTING same-direction motorway links beyond the far
+      // closure boundary. A candidate ramp is legal only if its actual merge
+      // joins the downstream continuation, never an upstream or opposite road.
+      const downstream=new Map([[endEdge.id,0]]);
+      const queue=[endEdge];
+      for(let i=0;i<queue.length&&i<2000;i++){
+        const edge=queue[i],base=downstream.get(edge.id);
+        const remaining=edge===endEdge?edge.lengthM-last.toM:edge.lengthM;
+        for(const link of edge.next){
+          const next=edges[link.to];
+          if(next.kind!=="mainline"||next.ref!==endEdge.ref||
+            downstream.has(next.id))continue;
+          const metres=base+Math.max(0,remaining);
+          if(metres>60000)continue;
+          downstream.set(next.id,metres);queue.push(next);
+        }
+      }
+      let reentry=null,minDistance=Infinity;
+      for(const ramp of sources){
+        if(ramp.kind!=="ramp"||
+          (activeEffects.get(ramp.id)||NO_EFFECTS).some(e=>e.event.kind==="closure"))continue;
+        for(const turn of ramp.links){
+          const road=edges[turn.to],base=downstream.get(road.id);
+          if(road.kind!=="mainline"||road.ref!==endEdge.ref||base===undefined)continue;
+          const d=road===endEdge?turn.toM-last.toM:base+turn.toM;
+          if(d>80&&d<minDistance&&d<60000){
+            reentry=ramp;minDistance=d;
+          }
+        }
+      }
+      if(!reentry)continue;
+      // Find real upstream off-ramps with an *outside* terminus, not turns
+      // onto another represented Autobahn. A self-contained ramp chain is
+      // traced only through exact existing directed OSM links.
+      for(const main of edges){
+        if(main.kind!=="mainline")continue;
+        for(const turn of main.links){
+          const first=edges[turn.to];
+          if(first.kind!=="ramp"||
+            closureDistanceAhead(main,turn.fromM,16000)===Infinity)continue;
+          const pending=[first],seen=new Set();
+          for(let q=0;q<pending.length&&q<25;q++){
+            const ramp=pending[q];
+            if(seen.has(ramp.id))continue;
+            seen.add(ramp.id);
+            // A genuine surface-road exit disappears from this motorway-only
+            // snapshot. Interchange ramps with a mapped mainline successor
+            // continue in the physical simulation instead.
+            const successors=ramp.links.map(link=>edges[link.to]);
+            if(!successors.length&&boundaryExit[ramp.index]){
+              const firstPoint=rowById.get(ramp.id)[4].at(-1);
+              const lastPoint=rowById.get(reentry.id)[4][0];
+              const lat1=firstPoint[0]*rad,lat2=lastPoint[0]*rad;
+              const dlat=lat2-lat1,dlon=(lastPoint[1]-firstPoint[1])*rad;
+              const straight=2*R*Math.asin(Math.min(1,Math.sqrt(
+                Math.sin(dlat/2)**2+Math.cos(lat1)*Math.cos(lat2)*
+                Math.sin(dlon/2)**2)));
+              // Assumed local-road progression incl. turns and signals.
+              const durationS=Math.max(300,Math.min(7200,
+                180+straight*1.55/(40/3.6)));
+              const plan={terminal:ramp.index,reentry:reentry.index,
+                durationS,closureId:closure.spec.id};
+              exitDetours.set(first.index,plan);
+              // Keep the destination for vehicles already on their exit
+              // when the closure is lifted during their traversal.
+              terminalDetours.set(ramp.index,plan);
+            }else if(successors.length&&successors.every(x=>x.kind==="ramp")){
+              for(const next of successors)pending.push(next);
+            }
+          }
+        }
+      }
+    }
+  }
   function step(dt=5,refreshSpeeds=true){
     if(!finite(dt)||dt<=0||dt>15)throw Error("Ungültiger Simulationstakt");
     updateEffects();
+    buildDetourPlans();
     const anyClosureActive=[...activeEffects.values()].some(items=>
       items.some(item=>item.event.kind==="closure"));
     enteredStep.fill(0);departedStep.fill(0);
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],n=edge.n,stock=edge.stock;
       const s=send[j],r=receive[j],d=delta[j];
-      d.fill(0);
+      d.fill(0);divertDelta[j].fill(0);
       // w=32 km/h keeps the receiving branch consistent with 2200 Kfz/h/lane:
       // 22 km/h would cap free-flow receiving below the user-defined capacity.
       const wave=Math.min(1,(22/3.6)*dt/edge.cellLength);
@@ -1012,8 +1133,13 @@ function createLegacyTrafficScenario(data){
           if(ev.shoulder==="open"&&ev.hasShoulder)shoulderOpen=true;
           if(ev.shoulder==="blocked")shoulderBlocked=true;
           if(ev.speedKmh>0)permitted=Math.min(permitted,ev.speedKmh);
-          if((ev.kind==="closure"||ev.closedLanes.length===edge.lanes&&
-            ev.shoulder!=="open")&&item.gate&&item.fromM>=a-.001&&item.fromM<b+.001)
+          // Administrative closures block new arrivals across the precise
+          // boundary. They must NOT block the receiving room for vehicles
+          // already inside that same closure (including closed feeder ramps).
+          // Real full-width incidents still block the physical cell gate.
+          if(ev.kind!=="closure"&&ev.closedLanes.length===edge.lanes&&
+            ev.shoulder!=="open"&&item.gate&&
+            item.fromM>=a-.001&&item.fromM<b+.001)
             blockedAtGate=true;
         }
         if(shoulderBlocked)shoulderOpen=false;
@@ -1065,9 +1191,9 @@ function createLegacyTrafficScenario(data){
     // space, while exit splits share the originating cell's sending capacity.
     // This fixes mid-Way motorway junctions without creating new road geometry.
     const proposed=new Map(),splitSources=[],boundaryUsed=new Map();
-    const push=(to,toCell,from,fromCell,want)=>{
+    const push=(to,toCell,from,fromCell,want,mark=false)=>{
       const key=to+":"+toCell,arr=proposed.get(key)||[];
-      arr.push({to,toCell,from,fromCell,want});
+      arr.push({to,toCell,from,fromCell,want,mark});
       proposed.set(key,arr);
     };
     for(let j=0;j<edges.length;j++){
@@ -1076,7 +1202,14 @@ function createLegacyTrafficScenario(data){
         const available=out[k];
         if(available<=0)continue;
         let options=[];
-        if(k<edge.n-1&&receive[j][k+1]>0)
+        // Never cross from an unclosed cell into a newly closed physical
+        // interval of this same long OSM Way. Receiving inside the closure
+        // remains available exclusively for pre-existing interior vehicles.
+        const crossesClosureGate=(activeEffects.get(edge.id)||NO_EFFECTS)
+          .some(x=>x.event.kind==="closure"&&x.gate&&
+            x.fromM>k*edge.cellLength+.001&&
+            x.fromM<=(k+1)*edge.cellLength+.001);
+        if(k<edge.n-1&&receive[j][k+1]>0&&!crossesClosureGate)
           options.push({to:j,toCell:k+1,weight:20});
         const legalTurns=edge.linksFrom[k].filter(link=>
           !blockedMovement(edge,link));
@@ -1092,7 +1225,7 @@ function createLegacyTrafficScenario(data){
         // previous 7-90% ramp split sent residual traffic into the barrier.
         // A saturated exit is still a valid destination: motorists must queue
         // for its receiving capacity, not skip past it into the closure.
-        let hasLegalClosureDetour=false;
+        let hasLegalClosureDetour=false,diversionIntent=0;
         if(edge.kind==="mainline"&&legalTurns.some(link=>
           edges[link.to].kind==="ramp"||
           edges[link.to].kind==="mainline"&&edges[link.to].ref!==edge.ref)){
@@ -1111,6 +1244,7 @@ function createLegacyTrafficScenario(data){
             });
           if(alternatives.length){
             hasLegalClosureDetour=Number.isFinite(distance);
+            diversionIntent=share;
             const alternateKey=new Set(alternatives.map(link=>
               link.to+":"+link.toCell));
             const rawExitWeight=alternatives.reduce((n,link)=>n+link.weight,0);
@@ -1135,17 +1269,36 @@ function createLegacyTrafficScenario(data){
           }
           }
         }
+        // Only tag newly diverted exit traffic when its real OSM ramp is
+        // connected to a verified downstream on-ramp return. Ordinary exits
+        // are counted as trips ending outside this motorway extract.
+        for(const opt of options)
+          if(opt.to!==j&&diversionIntent>0&&exitDetours.has(opt.to))
+            opt.mark=true;
         if(!options.length&&!outsideWeight)continue;
         if(options.length>1&&hasLegalClosureDetour)
           splitSources.push({from:j,cell:k,available,options});
         const sum=options.reduce((n,x)=>n+x.weight,0)+outsideWeight;
         for(const opt of options)
-          push(opt.to,opt.toCell,j,k,available*opt.weight/sum);
+          push(opt.to,opt.toCell,j,k,available*opt.weight/sum,opt.mark===true);
         if(outsideWeight){
           const leaving=available*outsideWeight/sum;
           delta[j][k]-=leaving;
           departedStep[j]+=leaving;
-          exited+=leaving;
+          // Tag accounting follows exactly the exiting subflow. No vehicle
+          // is re-created at an on-ramp: the same fraction stays conserved
+          // in the off-network travel inventory until reaching it.
+          const tagged=edge.stock[k]>1e-9?
+            Math.min(leaving,leaving*edge.divertStock[k]/edge.stock[k]):0;
+          divertDelta[j][k]-=tagged;
+          const plan=terminalDetours.get(j);
+          const rerouted=plan?tagged:0;
+          exited+=leaving-rerouted;
+          if(rerouted>0){
+            outsideVehicles+=rerouted;detouredVehicles+=rerouted;
+            detourTrips.push({reentry:plan.reentry,
+              readyAt:elapsed+dt+plan.durationS,vehicles:rerouted});
+          }
           const key=j+":"+k;
           boundaryUsed.set(key,(boundaryUsed.get(key)||0)+leaving);
         }
@@ -1159,6 +1312,11 @@ function createLegacyTrafficScenario(data){
       const ratio=required>accepting?accepting/required:1;
       for(const req of requests){
         const amount=req.want*ratio;
+        const fromEdge=edges[req.from],stock=fromEdge.stock[req.fromCell];
+        const originallyTagged=stock>1e-9?
+          amount*Math.min(1,fromEdge.divertStock[req.fromCell]/stock):0;
+        divertDelta[req.from][req.fromCell]-=originallyTagged;
+        divertDelta[to][toCell]+=req.mark?amount:originallyTagged;
         delta[req.from][req.fromCell]-=amount;
         delta[to][toCell]+=amount;
         const fromKey=req.from+":"+req.fromCell,toKey=to+":"+toCell;
@@ -1186,6 +1344,11 @@ function createLegacyTrafficScenario(data){
         const spare=receive[opt.to][opt.toCell]-(accepted.get(toKey)||0);
         if(spare<=1e-6)continue;
         const moved=Math.min(remaining,spare);
+        const sourceEdge=edges[split.from],old=sourceEdge.stock[split.cell];
+        const originallyTagged=old>1e-9?
+          moved*Math.min(1,sourceEdge.divertStock[split.cell]/old):0;
+        divertDelta[split.from][split.cell]-=originallyTagged;
+        divertDelta[opt.to][opt.toCell]+=opt.mark?moved:originallyTagged;
         delta[split.from][split.cell]-=moved;
         delta[opt.to][opt.toCell]+=moved;
         if(opt.to!==split.from){
@@ -1196,6 +1359,28 @@ function createLegacyTrafficScenario(data){
         remaining-=moved;
         if(remaining<=1e-6)break;
       }
+    }
+    // An off-network journey takes time. Only after that trip reaches its
+    // due time may it rejoin through an existing directed OSM on-ramp,
+    // subject to exactly the same physical receiving capacity as local cars.
+    // An overloaded re-entry queues OFF the motorway, rather than teleporting
+    // vehicles into full cells or multiplying the model inventory.
+    for(let i=detourTrips.length-1;i>=0;i--){
+      const trip=detourTrips[i];
+      if(trip.readyAt>elapsed+dt)continue;
+      const road=edges[trip.reentry];
+      const closed=(activeEffects.get(road.id)||NO_EFFECTS).some(x=>
+        x.event.kind==="closure"&&x.gate&&x.fromM<road.cellLength);
+      if(closed)continue;
+      const current=Math.max(0,delta[road.index][0]);
+      const room=Math.max(0,receive[road.index][0]-current);
+      const admitted=Math.min(trip.vehicles,room);
+      if(admitted<=0)continue;
+      delta[road.index][0]+=admitted;
+      enteredStep[road.index]+=admitted;
+      outsideVehicles-=admitted;returnedVehicles+=admitted;
+      trip.vehicles-=admitted;
+      if(trip.vehicles<1e-7)detourTrips.splice(i,1);
     }
     // Network boundaries were discharged as explicit movements above.
     // No internal phantom demand: source edges must be actual directed
@@ -1212,7 +1397,8 @@ function createLegacyTrafficScenario(data){
         sourceFactor(edge,clockMs())*dt/3600;
       generated+=offered;
       const available=edge.backlog+offered;
-      const admitted=Math.min(available,receive[j][0]);
+      const admitted=Math.min(available,
+        Math.max(0,receive[j][0]-Math.max(0,delta[j][0])));
       delta[j][0]+=admitted;
       enteredStep[j]+=admitted;
       edge.backlog=Math.max(0,available-admitted);
@@ -1233,6 +1419,8 @@ function createLegacyTrafficScenario(data){
         if(after < -1e-7||after>edge.jamPerCell+1e-6)
           throw Error("Ungültiger Fahrzeugbestand auf "+edge.id);
         edge.stock[k]=Math.max(0,after);
+        const diverted=edge.divertStock[k]+divertDelta[j][k];
+        edge.divertStock[k]=Math.min(edge.stock[k],Math.max(0,diverted));
       }
       // 2-minute exponential flow meter for inspectable scenario plausibility.
       edge.enteredVph+=alpha*(enteredStep[j]*3600/dt-edge.enteredVph);
@@ -1315,6 +1503,10 @@ function createLegacyTrafficScenario(data){
     normalizedReversedWays:()=>[...reversedWays],
     migrateLegacyEvent,
     diversionShare,
+    detourPlans:()=>[...exitDetours.values()].map(plan=>({
+      terminalEdgeId:edges[plan.terminal].id,
+      reentryEdgeId:edges[plan.reentry].id,
+      delaySeconds:plan.durationS,closureId:plan.closureId})),
     closureDistanceAhead:(id,offsetM=0,maxDistance=16000)=>{
       const edge=byId.get(id);
       return edge?closureDistanceAhead(edge,offsetM,maxDistance):Infinity;
