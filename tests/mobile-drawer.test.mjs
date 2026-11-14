@@ -6,7 +6,9 @@ test("Mobiler Detail-Drawer bleibt geschlossen vollständig außerhalb des Bilde
   const css=await readFile("web/styles.css","utf8");
   const rules=[...css.matchAll(/\.detail-drawer\{([^}]*)\}/g)].map(match=>match[1]);
   const base=rules[0];
-  const mobile=rules.at(-1);
+  // Later mobile padding overrides must not be mistaken for the drawer's
+  // viewport geometry. Select the rule that establishes the mobile position.
+  const mobile=rules.find(rule=>/top:7dvh/.test(rule));
   const open=css.match(/\.detail-drawer\.open\{([^}]*)\}/)?.[1];
 
   assert.match(base,/visibility:hidden/,"geschlossene Details müssen unsichtbar sein");
