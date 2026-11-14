@@ -469,7 +469,7 @@ test("AD Dernbach A3 Frankfurt closure closes FULL A48 to Frankfurt ramp and blo
     runInNewContext(await readFile(path,"utf8"),{window:w});
   const data=w.STAU_LEGACY_GEOMETRY;
   const sim=w.createLegacyTrafficScenario(data);
-  sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  sim.setSimulationStart(Date.parse("2026-11-14T17:00:00Z"));
   const closure=sim.setEvent({id:"dernbach-frankfurt",edgeId:"A3-232272183",kind:"closure",
     offsetM:50,lengthM:200,closedLanes:[0,1,2],speedKmh:0,
     shoulder:"normal",hasShoulder:false});
@@ -495,7 +495,7 @@ test("AD Dernbach A3 Frankfurt closure closes FULL A48 to Frankfurt ramp and blo
     "legal A48 to Köln exit remains available");
   sim.warmStart();
   const initial=sim.edgeActivity(frankfurt).vehicles;
-  for(let i=0;i<36;i++)sim.advance(12);
+  for(let i=0;i<9;i++)sim.advance(12);
   assert.ok(sim.edgeActivity(frankfurt).vehicles<Math.max(.2,initial*.1),
     "cars already on the ramp must evacuate rather than form a permanent queue");
   assert.ok(sim.jamSummaries().every(x=>x.edgeId!==frankfurt),
