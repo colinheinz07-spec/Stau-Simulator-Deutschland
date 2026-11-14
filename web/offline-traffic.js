@@ -548,8 +548,53 @@ function createLegacyTrafficScenario(data){
       fromLabel:left.junction[0]+" "+left.junction[1]+" "+left.junction[2],
       toLabel:right.junction[0]+" "+right.junction[1]+" "+right.junction[2]};
   }
+  // A tap on an exit or entrance ramp closes only that directed ramp.
+  // Extend through physically joined ramp fragments, but never across a
+  // mainline, a public road or an ambiguous branch shared by another route.
+  const rampParents=new Map();
+  function rampSuccessors(edge){
+    if(edge.kind!=="ramp")return [];
+    return [...new Set(edge.links.filter(link=>
+      link.fromM>=edge.lengthM-.1&&link.toM<.1&&
+      edges[link.to].kind==="ramp").map(link=>edges[link.to]))];
+  }
+  for(const road of edges)if(road.kind==="ramp")
+    for(const next of rampSuccessors(road)){
+      const parents=rampParents.get(next.id)||[];
+      if(!parents.includes(road))parents.push(road);
+      rampParents.set(next.id,parents);
+    }
+  function rampCorridor(road){
+    if(road.kind!=="ramp")return null;
+    const chain=[road],visited=new Set([road.id]);
+    for(let i=0;i<100;i++){
+      const parents=(rampParents.get(chain[0].id)||[])
+        .filter(x=>!visited.has(x.id));
+      if(parents.length!==1||rampSuccessors(parents[0]).length!==1)break;
+      chain.unshift(parents[0]);visited.add(parents[0].id);
+    }
+    for(let i=0;i<100;i++){
+      const successors=rampSuccessors(chain.at(-1))
+        .filter(x=>!visited.has(x.id));
+      if(successors.length!==1||
+        (rampParents.get(successors[0].id)||[]).length!==1)break;
+      chain.push(successors[0]);visited.add(successors[0].id);
+    }
+    const spans=chain.map((edge,i)=>({
+      edgeId:edge.id,fromM:0,toM:edge.lengthM,gate:i===0
+    }));
+    return {spans,coveredLengthM:chain.reduce((n,e)=>n+e.lengthM,0),
+      truncated:false};
+  }
   function recommendedClosureLength(id,offsetM=0){
-    const road=byId.get(id),corridor=road&&motorwayCorridor(road,offsetM);
+    const road=byId.get(id);
+    if(!road)return null;
+    if(road.kind==="ramp"){
+      const ramp=rampCorridor(road);
+      return ramp?{lengthM:Math.round(ramp.coveredLengthM),
+        label:"ausgewählte Auf-/Abfahrt",rampOnly:true}:null;
+    }
+    const corridor=motorwayCorridor(road,offsetM);
     return corridor?{lengthM:Math.round(corridor.coveredLengthM),
       label:corridor.fromLabel+" – "+corridor.toLabel,
       fromRealJunction:true}:null;
@@ -601,18 +646,21 @@ function createLegacyTrafficScenario(data){
     // In the real road snapshot a motorway closure ALWAYS covers the exact
     // directed carriageway between the surrounding junctions. Ignore stale
     // 200 m saved events and hand-entered fragment lengths.
-    const physical=kind==="closure"&&edge.kind==="mainline"?
-      motorwayCorridor(edge,offset):null;
+    const physical=kind==="closure"?
+      edge.kind==="mainline"?motorwayCorridor(edge,offset):
+      edge.kind==="ramp"?rampCorridor(edge):null:null;
     if(kind==="closure"&&edge.kind==="mainline"&&
       (data.junctions||[]).some(j=>j[0]===edge.ref)&&!physical)
       throw Error("Vollsperrung nicht gesetzt: Zwei verbundene Anschlussstellen "+
         "in dieser Fahrtrichtung konnten nicht sicher ermittelt werden.");
     const traceResult=physical||trace(edge,offset,length);
     if(physical){
-      const first=physical.spans[0],newStart=byId.get(first.edgeId);
-      spec.edgeId=newStart.id;spec.offsetM=first.fromM;
+      // Preserve the finger-selected event marker even though the physical
+      // closure starts earlier. Rendering and physics read the SAME spans.
       spec.lengthM=Math.max(1,Math.round(physical.coveredLengthM));
-      spec.closureFrom=physical.fromLabel;spec.closureTo=physical.toLabel;
+      if(edge.kind==="mainline"){
+        spec.closureFrom=physical.fromLabel;spec.closureTo=physical.toLabel;
+      }
     }
     if(shoulder==="open"&&traceResult.spans.some(span=>
       byId.get(span.edgeId)?.shoulderTag==="no"))
@@ -675,7 +723,7 @@ function createLegacyTrafficScenario(data){
         // between A59 AS31 and AS32 must NEVER close AS35 at Wahn merely
         // because both touch the same 26 km OSM Way.
         return (spansById.get(target.id)||[]).some(span=>
-          link.toM>=span.fromM-140&&link.toM<span.toM-.5);
+          link.toM>=span.fromM-.05&&link.toM<span.toM-.05);
       }
       // Repeated fixed-point resolution covers ramp->ramp->mainline chains,
       // independent of OSM Way fragments.
@@ -1026,7 +1074,7 @@ function createLegacyTrafficScenario(data){
     if(!toEffects.length)return false;
     const upstream=activeEffects.get(from.id)||NO_EFFECTS;
     return toEffects.some(item=>{
-      const buffer=item.event.kind==="closure"?140:0;
+      const buffer=0; // Only the real blocked interval, never nearby open ramps.
       if(link.toM<item.fromM-buffer||link.toM>=item.toM-.05)return false;
       if(item.event.kind!=="closure"&&
         (item.event.closedLanes.length!==target.lanes||
