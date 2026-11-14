@@ -403,6 +403,32 @@ async function startLegacyCanvas(existingMap=null){
       context.fillText(symbols[event.kind]||"⚠️",x,y+6,25);
       eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,offsetM:event.offsetM});
     }
+    // Two endpoint markers per FULL motorway closure make the actual
+    // physical closed interval unmistakable: RED start at the last fork
+    // and GREEN return at the next real on-ramp. Never render another
+    // phantom closure at the junction-name label or at the finger tap.
+    if(zoom>=10.2&&typeof scenario.closureGatePoints==="function"){
+      for(const pin of scenario.closureGatePoints()){
+        const road=segmentById.get(pin.edgeId);
+        if(!road||!inView(road,scale))continue;
+        const [x,y]=pointAt(pointAlong(road,pin.offsetM));
+        if(x<18||x>width-18||y<109||y>height-59||
+          placed.some(p=>Math.hypot(p[0]-x,p[1]-y)<25))continue;
+        placed.push([x,y]);
+        const begin=pin.type==="start";
+        context.beginPath();
+        context.arc(x,y,13,0,Math.PI*2);
+        context.fillStyle="#fff";context.fill();
+        context.beginPath();
+        context.arc(x,y,10,0,Math.PI*2);
+        context.fillStyle=begin?"#aa263b":"#178052";context.fill();
+        context.font="bold 13px system-ui,Apple Color Emoji,sans-serif";
+        context.fillStyle="#fff";
+        context.fillText(begin?"⛔":"↗",x,y+5,20);
+        eventTargets.push({x,y,id:pin.eventId,edgeId:pin.edgeId,
+          offsetM:pin.offsetM});
+      }
+    }
     // Smaller access markers are shown ONLY on real blocked feeder ramp
     // geometry. Never scatter arbitrary ban icons across a whole OSM Way.
     if(zoom>=10.2){
