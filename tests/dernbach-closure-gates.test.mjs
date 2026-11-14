@@ -98,7 +98,7 @@ test("full closure: through traffic continues past earlier off-ramps to LAST law
   assert.ok(Math.abs(model.totals().conservationResidual)<1e-6);
 });
 
-test("finger tap slightly AFTER AS centre but BEFORE its reentry stays in preceding closure",async()=>{
+test("different taps between adjacent junctions select the same closure regardless of OSM subdivision",async()=>{
   const window={};
   for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
     runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
@@ -115,13 +115,13 @@ test("finger tap slightly AFTER AS centre but BEFORE its reentry stays in preced
     ["A7","2","Hinten",[50,7.031]]
   ]});
   const metresPerDegree=111194.93*Math.cos(50*Math.PI/180);
-  const justBefore=sim.recommendedClosureLength("main",.029*metresPerDegree);
-  const justAfterLabel=sim.recommendedClosureLength("main",.032*metresPerDegree);
+  const justBefore=sim.recommendedClosureLength("main",.020*metresPerDegree);
+  const justAfterLabel=sim.recommendedClosureLength("main",.025*metresPerDegree);
   assert.ok(justBefore&&justAfterLabel,
-    "both touches before the physical on-ramp merge are in the same closure");
+    "both taps in the between-AS corridor must select the same closure");
   assert.equal(justAfterLabel.label,justBefore.label,
-    "a label projection must not move closure into a different junction sector");
-  const evt=full(sim,"physical-centre","main",.032*metresPerDegree);
+    "different taps between the same two AS must not move closure boundaries");
+  const evt=full(sim,"physical-centre","main",.025*metresPerDegree);
   assert.match(evt.closureFrom,/Vorne/);
   assert.match(evt.closureTo,/Hinten/);
   assert.equal(closed(sim,"end-on"),false);
