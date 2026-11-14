@@ -369,7 +369,12 @@ function createLegacyTrafficScenario(data){
           best=error;offset=metres[i-1]+alpha*(metres[i]-metres[i-1]);
         }
       }
-      if(best<=250)found.push({offset,junction,best});
+      // A junction center can be a few hundred metres before/after the
+      // first imported Way (e.g. AK Koblenz A48/A61). Project it onto
+      // that real motorway end rather than leaving the corridor unbookable.
+      // Deduplication below still picks the closest projection per AS.
+      const exterior=offset<.1||offset>edge.lengthM-.1;
+      if(best<=(exterior?700:260))found.push({offset,junction,best});
     }
     landmarkCache.set(edge.id,found);
     return found;
