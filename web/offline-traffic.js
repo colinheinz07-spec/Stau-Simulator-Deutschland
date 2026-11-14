@@ -114,6 +114,7 @@ function createLegacyTrafficScenario(data){
         (row[1]==="ramp"?75:120)*5/3.6)/1000,
       next:[],incoming:0,incomingAtStart:0,mainlineIncomingAtStart:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
+      cellFlowSpeeds:new Float64Array(count).fill(row[1]==="ramp"?75:120),
       links:[],linksFrom:Array.from({length:count},()=>[]),
       enteredVph:0,departedVph:0,
       referencePeakVph:0,directionKey:"",lastProfileMinute:-1,profileFactor:0
@@ -663,7 +664,8 @@ function createLegacyTrafficScenario(data){
         const fraction=Math.min(1,edge.stock[k]/Math.max(.001,edge.jamPerCell));
         const densitySpeed=edge.freeKmh*
           (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
-        let speed=densitySpeed;
+        const measured=Math.min(densitySpeed,edge.cellFlowSpeeds[k]);
+        let speed=measured;
         for(const effect of effectList){
           if(effect.fromM>=b-.001||effect.toM<=a+.001)continue;
           if(effect.event.speedKmh>0)
@@ -673,13 +675,13 @@ function createLegacyTrafficScenario(data){
         // closures remain separately visible as event/closure overlays.
         if(edge.stock[k]>=1)minSpeed=Math.min(minSpeed,speed);
         const congested=edge.stock[k]>=Math.max(2,edge.lanes*1.2)&&fraction>.23;
-        const color=congested?colourForSpeed(densitySpeed):"free";
+        const color=congested?colourForSpeed(measured):"free";
         if(color!=="free"){
           const previous=bands.at(-1);
           if(previous&&previous.color===color&&Math.abs(previous.toM-a)<.001){
             previous.toM=b;
-            previous.speedKmh=Math.min(previous.speedKmh,densitySpeed);
-          }else bands.push({fromM:a,toM:b,color,speedKmh:densitySpeed});
+            previous.speedKmh=Math.min(previous.speedKmh,measured);
+          }else bands.push({fromM:a,toM:b,color,speedKmh:measured});
         }
       }
       edge.speed=minSpeed;
@@ -760,6 +762,7 @@ function createLegacyTrafficScenario(data){
     elapsed=0;generated=0;exited=0;initialVehicles=0;warmedUp=false;
     for(const edge of edges){
       edge.stock.fill(0);edge.backlog=0;edge.speed=edge.freeKmh;
+      edge.cellFlowSpeeds.fill(edge.freeKmh);
       edge.lastProfileMinute=-1;edge.profileFactor=0;
       edge.enteredVph=0;edge.departedVph=0;
     }
@@ -1034,6 +1037,7 @@ function createLegacyTrafficScenario(data){
       const moved=send[j][edge.n-1];
       delta[j][edge.n-1]-=moved;
       departedStep[j]+=moved;
+      used.set(j+":"+(edge.n-1),(used.get(j+":"+(edge.n-1))||0)+moved);
       exited+=moved;
     }
     // No internal phantom demand: source edges must be actual directed
@@ -1058,6 +1062,13 @@ function createLegacyTrafficScenario(data){
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],change=delta[j];
       for(let k=0;k<edge.n;k++){
+        const before=edge.stock[k],sent=used.get(j+":"+k)||0;
+        if(before>=.8){
+          const effectiveLength=Math.max(edge.cellLength,edge.freeKmh*dt/3.6);
+          const observed=Math.min(edge.freeKmh,Math.max(0,
+            sent*effectiveLength*3.6/(dt*before)));
+          edge.cellFlowSpeeds[k]=.45*observed+.55*edge.cellFlowSpeeds[k];
+        }else if(before<.3)edge.cellFlowSpeeds[k]=edge.freeKmh;
         const after=edge.stock[k]+change[k];
         if(after < -1e-7||after>edge.jamPerCell+1e-6)
           throw Error("Ungültiger Fahrzeugbestand auf "+edge.id);
