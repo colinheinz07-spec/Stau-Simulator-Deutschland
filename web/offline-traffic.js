@@ -1799,6 +1799,28 @@ function createLegacyTrafficScenario(data){
     for(let i=0;i<steps;i++)result=step(5,i===steps-1);
     return result;
   }
+  // Physical gate endpoints for the map. One START and one REOPEN per
+  // directed motorway closure; they come from the exact same OSM spans
+  // that the physics and red/white overlay use. No invented map points.
+  function closureGatePoints(){
+    const result=[],at=clockMs();
+    for(const record of eventRecords.values()){
+      if(record.spec.kind!=="closure"||
+        record.spec.schedule&&
+          !global.StauEventSchedule.active(record.spec.schedule,at))continue;
+      const mainSpans=record.spans.filter(span=>
+        byId.get(span.edgeId)?.kind==="mainline");
+      if(!mainSpans.length)continue;
+      const first=mainSpans[0],last=mainSpans.at(-1);
+      const endRoad=byId.get(last.edgeId);
+      result.push({eventId:record.spec.id,type:"start",
+        edgeId:first.edgeId,offsetM:first.fromM});
+      result.push({eventId:record.spec.id,type:"reopen",
+        edgeId:last.edgeId,
+        offsetM:Math.max(0,Math.min(endRoad.lengthM-.001,last.toM))});
+    }
+    return result;
+  }
   // Exact blocked access points for closure symbols. A closure can occupy
   // only an interval of a long motorway Way; do NOT mark every ramp feeding
   // the same Way outside that interval.
@@ -1866,7 +1888,7 @@ function createLegacyTrafficScenario(data){
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
-    recommendedClosureLength,closureAccessPoints,
+    recommendedClosureLength,closureAccessPoints,closureGatePoints,
     movementBlocked:(fromId,toId)=>{
       const from=byId.get(fromId);
       return !!from&&from.links.some(link=>edges[link.to].id===toId&&
