@@ -1309,7 +1309,11 @@ function createLegacyTrafficScenario(data){
           const road=edges[turn.to],base=downstream.get(road.id);
           if(road.kind!=="mainline"||road.ref!==endEdge.ref||base===undefined)continue;
           const distance=road===endEdge?turn.toM-last.toM:base+turn.toM;
-          if(!(distance>80&&distance<60000))continue;
+          // The first legal reentry is often the ramp that MERGES at the
+          // exact end of the blocked mainline (distance 0). Requiring
+          // 80 metres beyond the closure silently discarded that ramp and
+          // stranded diverted drivers despite a lawful open reentry.
+          if(!(distance>=-.05&&distance<60000))continue;
           // A long OSM interchange can have several ramp pieces. Treat an
           // Anschlussstelle as ONE candidate, not three phantom destinations.
           const junction=(ramp.name.split(" · ")[0]||ramp.id)
