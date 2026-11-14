@@ -165,3 +165,35 @@ test("full closure spans physical AS gates even when junctions are only 2 metres
   assert.equal(closed(sim,"entry"),false,
     "next AS on-ramp is open regardless of AS separation");
 });
+
+test("last usable AS exit still forces diversion if the next full closure is over 30km ahead",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const sim=window.createLegacyTrafficScenario({roads:[
+    ["approach","mainline","A3",3,
+      [[50,7],[50,7.010],[50,7.430]],"",1],
+    ["closed","mainline","A3",3,[[50,7.430],[50,7.450]],"",2],
+    ["beyond","mainline","A3",3,[[50,7.450],[50,7.490]],"",3],
+    ["off","ramp","A3",1,
+      [[50,7.010],[50.005,7.012]],"AS 1 Weit davor · Abfahrt von A3",4],
+    ["in","ramp","A3",1,
+      [[50.005,7.460],[50,7.460]],"AS 2 Dahinter · Auffahrt auf A3",5]
+  ]});
+  sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  sim.warmStart();
+  sim.setEvent({id:"very-long-gap",edgeId:"closed",kind:"closure",
+    lengthM:1000,offsetM:0,closedLanes:[0,1,2],
+    shoulder:"normal",hasShoulder:false,speedKmh:0});
+  sim.advance(12);
+  const plans=sim.detourPlans();
+  assert.ok(plans.some(p=>p.closureId==="very-long-gap"&&
+    p.terminalEdgeId==="off"&&p.reentryEdgeId==="in"),
+    "full closure detour must find a real last AS exit and next legal on-ramp "+
+    "regardless of any 16/25/60km search limits");
+  for(let i=0;i<20;i++)sim.advance(12);
+  assert.ok(sim.edgeActivity("off").enteredVph>500,
+    "all obstructed traffic diverts at the last exit, even if >30km from the barrier; got "+
+    sim.edgeActivity("off").enteredVph+" vph");
+  assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
+});
