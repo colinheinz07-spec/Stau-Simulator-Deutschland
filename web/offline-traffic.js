@@ -88,7 +88,7 @@ function createLegacyTrafficScenario(data){
   const knownRefs=new Set((data.junctions||[]).map(j=>j[0]));
   for(const row of data.roads){
     if(row[1]!=="mainline"||row[2])continue;
-    const match=/^A\\d{1,3}\\b/.exec(String(row[5]||""));
+    const match=/^A\d{1,3}\b/.exec(String(row[5]||""));
     if(match&&knownRefs.has(match[0]))row[2]=match[0];
   }
   const reversedWays=orientExistingMotorwayChains(data);
