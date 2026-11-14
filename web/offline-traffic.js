@@ -115,6 +115,8 @@ function createLegacyTrafficScenario(data){
       next:[],incoming:0,incomingAtStart:0,mainlineIncomingAtStart:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
       cellFlowSpeeds:new Float64Array(count).fill(row[1]==="ramp"?75:120),
+      // Two-minute actual throughput per cell, including internal merges.
+      cellThroughVph:new Float64Array(count),
       links:[],linksFrom:Array.from({length:count},()=>[]),
       enteredVph:0,departedVph:0,
       referencePeakVph:0,directionKey:"",lastProfileMinute:-1,profileFactor:0
@@ -217,10 +219,25 @@ function createLegacyTrafficScenario(data){
           stack.push(down);
       }
     }
-    const result=n>=2&&metres>=1500;
+    // A single long OSM way is a legitimate continuous motorway corridor.
+    const result=metres>=1500;
     provenMainline.set(edge.id,result);return result;
   }
-  const rankedMainline=new Map();
+  // Group physically connected same-direction OSM motorway Ways. The old
+  // globally unique motorway key starved separately imported carriageways
+  // and map-cropped components after the initial traffic inventory drained.
+  // No spatial snapping: only already permitted directed OSM links count.
+  const motorwayNeighbors=new Map();
+  for(const edge of edges)if(edge.kind==="mainline")motorwayNeighbors.set(edge.index,new Set());
+  for(const edge of edges){
+    if(edge.kind!=="mainline")continue;
+    for(const turn of edge.links){
+      const next=edges[turn.to];
+      if(next.kind!=="mainline"||next.ref!==edge.ref)continue;
+      motorwayNeighbors.get(edge.index).add(next.index);
+      motorwayNeighbors.get(next.index).add(edge.index);
+    }
+  }
   function upstreamRank(edge,key){
     const [lat,lon]=edge.first;
     if(key==="A3-koeln")return -lat;
@@ -231,22 +248,33 @@ function createLegacyTrafficScenario(data){
     if(/a4-aachen|a560-bonn|a562-bonn$/.test(key))return lon;
     if(/a59-koeln|a555-koeln|a1-dortmund|a559-gremberg/.test(key))return -lat;
     if(/a59-bonn|a555-bonn|a1-koblenz|a559-porz/.test(key))return lat;
-    return Math.abs(lat)>=Math.abs(lon)?-lat:-lon;
+    return key.endsWith("-sued")?-lat:key.endsWith("-nord")?lat:-lon;
   }
-  for(const edge of edges){
-    if(edge.kind!=="mainline"||!edge.ref||edge.mainlineIncomingAtStart)continue;
-    const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
-    if(profile.peakVph<=0||!hasContinuousMainline(edge))continue;
-    const rank=upstreamRank(edge,profile.key);
-    const old=rankedMainline.get(profile.key);
-    if(!old||rank>old.rank+1e-8||
-      Math.abs(rank-old.rank)<=1e-8&&edge.lengthM>old.edge.lengthM)
-      rankedMainline.set(profile.key,{edge,profile,rank});
-  }
-  const sources=[];
-  for(const {edge,profile} of rankedMainline.values()){
+  const sources=[],componentSeen=new Set();
+  let sourceComponents=0,unservedComponents=0;
+  for(const first of edges){
+    if(first.kind!=="mainline"||componentSeen.has(first.index))continue;
+    const component=[],stack=[first.index];
+    while(stack.length){
+      const id=stack.pop();
+      if(componentSeen.has(id))continue;
+      componentSeen.add(id);component.push(edges[id]);
+      for(const neighbor of motorwayNeighbors.get(id)||[])
+        if(!componentSeen.has(neighbor))stack.push(neighbor);
+    }
+    const totalLength=component.reduce((sum,edge)=>sum+edge.lengthM,0);
+    // A short disconnected ramp/Way fragment must NOT get a full motorway
+    // source. But a real map-cut motorway >= 1.5 km must receive arrivals.
+    if(totalLength<1500)continue;
+    const possible=component.filter(edge=>!edge.mainlineIncomingAtStart)
+      .map(edge=>({edge,profile:traffic.referenceForRoad(rowById.get(edge.id))}))
+      .filter(x=>x.profile.peakVph>0);
+    if(!possible.length){unservedComponents++;continue;}
+    possible.sort((a,b)=>upstreamRank(b.edge,b.profile.key)-upstreamRank(a.edge,a.profile.key)
+      ||b.edge.lengthM-a.edge.lengthM);
+    const {edge,profile}=possible[0];
     edge.source=true;edge.referencePeakVph=profile.peakVph;
-    edge.directionKey=profile.key;sources.push(edge);
+    edge.directionKey=profile.key;sources.push(edge);sourceComponents++;
   }
   const distinctOnramps=new Map();
   for(const edge of edges){
@@ -269,6 +297,22 @@ function createLegacyTrafficScenario(data){
     edge.source=true;edge.referencePeakVph=peak;
     edge.directionKey=profile.key;sources.push(edge);
   }
+  // A motorway does not terminate merely because our displayed OSM extract
+  // stops. Keep genuine modelled interchanges internal, but allow an external
+  // sink when no mainline can be reached through its final ramps.
+  function leadsToMainline(index,seen=new Set(),depth=0){
+    if(depth>8||seen.has(index))return false;
+    const edge=edges[index];
+    if(edge.kind==="mainline")return true;
+    seen.add(index);
+    return edge.links.some(turn=>leadsToMainline(turn.to,seen,depth+1));
+  }
+  const boundaryExit=edges.map(edge=>{
+    const outgoing=edge.links.filter(link=>link.fromM>=edge.lengthM-.1);
+    if(!outgoing.length)return true;
+    if(edge.kind!=="mainline")return false;
+    return !outgoing.some(link=>leadsToMainline(link.to));
+  });
   const reachable=new Set(sources.map(edge=>edge.id));
   const frontier=[...sources];
   for(let k=0;k<frontier.length;k++){
@@ -300,7 +344,8 @@ function createLegacyTrafficScenario(data){
       generatedVehicles:generated,exitedVehicles:exited,
       vehiclesOnNetwork:inside,waitingOutsideSources:backlog,
       conservationResidual:Math.abs(residual)<1e-7?0:residual,
-      sources:sources.length,edges:edges.length,excludedRest};
+      sources:sources.length,edges:edges.length,excludedRest,
+      motorwaySourceComponents:sourceComponents,unservedMotorwayComponents:unservedComponents};
   }
   function clockMs(){return simStart+elapsed*1000;}
   function migrateLegacyEvent(raw){
@@ -763,6 +808,7 @@ function createLegacyTrafficScenario(data){
     for(const edge of edges){
       edge.stock.fill(0);edge.backlog=0;edge.speed=edge.freeKmh;
       edge.cellFlowSpeeds.fill(edge.freeKmh);
+      edge.cellThroughVph.fill(0);
       edge.lastProfileMinute=-1;edge.profileFactor=0;
       edge.enteredVph=0;edge.departedVph=0;
     }
@@ -933,7 +979,7 @@ function createLegacyTrafficScenario(data){
     // connector. Ramp merges compete with the mainline for REAL receiving
     // space, while exit splits share the originating cell's sending capacity.
     // This fixes mid-Way motorway junctions without creating new road geometry.
-    const proposed=new Map(),splitSources=[];
+    const proposed=new Map(),splitSources=[],boundaryUsed=new Map();
     const push=(to,toCell,from,fromCell,want)=>{
       const key=to+":"+toCell,arr=proposed.get(key)||[];
       arr.push({to,toCell,from,fromCell,want});
@@ -953,7 +999,11 @@ function createLegacyTrafficScenario(data){
           if(blockedMovement(edge,link))continue;
           options.push(link);
         }
-        if(!options.length)continue;
+        // The open virtual continuation takes through demand outside the map;
+        // a one-lane AS exit is NOT the motorway's entire downstream capacity.
+        const outsideWeight=k===edge.n-1&&boundaryExit[j]?
+          (edge.kind==="mainline"?20:1):0;
+        if(!options.length&&!outsideWeight)continue;
         // If a planned corridor closure lies downstream, approaching
         // motorists can progressively take the LAST available open exit.
         // Reweight ONLY real OSM turns; never teleport cars or create roads.
@@ -974,12 +1024,20 @@ function createLegacyTrafficScenario(data){
         }
         if(options.length>1&&hasLegalClosureDetour)
           splitSources.push({from:j,cell:k,available,options});
-        const sum=options.reduce((n,x)=>n+x.weight,0);
+        const sum=options.reduce((n,x)=>n+x.weight,0)+outsideWeight;
         for(const opt of options)
           push(opt.to,opt.toCell,j,k,available*opt.weight/sum);
+        if(outsideWeight){
+          const leaving=available*outsideWeight/sum;
+          delta[j][k]-=leaving;
+          departedStep[j]+=leaving;
+          exited+=leaving;
+          const key=j+":"+k;
+          boundaryUsed.set(key,(boundaryUsed.get(key)||0)+leaving);
+        }
       }
     }
-    const used=new Map(),accepted=new Map();
+    const used=new Map(boundaryUsed),accepted=new Map();
     for(const requests of proposed.values()){
       const {to,toCell}=requests[0];
       const accepting=receive[to][toCell];
@@ -1025,21 +1083,7 @@ function createLegacyTrafficScenario(data){
         if(remaining<=1e-6)break;
       }
     }
-    // ONLY a successor at the physical DOWNSTREAM endpoint prevents exit.
-    // Before this fix, a 26-km motorway with an off-ramp at kilometre 3
-    // was considered "not a sink" even if the actual network ended at km 26.
-    // Its last cell filled indefinitely and generated severe PHANTOM queues.
-    for(let j=0;j<edges.length;j++){
-      const edge=edges[j];
-      const hasThroughAtEnd=edge.links.some(link=>
-        link.fromM>=edge.lengthM-.1);
-      if(hasThroughAtEnd)continue;
-      const moved=send[j][edge.n-1];
-      delta[j][edge.n-1]-=moved;
-      departedStep[j]+=moved;
-      used.set(j+":"+(edge.n-1),(used.get(j+":"+(edge.n-1))||0)+moved);
-      exited+=moved;
-    }
+    // Network boundaries were discharged as explicit movements above.
     // No internal phantom demand: source edges must be actual directed
     // network boundaries. Unadmitted vehicles remain in external backlog.
     for(const edge of sources){
@@ -1059,10 +1103,12 @@ function createLegacyTrafficScenario(data){
       enteredStep[j]+=admitted;
       edge.backlog=Math.max(0,available-admitted);
     }
+    const alpha=1-Math.exp(-dt/120);
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],change=delta[j];
       for(let k=0;k<edge.n;k++){
         const before=edge.stock[k],sent=used.get(j+":"+k)||0;
+        edge.cellThroughVph[k]+=alpha*(sent*3600/dt-edge.cellThroughVph[k]);
         if(before>=.8){
           const effectiveLength=Math.max(edge.cellLength,edge.freeKmh*dt/3.6);
           const observed=Math.min(edge.freeKmh,Math.max(0,
@@ -1075,7 +1121,6 @@ function createLegacyTrafficScenario(data){
         edge.stock[k]=Math.max(0,after);
       }
       // 2-minute exponential flow meter for inspectable scenario plausibility.
-      const alpha=1-Math.exp(-dt/120);
       edge.enteredVph+=alpha*(enteredStep[j]*3600/dt-edge.enteredVph);
       edge.departedVph+=alpha*(departedStep[j]*3600/dt-edge.departedVph);
     }
@@ -1120,11 +1165,13 @@ function createLegacyTrafficScenario(data){
     }
     return points;
   }
-  function edgeActivity(id){
+  function edgeActivity(id,offsetM=0){
     const edge=byId.get(id);
     if(!edge)return null;
     const count=edge.stock.reduce((sum,x)=>sum+x,0);
+    const at=Math.max(0,Math.min(edge.n-1,Math.floor((Number(offsetM)||0)/edge.cellLength)));
     return {reachable:reachable.has(id),vehicles:count,
+      sectionVph:edge.cellThroughVph[at],boundaryExit:boundaryExit[edge.index],
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
       capacityVph:edge.lanes*edge.capacityPerLane,
       source:edge.source,sourcePeakVph:edge.referencePeakVph,
