@@ -63,3 +63,37 @@ test("Ransbach to Dierdorf Köln must not close remote A48/AD Dernbach access",a
   assert.equal(closed(sim,"extra-heumar-1352049124"),false,
     "Dierdorf on-ramp for return stays open");
 });
+
+test("full closure: through traffic continues past earlier off-ramps to LAST lawful exit",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const model=window.createLegacyTrafficScenario({roads:[
+    ["approach","mainline","A3",3,
+      [[50,7],[50,7.010],[50,7.025],[50,7.032],[50,7.038]],"",1],
+    ["closed","mainline","A3",3,[[50,7.038],[50,7.055]],"",2],
+    ["after","mainline","A3",3,[[50,7.055],[50,7.070]],"",3],
+    ["early","ramp","A3",1,[[50,7.010],[50.007,7.010]],
+      "AS 1 Früh · Abfahrt von A3",4],
+    ["last","ramp","A3",1,[[50,7.032],[50.008,7.032]],
+      "AS 2 Letzte · Abfahrt von A3",5],
+    ["return","ramp","A3",1,[[50.008,7.060],[50,7.060]],
+      "AS 3 Hinter der Sperre · Auffahrt auf A3",6]
+  ]});
+  model.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  model.warmStart();
+  model.setEvent({id:"test-closure",edgeId:"closed",offsetM:0,
+    kind:"closure",lengthM:1000,closedLanes:[0,1,2],
+    speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.equal(closed(model,"early"),false,"earlier exit must remain open");
+  assert.equal(closed(model,"last"),false,"last exit must remain open");
+  assert.equal(closed(model,"return"),false,"later entrance is open");
+  for(let i=0;i<40;i++)model.advance(12);
+  const firstFlow=model.edgeActivity("early").enteredVph;
+  const lastFlow=model.edgeActivity("last").enteredVph;
+  assert.ok(lastFlow>firstFlow*3,
+    "farther-away exit must not absorb the forced diversion if a later exit "+
+      "exists; earlier="+firstFlow+" vph, last="+lastFlow+" vph");
+  assert.ok(lastFlow>300,"last open exit carries the diverted vehicles");
+  assert.ok(Math.abs(model.totals().conservationResidual)<1e-6);
+});
