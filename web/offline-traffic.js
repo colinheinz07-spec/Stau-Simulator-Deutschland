@@ -428,13 +428,13 @@ function createLegacyTrafficScenario(data){
     // within 140m before the next AS means the following AS-to-AS section.
     let ix=ordered.findIndex(mark=>mark.position>=point);
     if(ix===-1){
-      if(point-ordered.at(-1).position>140)return null;
+      if(point-ordered.at(-1).position>450)return null;
       ix=ordered.length-1;
     }
-    if(ix===0&&ordered[0].position-point>140)return null;
+    if(ix===0&&ordered[0].position-point>450)return null;
     let left,right;
     if(ix===0||ix<ordered.length&&
-      ordered[ix].position-point<=140){
+      ordered[ix].position-point<=450){
       left=ordered[ix];right=ordered[ix+1];
       if(!right){left=ordered[ix-1];right=ordered[ix];}
     }else{
