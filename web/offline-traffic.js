@@ -510,25 +510,15 @@ function createLegacyTrafficScenario(data){
       const old=unique.get(key);
       if(!old||mark.best<old.best-.01||
         (Math.abs(mark.best-old.best)<.01&&
-          Math.abs(mark.position-point)<Math.abs(old.position-point)))
+          mark.position<old.position))
         unique.set(key,mark);
     }
     const ordered=[...unique.values()].sort((a,b)=>a.position-b.position);
     if(ordered.length<2)return null;
-    // A finger tap belongs to the TWO junction anchors actually
-    // surrounding that point. Do not silently jump to the FOLLOWING
-    // corridor merely because the tap is within 450 m of its next AS.
-    // At the outside of an incomplete graph, reject instead of guessing.
-    const ix=ordered.findIndex(mark=>mark.position>=point);
-    if(ix<=0)return null;
-    const left=ordered[ix-1],right=ordered[ix];
-    if(!right||left.junction[1]===right.junction[1]||
-      right.position-left.position<100)return null;
-    // An AS centre is only a map LABEL, never the true legal closure gate.
-    // Move upstream boundary to the last usable off-ramp split, and the
-    // downstream boundary to the first actual on-ramp merge. This also
-    // ensures the downstream exit is INSIDE the closure, while the on-ramp
-    // directly behind it remains OPEN to returning traffic.
+    // An AS coordinate is just a LABEL; the real section edge lies at
+    // its on-ramp merge. A tap after the label but still BEFORE this
+    // merge is part of the section ending at that AS, not the next AS!
+    // Build physical gates first, then select the corridor by those gates.
     const offSplits=[],onMerges=[];
     for(const main of chain){
       const base=starts.get(main.id);
@@ -556,22 +546,37 @@ function createLegacyTrafficScenario(data){
       }
       return best;
     };
-    const startExits=offSplits.filter(at=>
-      nearestJunctionIndex(at)===ix-1&&at<point+.05);
-    // Last legal exit at the upstream junction is the START of closure.
-    const startGate=startExits.sort((a,b)=>b-a)[0];
-    // The downstream AS exit must lie INSIDE the closed interval. Only its
-    // subsequent on-ramp is the reentry gate. A merge from an earlier
-    // crossing interchange does not prematurely finish this section.
-    const downstreamExit=offSplits.filter(at=>
-      nearestJunctionIndex(at)===ix&&at>=point-.05)
-      .sort((a,b)=>a-b)[0];
-    const endMerges=onMerges.filter(at=>
-      nearestJunctionIndex(at)===ix&&
-      at>point+.05&&
-      (downstreamExit===undefined||at>downstreamExit+.05));
-    const endGate=endMerges.sort((a,b)=>a-b)[0];
-    // Never let a guessed ramp gate reverse the tapped carriageway.
+    const exitsByJunction=ordered.map((_,i)=>
+      offSplits.filter(at=>nearestJunctionIndex(at)===i)
+        .sort((a,b)=>a-b));
+    const mergesByJunction=ordered.map((_,i)=>
+      onMerges.filter(at=>nearestJunctionIndex(at)===i)
+        .sort((a,b)=>a-b));
+    // The first on-ramp merge AFTER the exit fork ends this junction.
+    // This is computed without a metre cutoff and independently of taps.
+    const exitOfJunction=i=>exitsByJunction[i][0];
+    const reentryOfJunction=i=>{
+      const exit=exitOfJunction(i);
+      return mergesByJunction[i].find(at=>
+        exit===undefined||at>exit+.05);
+    };
+    const boundaries=ordered.map((mark,i)=>
+      reentryOfJunction(i)??mark.position);
+    let ix=-1;
+    for(let i=1;i<ordered.length;i++){
+      if(point<=boundaries[i]+.05&&
+        (i===1||point>boundaries[i-1]+.05)){
+        ix=i;break;
+      }
+    }
+    if(ix<1)return null;
+    const left=ordered[ix-1],right=ordered[ix];
+    if(!right||left.junction[1]===right.junction[1]||
+      right.position-left.position<100)return null;
+    // Last legal exit of the UPSTREAM AS starts the closure; the first
+    // post-exit merge of the DOWNSTREAM AS reopens the carriageway.
+    const startGate=exitsByJunction[ix-1].at(-1);
+    const endGate=reentryOfJunction(ix);
     const fromPosition=startGate??left.position;
     const toPosition=endGate??right.position;
     if(fromPosition>=point||toPosition<=point||
