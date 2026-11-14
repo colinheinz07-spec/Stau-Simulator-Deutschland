@@ -708,9 +708,10 @@ function createLegacyTrafficScenario(data){
       edge.kind==="mainline"?motorwayCorridor(edge,offset):
       edge.kind==="ramp"?rampCorridor(edge):null:null;
     if(kind==="closure"&&edge.kind==="mainline"&&
-      (data.junctions||[]).some(j=>j[0]===edge.ref)&&!physical)
+      (data.junctions||[]).length>0&&!physical)
       throw Error("Vollsperrung nicht gesetzt: Zwei verbundene Anschlussstellen "+
-        "in dieser Fahrtrichtung konnten nicht sicher ermittelt werden.");
+        "in dieser Fahrtrichtung konnten nicht sicher ermittelt werden. "+
+        "Fehlende OSM-Knoten werden nicht durch eine willkürliche Teilsperrung ersetzt.");
     const traceResult=physical||trace(edge,offset,length);
     if(physical){
       // Preserve the finger-selected event marker even though the physical
