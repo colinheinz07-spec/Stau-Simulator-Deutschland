@@ -500,7 +500,10 @@ test("real A3 Heumar to Köln-Ost closure offers a genuine A59 upstream off-ramp
     x.terminalEdgeId.startsWith("extra-heumar-")&&
     x.reentryEdgeId.startsWith("extra-heumar-")),
     "must identify real A59 off-ramp and after-closure A3 entrance; actual "+
-    JSON.stringify(plans.slice(0,10)));
+    JSON.stringify(plans.slice(0,10))+"; A3 ramp sources="+
+    JSON.stringify(sim.sourceProfiles().filter(x=>x.kind==="ramp"&&
+      (x.ref==="A3"||x.ref==="A59")).map(x=>({id:x.id,name:x.name,direction:x.direction})).slice(0,28))+
+    "; A59 lookahead "+sim.closureDistanceAhead("extra-a59-koeln",16000,16000));
   conservation(sim.totals());
 });
 
