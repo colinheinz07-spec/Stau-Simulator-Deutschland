@@ -533,8 +533,10 @@ function createLegacyTrafficScenario(data){
     const ix=ordered.findIndex(mark=>mark.position>=point);
     if(ix<=0)return null;
     const left=ordered[ix-1],right=ordered[ix];
+    // Distinct physical junctions may be centimetres or many kilometres
+    // apart. No minimum AS-to-AS length; only directed ordering matters.
     if(!right||left.junction[1]===right.junction[1]||
-      right.position-left.position<100)return null;
+      right.position<=left.position+.001)return null;
     // An AS centre is only a map LABEL, never the true legal closure gate.
     // Move upstream boundary to the last usable off-ramp split, and the
     // downstream boundary to the first actual on-ramp merge. This also
@@ -586,7 +588,7 @@ function createLegacyTrafficScenario(data){
     const fromPosition=startGate??left.position;
     const toPosition=endGate??right.position;
     if(fromPosition>=point||toPosition<=point||
-      toPosition-fromPosition<100)return null;
+      toPosition<=fromPosition+.001)return null;
     const spans=[];
     for(const road of chain){
       const begin=starts.get(road.id),end=begin+road.lengthM;
@@ -648,7 +650,7 @@ function createLegacyTrafficScenario(data){
         label:"ausgewählte Auf-/Abfahrt",rampOnly:true}:null;
     }
     const corridor=motorwayCorridor(road,offsetM);
-    return corridor?{lengthM:Math.round(corridor.coveredLengthM),
+    return corridor?{lengthM:Math.max(1,Math.round(corridor.coveredLengthM)),
       label:corridor.fromLabel+" – "+corridor.toLabel,
       fromRealJunction:true}:null;
   }
@@ -673,8 +675,11 @@ function createLegacyTrafficScenario(data){
     if(kind==="closure"&&
       (closedLanes.length!==edge.lanes||shoulder==="open"))
       throw Error("Vollsperrung muss sämtliche vorhandenen Fahrstreifen schließen");
+    // For closures the physical AS-to-AS graph defines the length, NOT an
+    // editor-supplied metre cap. This also supports very short or long AS
+    // intervals without any distance-dependent closure behavior.
     const max=kind==="accident"||kind==="breakdown"?200:
-      kind==="roadworks"?20000:100000;
+      kind==="roadworks"?20000:Number.MAX_SAFE_INTEGER;
     const length=Number(raw.lengthM),offset=Number(raw.offsetM??0);
     if(!Number.isInteger(length)||length<1||length>max)
       throw Error("Ereignislänge muss zwischen 1 und "+max+" Metern liegen");
