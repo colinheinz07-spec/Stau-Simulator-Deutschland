@@ -64,3 +64,22 @@ test("ONE directed graph rule works with 2m, 20m, 150m, 2km, 14km junction gaps 
     assert.equal(sim.movementBlocked("common","to-open"),false);
   }
 });
+
+test("missing AS topology rejects motorway full closure instead of painting arbitrary remote 200m OSM interval",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const sim=window.createLegacyTrafficScenario({roads:[
+    ["unknown","mainline","A8",3,[[50,7],[50,7.04]],"",10]
+  ],junctions:[
+    ["A7","1","Other motorway",[50,7]],
+    ["A7","2","Other motorway AS",[50,7.04]]
+  ]});
+  assert.equal(sim.recommendedClosureLength("unknown",120),null);
+  assert.throws(()=>sim.setEvent({id:"no-silent-closure",
+    edgeId:"unknown",kind:"closure",offsetM:120,lengthM:200,
+    closedLanes:[0,1,2],speedKmh:0,shoulder:"normal",hasShoulder:false}),
+    /Fehlende OSM-Knoten/);
+  assert.equal(sim.closureBands("unknown").length,0,
+    "no arbitrary partial closure or unrelated no-entry badges");
+});
