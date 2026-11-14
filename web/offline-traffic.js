@@ -544,20 +544,33 @@ function createLegacyTrafficScenario(data){
           onMerges.push(base+turn.toM);
       }
     }
-    // Choose gates by ORDER IN THE DIRECTED ROAD GRAPH, never by a
-    // 1.5 km circle around the approximate AS/AD marker.
-    // An interchange may stretch several kilometres (AD Dernbach: the
-    // Cologne-bound A3->A48 off-ramp branches well BEFORE the AD label).
-    // The final usable exit before the tapped corridor is its entry gate;
-    // the first reentry after that corridor is its exit gate. No arbitrary
-    // restriction based on the distance between motorway junctions.
-    const priorMark=ix>=2?ordered[ix-2].position:-Infinity;
-    const followingMark=ix+1<ordered.length?
-      ordered[ix+1].position:Infinity;
-    const startGate=offSplits.filter(at=>at>=priorMark&&at<=point+.05)
-      .sort((a,b)=>b-a)[0];
-    const endGate=onMerges.filter(at=>at>=point-.05&&at<=followingMark)
+    // Assign *real* fork/merge graph nodes to their respective adjoining
+    // Anschlussstelle. The junction labels are approximate anchors, not gates.
+    // No fixed 140m / 450m / 1500m buffer is allowed to cut a long AD/AK
+    // in half or to leak the closure to the previous/next junction.
+    const nearestJunctionIndex=position=>{
+      let best=0,distance=Infinity;
+      for(let i=0;i<ordered.length;i++){
+        const delta=Math.abs(position-ordered[i].position);
+        if(delta<distance){distance=delta;best=i;}
+      }
+      return best;
+    };
+    const startExits=offSplits.filter(at=>
+      nearestJunctionIndex(at)===ix-1&&at<point+.05);
+    // Last legal exit at the upstream junction is the START of closure.
+    const startGate=startExits.sort((a,b)=>b-a)[0];
+    // The downstream AS exit must lie INSIDE the closed interval. Only its
+    // subsequent on-ramp is the reentry gate. A merge from an earlier
+    // crossing interchange does not prematurely finish this section.
+    const downstreamExit=offSplits.filter(at=>
+      nearestJunctionIndex(at)===ix&&at>=point-.05)
       .sort((a,b)=>a-b)[0];
+    const endMerges=onMerges.filter(at=>
+      nearestJunctionIndex(at)===ix&&
+      at>point+.05&&
+      (downstreamExit===undefined||at>downstreamExit+.05));
+    const endGate=endMerges.sort((a,b)=>a-b)[0];
     // Never let a guessed ramp gate reverse the tapped carriageway.
     const fromPosition=startGate??left.position;
     const toPosition=endGate??right.position;
