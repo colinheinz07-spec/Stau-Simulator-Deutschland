@@ -7,7 +7,8 @@
 const $=id=>document.getElementById(id);
 const NAMES={roadworks:"Baustelle",accident:"Unfall",breakdown:"Panne",closure:"Vollsperrung"};
 const SYMBOLS={roadworks:"🚧",accident:"💥",breakdown:"🚛",closure:"⛔"};
-const STORAGE="stau-simulator-local-events-v2";
+const STORAGE="stau-simulator-local-events-v3";
+const OLD_STORAGE="stau-simulator-local-events-v2";
 function createOfflineEventEditor(options){
   const {scenario,redraw,pause,start,closeDrawer,notify,focusRoad}=options;
   const calendar=global.StauEventSchedule;
@@ -29,10 +30,18 @@ function createOfflineEventEditor(options){
   }
   function load(){
     try{
-      const saved=JSON.parse(global.localStorage?.getItem(STORAGE)||"[]");
-      if(Array.isArray(saved))for(const raw of saved.slice(0,150)){
-        try{scenario.setEvent(raw);}catch(ex){console.warn("Ungültiges Alt-Ereignis",ex);}
+      const current=global.localStorage?.getItem(STORAGE);
+      const legacy=current===null||current===undefined;
+      const source=legacy?global.localStorage?.getItem(OLD_STORAGE):current;
+      const saved=JSON.parse(source||"[]");
+      if(Array.isArray(saved))for(const original of saved.slice(0,150)){
+        try{
+          const item=legacy?scenario.migrateLegacyEvent?.(original)??original:original;
+          scenario.setEvent(item);
+        }catch(ex){console.warn("Ungültiges Alt-Ereignis",ex);}
       }
+      // Upgrade once: v2 stays as a read-only recovery copy.
+      if(legacy&&Array.isArray(saved)&&source)persist();
     }catch(ex){console.warn("Speicherung nicht lesbar",ex);}
   }
   function failure(message){error.textContent=message;error.hidden=false;}
