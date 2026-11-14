@@ -69,6 +69,20 @@ test('Eine nur einspurige Unfallstelle wirkt auf den konkreten Fahrweg statt auf
   assert.ok(samples.find(x=>x.edgeId==='a3-west').speedKmh<130,
     'die reduzierte Kapazität erzeugt Rückstau VOR dem Engpass, nicht zwangsläufig in ihm');
 });
+test('Kartenende mit letzter Abfahrtsrampe bleibt offener Autobahnabfluss',()=>{
+  const graph=sampleNetwork();
+  graph.edges=graph.edges.filter(edge=>edge.id!=='a3-east');
+  graph.movements=graph.movements.filter(m=>m.incomingEdgeId!=='a3-east'&&
+    m.outgoingEdgeId!=='a3-east');
+  const engine=new Stauphysik.NetworkFlowEngine(graph,{stepSeconds:2,targetCellLengthM:120});
+  for(let i=0;i<800;i++)engine.advance({'a3-west':3800});
+  const stats=engine.snapshot();
+  assert.ok(stats.exitedVehicles>1000,
+    'unmodellierte Fortsetzung darf nicht auf einspurige letzte Rampe begrenzt werden');
+  assert.ok(engine.speedSamples().find(s=>s.edgeId==='a3-west').speedKmh>80);
+  assert.ok(Math.abs(stats.conservationResidual)<1e-6);
+});
+
 test('Nur reale Netzgrenzen erzeugen neue Nachfrage, niemals innere Autobahnabschnitte',()=>{
   const graph=sampleNetwork();
   const engine=new Stauphysik.NetworkFlowEngine(graph);
