@@ -225,6 +225,21 @@ async function startLegacyCanvas(existingMap=null){
     }
     return started;
   }
+  // A 3–15m OSM fragment with a rounded red cap looks like a floating
+  // vehicle dot. Draw continuous speed stretches with flat joins, and hide
+  // tiny isolated bands only at overview zoom (never change physics/data).
+  function congestedEndpointKeys(roads){
+    const starts=new Set(),ends=new Set();
+    const key=(road,point)=>road.ref+":"+road.kind+":"+point[0].toFixed(7)+","+point[1].toFixed(7);
+    for(const road of roads){
+      for(const band of scenario.visualBands(road.id)){
+        if(band.color==="free")continue;
+        if(band.fromM<=1)starts.add(key(road,road.points[0]));
+        if(band.toM>=road.meters-1)ends.add(key(road,road.points.at(-1)));
+      }
+    }
+    return {starts,ends,key};
+  }
   function strokeGroup(roads,line,scale,phase){
     // The view is culled ONCE for all three rendering phases.
     const view=roads;
@@ -238,23 +253,33 @@ async function startLegacyCanvas(existingMap=null){
       return;
     }
     if(phase==="speeds"){
-      // All OSM highways use the same normal green base. The current
-      // source model coverage never changes the physical road colour.
-      // Draw all green roads BEFORE all slowdown bands. Previously green
-      // ramps could paint over an actual red mainline queue at an interchange.
+      const oldCap=context.lineCap;
+      context.lineCap="butt";
+      const junction=congestedEndpointKeys(view);
+      // Only actual measured slowdown gets a coloured overlay; green base
+      // always remains underneath. Tiny isolated micro-Ways cannot form
+      // conspicuous red dots at motorway-overview scales.
       for(const state of ["slow","jam","standstill"]){
-      context.beginPath();
-      let changed=false;
-      for(const road of view){
-        for(const part of scenario.visualBands(road.id)){
-          if(part.color===state)
+        context.beginPath();
+        let changed=false;
+        for(const road of view){
+          for(const part of scenario.visualBands(road.id)){
+            if(part.color!==state)continue;
+            const length=part.toM-part.fromM;
+            if(zoom<11&&length<35){
+              const a=road.points[0],b=road.points.at(-1);
+              const left=part.fromM<=1&&junction.ends.has(junction.key(road,a));
+              const right=part.toM>=road.meters-1&&junction.starts.has(junction.key(road,b));
+              if(!left&&!right)continue;
+            }
             changed=appendRange(road,part.fromM,part.toM,scale)||changed;
+          }
+        }
+        if(changed){
+          context.lineWidth=line;context.strokeStyle=trafficColors[state];context.stroke();
         }
       }
-      if(changed){
-        context.lineWidth=line;context.strokeStyle=trafficColors[state];context.stroke();
-      }
-      }
+      context.lineCap=oldCap;
       return;
     }
     if(phase!=="closed")return;
