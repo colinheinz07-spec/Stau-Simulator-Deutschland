@@ -787,8 +787,14 @@ function createLegacyTrafficScenario(data){
         if(main?.kind!=="mainline")continue;
         for(const turn of main.links){
           const next=edges[turn.to];
-          if(next.kind==="ramp"&&
-            turn.fromM>mainSpan.fromM+.3&&
+          // An OSM mainline consists of many short Ways. A downstream
+          // exit can diverge at metre ZERO of a later Way and is still
+          // INSIDE the closure. Only the very FIRST gate's off-ramp
+          // remains open so all approaching vehicles can leave.
+          const beyondInitialGate=!mainSpan.gate||
+            turn.fromM>mainSpan.fromM+.3;
+          if(next.kind==="ramp"&&beyondInitialGate&&
+            turn.fromM>=mainSpan.fromM-.05&&
             turn.fromM<mainSpan.toM-.05)
             downstreamExits.add(next.id);
         }
