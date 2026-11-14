@@ -493,6 +493,17 @@ test("AD Dernbach A3 Frankfurt closure closes FULL A48 to Frankfurt ramp and blo
     "A48 traffic may not enter the closed ramp at the Dernbach fork");
   assert.equal(sim.movementBlocked("A48-127602519",koeln),false,
     "legal A48 to Köln exit remains available");
+  assert.equal(sim.closureExposureAhead(frankfurt),1,
+    "physical Frankfurt connector leads only into the closed destination");
+  assert.equal(sim.closureExposureAhead(koeln),0,
+    "physical Köln connector reaches an open destination");
+  const splitRisk=sim.closureExposureAhead("A48-127602519");
+  assert.ok(splitRisk>.2&&splitRisk<.8,
+    "A48 approach must foresee closed Frankfurt vs OPEN Köln ramps; risk "+splitRisk);
+  const approaching=sim.closureExposureAhead("A48-1338571522");
+  assert.ok(approaching>.2&&approaching<.8,
+    "A48 traffic near AS Höhr-Grenzhausen must anticipate Frankfurt closure "+
+    "before the final AD Dernbach fork, risk "+approaching);
   sim.warmStart();
   const initial=sim.edgeActivity(frankfurt).vehicles;
   for(let i=0;i<9;i++)sim.advance(12);
