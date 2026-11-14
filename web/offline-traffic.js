@@ -414,9 +414,10 @@ function createLegacyTrafficScenario(data){
     const nearStart=marks.filter(m=>m.position>point&&
       m.position-point<=140).sort((a,b)=>a.position-b.position)[0];
     const left=nearStart||before;
+    if(!left)return null; // avoid crashing on a motorway before its first AS
     const right=marks.filter(m=>m.position>left.position+1)
       .sort((a,b)=>a.position-b.position)[0];
-    if(!left||!right||left.junction[1]===right.junction[1]||
+    if(!right||left.junction[1]===right.junction[1]||
       right.position-left.position<100)return null;
     const spans=[];
     for(const road of chain){
@@ -915,10 +916,12 @@ function createLegacyTrafficScenario(data){
         // If a planned corridor closure lies downstream, approaching
         // motorists can progressively take the LAST available open exit.
         // Reweight ONLY real OSM turns; never teleport cars or create roads.
+        let hasLegalClosureDetour=false;
         if(anyClosureActive&&edge.kind==="mainline"&&options.some(o=>
           o.to!==j&&edges[o.to].kind==="ramp")){
           const distance=closureDistanceAhead(edge,k*edge.cellLength);
           if(distance<12000){
+            hasLegalClosureDetour=true;
             const imminence=Math.max(0,1-distance/12000);
             for(const option of options){
               if(option.to===j)
@@ -928,7 +931,8 @@ function createLegacyTrafficScenario(data){
             }
           }
         }
-        if(options.length>1)splitSources.push({from:j,cell:k,available,options});
+        if(options.length>1&&hasLegalClosureDetour)
+          splitSources.push({from:j,cell:k,available,options});
         const sum=options.reduce((n,x)=>n+x.weight,0);
         for(const opt of options)
           push(opt.to,opt.toCell,j,k,available*opt.weight/sum);
