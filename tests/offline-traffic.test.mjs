@@ -463,6 +463,26 @@ test("no identified downstream OSM entrance means no invented returning cars",as
   conservation(model.totals());
 });
 
+test("real Montabaur full closure identifies real upstream ramp and downstream motorway reentry",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  const event=sim.setEvent({id:"full-montabaur",edgeId:"A3-232272183",
+    kind:"closure",closedLanes:[0,1,2],offsetM:50,lengthM:200,
+    speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  assert.match(event.closureFrom,/A3 39 AD Dernbach/);
+  assert.match(event.closureTo,/A3 40 Montabaur/);
+  sim.advance(1);
+  const options=sim.detourPlans();
+  assert.ok(options.some(p=>p.closureId==="full-montabaur"&&
+    /extra-heumar-/.test(p.terminalEdgeId)&&/extra-heumar-/.test(p.reentryEdgeId)),
+    "a real Ransbach/Montabaur exit and an OSM on-ramp beyond the closure must form a valid detour; available plans: "+
+    JSON.stringify(options.slice(0,6)));
+  conservation(sim.totals());
+});
+
 test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and blocks A3 entering turn",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
