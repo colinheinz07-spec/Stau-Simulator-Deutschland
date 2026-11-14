@@ -347,6 +347,7 @@ function createLegacyTrafficScenario(data){
   const departedStep=new Float64Array(edges.length);
   const eventRecords=new Map();
   let activeEffects=new Map(),effectsStamp=null,simStart=Date.now();
+  let exposureEpoch=0,closureFingerprint="";
   let elapsed=0,generated=0,exited=0,demandPercent=100,initialVehicles=0;
   // Trips that have left the *displayed* motorway network, but have not yet
   // reentered at a real OSM on-ramp, are conserved as external-road inventory.
@@ -618,6 +619,7 @@ function createLegacyTrafficScenario(data){
       throw Error("Maximal 150 Ereignisse im mobilen Prototyp");
     const valid=checkedEvent(spec);
     eventRecords.set(valid.spec.id,valid);effectsStamp=null;detourPlansKey=null;
+    exposureEpoch++;
     updateEffects();
     recomputeSpeeds();
     return {...valid.spec,coveredLengthM:valid.coveredLengthM,
@@ -625,6 +627,7 @@ function createLegacyTrafficScenario(data){
   }
   function removeEvent(id){
     const removed=eventRecords.delete(id);effectsStamp=null;detourPlansKey=null;
+    if(removed)exposureEpoch++;
     updateEffects();recomputeSpeeds();return removed;
   }
   function updateEffects(){
@@ -649,6 +652,10 @@ function createLegacyTrafficScenario(data){
       record.spec.kind==="closure"&&
       (!record.spec.schedule||
         global.StauEventSchedule.active(record.spec.schedule,time)));
+    const fingerprint=roadClosures.map(x=>x.spec.id).sort().join("|");
+    if(fingerprint!==closureFingerprint){
+      closureFingerprint=fingerprint;exposureEpoch++;
+    }
     for(const record of roadClosures){
       const closed=new Set(),spansById=new Map();
       for(const span of record.spans){
@@ -937,7 +944,10 @@ function createLegacyTrafficScenario(data){
   // the 1-lane Köln connector. This computes no fictional OSM movements.
   const exposureCache=new Map();let exposureStamp=null;
   function closureExposureAhead(edge,offsetM=0,maxDistance=25000){
-    const stamp=effectsStamp;
+    // Traffic exposure only changes when the closure catalog or active
+    // schedule changes, NOT on every 5-second CTM tick. Keep this graph
+    // analysis cached across timesteps for iPhone/SPCK performance.
+    const stamp=exposureEpoch;
     if(exposureStamp!==stamp){exposureCache.clear();exposureStamp=stamp;}
     const cacheKey=edge.id+":"+Math.floor(offsetM/100)+":"+maxDistance;
     if(exposureCache.has(cacheKey))return exposureCache.get(cacheKey);
