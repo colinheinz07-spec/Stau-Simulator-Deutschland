@@ -375,6 +375,38 @@ async function startLegacyCanvas(existingMap=null){
       context.fillText(symbols[event.kind]||"⚠️",x,y+6,25);
       eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,offsetM:event.offsetM});
     }
+    // Smaller access markers are shown ONLY on real blocked feeder ramp
+    // geometry. Never scatter arbitrary ban icons across a whole OSM Way.
+    if(zoom>=10.2){
+      const events=new Map(scenario.listEvents().map(e=>[e.id,e]));
+      const rampPins=scenario.closureAccessPoints?.()??[];
+      let count=0;
+      for(const pin of rampPins){
+        if(count>=22)break;
+        const event=events.get(pin.eventId);
+        const road=segmentById.get(pin.edgeId);
+        if(!event||!road||!inView(road,scale))continue;
+        const [x,y]=pointAt(pointAlong(road,pin.offsetM));
+        if(x<17||y<110||x>width-17||y>height-59||
+          placed.some(point=>Math.hypot(point[0]-x,point[1]-y)<28))
+          continue;
+        placed.push([x,y]);count++;
+        context.fillStyle="#fff";
+        if(typeof context.arc==="function"&&typeof context.fill==="function"){
+          context.beginPath();context.arc(x,y,12,0,Math.PI*2);
+          context.fillStyle="#fff";context.fill();
+          context.beginPath();context.arc(x,y,10,0,Math.PI*2);
+          context.fillStyle="#ab303e";context.fill();
+        }else{
+          context.fillRect(x-11,y-11,22,22);
+          context.fillStyle="#ab303e";context.fillRect(x-9,y-9,18,18);
+        }
+        context.font="13px system-ui,Apple Color Emoji,sans-serif";
+        context.fillStyle="#fff";context.fillText("⛔",x,y+5,20);
+        eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,
+          offsetM:event.offsetM});
+      }
+    }
   }
   function drawLabels(){
     if(!labels||zoom<11.4)return;
