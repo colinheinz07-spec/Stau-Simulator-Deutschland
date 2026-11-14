@@ -278,7 +278,8 @@ function createLegacyTrafficScenario(data){
   const departedStep=new Float64Array(edges.length);
   const eventRecords=new Map();
   let activeEffects=new Map(),effectsStamp=null,simStart=Date.now();
-  let elapsed=0,generated=0,exited=0,demandPercent=100;
+  let elapsed=0,generated=0,exited=0,demandPercent=100,initialVehicles=0;
+  let warmedUp=false;
   let jamGroups=[];
   function totals(){
     let inside=0,backlog=0;
@@ -286,8 +287,9 @@ function createLegacyTrafficScenario(data){
       for(const n of edge.stock)inside+=n;
       backlog+=edge.backlog;
     }
-    const residual=generated-exited-inside-backlog;
-    return {simSeconds:elapsed,generatedVehicles:generated,exitedVehicles:exited,
+    const residual=initialVehicles+generated-exited-inside-backlog;
+    return {simSeconds:elapsed,initialVehicles,
+      generatedVehicles:generated,exitedVehicles:exited,
       vehiclesOnNetwork:inside,waitingOutsideSources:backlog,
       conservationResidual:Math.abs(residual)<1e-7?0:residual,
       sources:sources.length,edges:edges.length,excludedRest};
@@ -709,7 +711,7 @@ function createLegacyTrafficScenario(data){
       x.event.shoulder!=="open").map(x=>({fromM:x.fromM,toM:x.toM}));
   }
   function reset(clearEvents=false){
-    elapsed=0;generated=0;exited=0;
+    elapsed=0;generated=0;exited=0;initialVehicles=0;warmedUp=false;
     for(const edge of edges){
       edge.stock.fill(0);edge.backlog=0;edge.speed=edge.freeKmh;
       edge.lastProfileMinute=-1;edge.profileFactor=0;
@@ -717,6 +719,35 @@ function createLegacyTrafficScenario(data){
     }
     if(clearEvents)eventRecords.clear();
     effectsStamp=null;updateEffects();recomputeSpeeds();
+    return totals();
+  }
+  // Legacy traffic-cells.initialiseCells() began at a realistic
+  // pre-existing motorway inventory. Starting every Way empty causes a crash
+  // at Montabaur to have no arrivals until cars travel there from Cologne.
+  // One-time initial conditions are counted in mass balance, never repeated
+  // injections at arbitrary OSM fragments during simulation.
+  function warmStart(){
+    if(warmedUp||elapsed>0)return totals();
+    warmedUp=true;
+    if(!demandPercent)return totals();
+    for(const edge of edges){
+      if(edge.kind!=="mainline"||!edge.ref)continue;
+      const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
+      if(profile.peakVph<=0)continue;
+      const desired=profile.peakVph*(demandPercent/100)*
+        traffic.profileFactor(profile.key,edge.ref,clockMs(),row[4]);
+      // A normal free-flow density is vehicles/hour divided by km/hour.
+      // CTM jam occupancy (130 vehicles/km per lane) is not a demand source.
+      const service=edge.capacityPerLane*edge.lanes;
+      const vehiclesPerKm=Math.min(desired,service*.92)/edge.freeKmh;
+      const perCell=Math.min(edge.jamPerCell*.22,
+        vehiclesPerKm*edge.cellLength/1000);
+      for(let k=0;k<edge.n;k++){
+        edge.stock[k]=perCell;
+        initialVehicles+=perCell;
+      }
+    }
+    recomputeSpeeds();
     return totals();
   }
   // Backward compatibility for the prior one-click prototype and its tests.
@@ -1004,7 +1035,7 @@ function createLegacyTrafficScenario(data){
   }
   function speed(id){return byId.get(id)?.speed??null;}
   function color(id){const edge=byId.get(id);return edge?colourForSpeed(edge.speed):"free";}
-  return {advance,step,reset,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
+  return {advance,step,reset,warmStart,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
