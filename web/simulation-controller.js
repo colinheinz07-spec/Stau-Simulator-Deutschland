@@ -67,13 +67,42 @@ export function createTrafficScenario(network){
     }
     return distance<=1100?best:null;
   }
+  // A direction key (e.g. A3→Köln) can exist in several disconnected
+  // mapped OSM components. Each authentic component gets its own upstream
+  // boundary demand; short orphan fragments must not get a full motorway peak.
+  const mainlineAdj=new Map(network.edges.filter(edge=>edge.kind==='mainline')
+    .map(edge=>[edge.id,new Set()]));
+  for(const turn of network.movements){
+    if(!turn.allowed)continue;
+    const from=edgeById.get(turn.incomingEdgeId),to=edgeById.get(turn.outgoingEdgeId);
+    if(from?.kind!=='mainline'||to?.kind!=='mainline'||
+      !from.motorwayRef||from.motorwayRef!==to.motorwayRef)continue;
+    mainlineAdj.get(from.id).add(to.id);
+    mainlineAdj.get(to.id).add(from.id);
+  }
+  const componentFor=new Map(),componentLength=new Map();
+  let nextComponent=0;
+  for(const edge of network.edges){
+    if(edge.kind!=='mainline'||componentFor.has(edge.id))continue;
+    const id=nextComponent++,stack=[edge.id];let totalLength=0;
+    while(stack.length){
+      const currentId=stack.pop();
+      if(componentFor.has(currentId))continue;
+      componentFor.set(currentId,id);
+      totalLength+=edgeById.get(currentId).lengthM;
+      for(const next of mainlineAdj.get(currentId)||[])
+        if(!componentFor.has(next))stack.push(next);
+    }
+    componentLength.set(id,totalLength);
+  }
   const candidates=new Map(),rampCandidates=new Map();
   for(const edge of engine.sourceEdges()){
     if(!traffic){
       // Node.js test fixtures do not load browser-side reference data.
       // On the actual map the imported catalog is always available.
-      if(edge.kind==='mainline')candidates.set(edge.id,{id:edge.id,
-        base:Math.min(3200,edge.lanes*900),edge,key:"",ref:edge.motorwayRef});
+      if(edge.kind==='mainline'&&componentLength.get(componentFor.get(edge.id))>=1000)
+        candidates.set(componentFor.get(edge.id),{id:edge.id,
+          base:Math.min(3200,edge.lanes*900),edge,key:"",ref:edge.motorwayRef});
       continue;
     }
     if(!edge.motorwayRef||!edge.geometry?.length)continue;
@@ -81,16 +110,18 @@ export function createTrafficScenario(network){
     const reference=traffic.referenceForRoad(row);
     if(reference.peakVph<=0)continue;
     if(edge.kind==='mainline'){
+      const componentId=componentFor.get(edge.id);
+      if(componentId===undefined||componentLength.get(componentId)<1500)continue;
       const first=edge.geometry[0],last=edge.geometry.at(-1);
       const key=reference.key,lat=first[0],lon=first[1];
-      // At most one true entry per corridor/direction. An isolated OSM
-      // mid-Way fragment must not become a second motorway generator.
+      // Select one actual source per physical directed component, not one
+      // across the whole country and not one per Way fragment.
       const rank=key==="A3-koeln"?-lat:key==="A3-frankfurt"?lat:
         key==="A48-dernbach"?-lon:key==="A48-koblenz"?lon:
         Math.abs(last[0]-lat)>Math.abs(last[1]-lon)?
           (last[0]>lat?-lat:lat):(last[1]>lon?-lon:lon);
-      const previous=candidates.get(key);
-      if(!previous||rank>previous.rank)candidates.set(key,{
+      const previous=candidates.get(componentId);
+      if(!previous||rank>previous.rank)candidates.set(componentId,{
         id:edge.id,base:reference.peakVph,edge,key,ref:edge.motorwayRef,rank});
     }else if(edge.kind==='ramp'){
       const junction=closestJunction(edge.geometry[0]);
