@@ -998,12 +998,17 @@ function createLegacyTrafficScenario(data){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
         const local=effects.length?
           effects.filter(e=>e.fromM<b-.001&&e.toM>a+.001):NO_EFFECTS;
-        const closed=new Set();
+        const closed=new Set(),incidentClosed=new Set();
         let shoulderOpen=false,shoulderBlocked=false,blockedAtGate=false;
         let permitted=edge.freeKmh;
         for(const item of local){
           const ev=item.event;
-          for(const lane of ev.closedLanes)closed.add(lane);
+          for(const lane of ev.closedLanes){
+            closed.add(lane);
+            // A road closure bans new arrivals. A distinct crash/worksite
+            // may physically block cars already within that road section.
+            if(ev.kind!=="closure")incidentClosed.add(lane);
+          }
           if(ev.shoulder==="open"&&ev.hasShoulder)shoulderOpen=true;
           if(ev.shoulder==="blocked")shoulderBlocked=true;
           if(ev.speedKmh>0)permitted=Math.min(permitted,ev.speedKmh);
@@ -1036,12 +1041,20 @@ function createLegacyTrafficScenario(data){
         const moving=Math.min(1,(permitted/3.6)*dt/edge.cellLength);
         // Block receiving at the first closure cell, but let already-present
         // vehicles discharge through the closed section's downstream cells.
-        const evacuated=local.some(x=>x.event.kind==="closure"||
-          x.event.closedLanes.length===edge.lanes&&x.event.shoulder!=="open");
-        // Vehicles already behind a closure's entrance gate may exit the
-        // restricted area. Gate receiving is zero; interior flow can drain.
-        const transferCapacity=evacuated?
-          edge.lanes*edge.capacityPerLane*dt/3600:cap;
+        const evacuating=local.some(x=>x.event.kind==="closure");
+        // Cars within a road closure may leave on surviving physical lanes.
+        // BUT a separate full-width accident remains a real obstacle even
+        // if a road closure covers the same OSM cell. Never turn an accident
+        // into a harmless "evacuation" gate and silently pass cars through.
+        const openIncident=Math.max(0,edge.lanes-incidentClosed.size+
+          Number(shoulderOpen));
+        const accident=local.some(x=>x.event.kind==="accident");
+        const worksite=local.some(x=>x.event.kind==="roadworks");
+        const incidentFactor=incidentClosed.size>0?
+          (accident?(openIncident===1?.69:.79):
+            worksite?(openIncident===1?.80:.90):.87):1;
+        const transferCapacity=evacuating?
+          openIncident*edge.capacityPerLane*incidentFactor*restartFactor*dt/3600:cap;
         s[k]=Math.min(stock[k],transferCapacity,stock[k]*moving);
         const room=Math.max(0,edge.jamPerCell-stock[k]);
         r[k]=blockedAtGate?0:Math.min(room,transferCapacity,room*wave);
