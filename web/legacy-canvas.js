@@ -278,6 +278,31 @@ async function startLegacyCanvas(existingMap=null){
       }
     }
   }
+  // Placement policy ported from the old simulator's 06_Karte/map-callouts:
+  // reserve header/status/zoom controls, then try six positions around the
+  // actual jam cell instead of piling unreadable boxes on motorway lines.
+  function placeJamLabel(x,y,w,h,boxes){
+    const obstacles=[
+      [0,0,width-65,110],
+      [width-78,0,78,155],
+      [0,height-70,width,70],
+      [width-81,height-190,81,190],
+      ...boxes
+    ];
+    const candidates=[
+      [x+17,y-h-22],[x-w-17,y-h-22],
+      [x+17,y+27],[x-w-17,y+27],
+      [x-w/2,y-h-45],[x-w/2,y+43]
+    ];
+    const intersects=(a,b)=>a[0]<b[0]+b[2]+7&&a[0]+a[2]>b[0]-7&&
+      a[1]<b[1]+b[3]+7&&a[1]+a[3]>b[1]-7;
+    for(const [left,top] of candidates){
+      if(left<7||top<7||left+w>width-7||top+h>height-7)continue;
+      const area=[left,top,w,h];
+      if(!obstacles.some(other=>intersects(area,other)))return area;
+    }
+    return null;
+  }
   function drawJamLabels(){
     if(zoom<8.1||typeof scenario.jamSummaries!=="function")return;
     const groups=scenario.jamSummaries();
@@ -286,7 +311,7 @@ async function startLegacyCanvas(existingMap=null){
     context.textAlign="center";
     context.font="600 12px system-ui,Arial,sans-serif";
     for(const group of groups){
-      if(boxes.length>=4)break;
+      if(boxes.length>=(width<480?3:5))break;
       const road=segmentById.get(group.edgeId);
       if(!road||!inView(road,scale))continue;
       const [x,y]=pointAt(pointAlong(road,group.offsetM));
@@ -296,21 +321,19 @@ async function startLegacyCanvas(existingMap=null){
       });
       const minutes=Math.max(1,Math.round(group.delayMin));
       const label="Stau "+km+" km · +"+minutes+" min";
-      const w=Math.min(width-20,Math.max(110,context.measureText(label).width+22));
-      const left=clamp(x-w/2,10,width-w-10),top=y-33;
-      if(boxes.some(b=>left<b[2]+8&&left+w>b[0]-8&&
-        top<b[3]+8&&top+25>b[1]-8))continue;
-      boxes.push([left,top,left+w,top+25]);
-      // Explicit anchor on the actual jam-colored OSM subsegment, not
-      // an unattached badge somewhere above an apparently green road.
+      const w=Math.min(width-25,Math.max(115,context.measureText(label).width+20));
+      const pos=placeJamLabel(x,y,w,27,boxes);
+      if(!pos)continue;
+      const [left,top]=pos;boxes.push(pos);
+      // Anchor visually to the actual measured jam, not a nearby clear road.
       context.fillStyle="#f65d67";
-      context.fillRect(x-4,y-4,8,8);
-      context.fillStyle="#152a3bef";
-      context.fillRect(left,top,w,25);
-      context.fillStyle="#ff6a72";
-      context.fillRect(left,top,4,25);
+      context.fillRect(x-3,y-3,6,6);
+      context.fillStyle="#13283beF";
+      context.fillRect(left,top,w,27);
+      context.fillStyle="#ee5964";
+      context.fillRect(left,top,4,27);
       context.fillStyle="#fff";
-      context.fillText(label,left+w/2,top+17,w-12);
+      context.fillText(label,left+w/2,top+18,w-12);
     }
   }
   function drawEventMarkers(){
