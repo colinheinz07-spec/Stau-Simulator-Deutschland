@@ -1075,18 +1075,18 @@ function createLegacyTrafficScenario(data){
           edges[link.to].kind==="mainline"&&edges[link.to].ref!==edge.ref)){
           const distance=anyClosureActive?
             closureDistanceAhead(edge,k*edge.cellLength,16000):Infinity;
-          let share=Number.isFinite(distance)?1:0;
-          const alternatives=legalTurns.filter(link=>{
-            const target=edges[link.to];
-            return (target.kind==="ramp"||
-              target.kind==="mainline"&&target.ref!==edge.ref)&&
-              isUsableEscape(edge,link);
-          });
-          if(alternatives.length&&share===0){
-            const delay=measuredDelayAhead(edge,k*edge.cellLength);
-            share=diversionShare(delay);
-          }
-          if(alternatives.length&&share>0){
+          // Avoid expensive downstream route searches when there is no
+          // closure nearby and less than 45 min measured delay.
+          const share=Number.isFinite(distance)?1:
+            diversionShare(measuredDelayAhead(edge,k*edge.cellLength));
+          if(share>0){
+            const alternatives=legalTurns.filter(link=>{
+              const target=edges[link.to];
+              return (target.kind==="ramp"||
+                target.kind==="mainline"&&target.ref!==edge.ref)&&
+                isUsableEscape(edge,link);
+            });
+          if(alternatives.length){
             hasLegalClosureDetour=Number.isFinite(distance);
             const alternateKey=new Set(alternatives.map(link=>
               link.to+":"+link.toCell));
@@ -1109,6 +1109,7 @@ function createLegacyTrafficScenario(data){
                   opt.to===j?(1-targetShare)*20:opt.weight*(1-share);
               }
             }
+          }
           }
         }
         if(!options.length&&!outsideWeight)continue;
