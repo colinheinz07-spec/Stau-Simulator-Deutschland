@@ -9,7 +9,9 @@ test("iPhone incident editor saves exact lanes, shoulder, recurrence and edit/re
     runInNewContext(await readFile(p,"utf8"),{window,Date,Intl,console});
   const network={roads:[
     ["a","mainline","A3",3,[[50,7],[50,7.013]],"",1],
-    ["b","mainline","A3",3,[[50,7.013],[50,7.026]],"",2]
+    ["b","mainline","A3",3,[[50,7.013],[50,7.026]],"",2],
+    ["exit","ramp","A3",1,[[50,7.013],[50.004,7.018]],
+      "AS Test · Abfahrt von A3",3]
   ]};
   const scenario=window.createLegacyTrafficScenario(network);
   const elements=new Map(),handlers=new Map();
@@ -125,4 +127,14 @@ test("iPhone incident editor saves exact lanes, shoulder, recurrence and edit/re
     "full closure must not show a manual length input");
   assert.equal(element("ev-length").disabled,true);
   assert.match(element("ev-coverage").textContent,/Anschlussstellen/);
+  // A ramp tap must offer its own full closure, not demand two AS on A3.
+  editor.onRoadSelected({id:"exit",kind:"ramp",lanes:1,meters:650,shoulderTag:null},25);
+  handlers.get("button-closure:click")();
+  assert.match(element("ev-coverage").textContent,/Nur diese Auf-\/Abfahrt/);
+  assert.equal(element("ev-length-field").hidden,true);
+  handlers.get("event-form:submit")({preventDefault(){}});
+  assert.equal(scenario.listEvents().length,1,element("ev-error").textContent);
+  assert.equal(scenario.listEvents()[0].edgeId,"exit");
+  assert.equal(scenario.mode("a"),"none");
+  assert.equal(scenario.mode("exit"),"closure");
 });
