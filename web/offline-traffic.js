@@ -515,23 +515,13 @@ function createLegacyTrafficScenario(data){
     }
     const ordered=[...unique.values()].sort((a,b)=>a.position-b.position);
     if(ordered.length<2)return null;
-    // The clicked road is between successive real AS/AK anchors. A tap
-    // within 140m before the next AS means the following AS-to-AS section.
-    let ix=ordered.findIndex(mark=>mark.position>=point);
-    if(ix===-1){
-      if(point-ordered.at(-1).position>450)return null;
-      ix=ordered.length-1;
-    }
-    if(ix===0&&ordered[0].position-point>450)return null;
-    let left,right;
-    if(ix===0||ix<ordered.length&&
-      ordered[ix].position-point<=450){
-      left=ordered[ix];right=ordered[ix+1];
-      if(!right){left=ordered[ix-1];right=ordered[ix];}
-    }else{
-      left=ordered[ix-1];right=ordered[ix];
-    }
-    if(!left||!right)return null;
+    // A finger tap belongs to the TWO junction anchors actually
+    // surrounding that point. Do not silently jump to the FOLLOWING
+    // corridor merely because the tap is within 450 m of its next AS.
+    // At the outside of an incomplete graph, reject instead of guessing.
+    const ix=ordered.findIndex(mark=>mark.position>=point);
+    if(ix<=0)return null;
+    const left=ordered[ix-1],right=ordered[ix];
     if(!right||left.junction[1]===right.junction[1]||
       right.position-left.position<100)return null;
     // An AS centre is only a map LABEL, never the true legal closure gate.
