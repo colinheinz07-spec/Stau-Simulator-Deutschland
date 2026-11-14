@@ -300,6 +300,47 @@ test("a closed ramp branch must not close its shared open approach or adjacent b
     assert.equal(scenario.closureBands(id).length,0,
       "unselected accessible road must remain open: "+id);
 });
+
+test("AS-to-AS closure uses physical off-ramp fork to downstream on-ramp merge; never blocks the reentry",async()=>{
+  const scenario=(await engine())({roads:[
+    ["main","mainline","A7",3,[[50,7],[50,7.01],[50,7.014],[50,7.016],
+      [50,7.024],[50,7.028],[50,7.031],[50,7.034],[50,7.04]],"",1],
+    ["before-off","ramp","A7",1,[[50,7.01],[50.005,7.01]],
+      "AS 1 Vorne · Abfahrt von A7",2],
+    ["before-on","ramp","A7",1,[[50.005,7.016],[50,7.016]],
+      "AS 1 Vorne · Auffahrt auf A7",3],
+    ["after-off","ramp","A7",1,[[50,7.028],[50.005,7.028]],
+      "AS 2 Hinten · Abfahrt von A7",4],
+    ["after-on","ramp","A7",1,[[50.005,7.034],[50,7.034]],
+      "AS 2 Hinten · Auffahrt auf A7",5]
+  ],junctions:[
+    ["A7","1","Vorne",[50,7.014]],["A7","2","Hinten",[50,7.031]]
+  ]});
+  const tap=(.024)*111194.93*Math.cos(50*Math.PI/180);
+  const e=scenario.setEvent({id:"korridor",kind:"closure",edgeId:"main",
+    closedLanes:[0,1,2],offsetM:tap,lengthM:100,
+    speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  assert.match(e.closureFrom,/A7 1/);
+  assert.match(e.closureTo,/A7 2/);
+  const band=scenario.closureBands("main")[0];
+  const metresPerDegree=111194.93*Math.cos(50*Math.PI/180);
+  assert.ok(Math.abs(band.fromM-.01*metresPerDegree)<35,
+    "start must be at OFF-RAMP split, not AS centre: "+band.fromM);
+  assert.ok(Math.abs(band.toM-.034*metresPerDegree)<35,
+    "end must be at ON-RAMP merge, not AS centre: "+band.toM);
+  assert.equal(scenario.closureBands("before-off").length,0,
+    "last available exit before closure MUST remain open");
+  assert.ok(scenario.closureBands("before-on").length>0,
+    "upstream on-ramp feeds closed mainline and MUST close");
+  assert.ok(scenario.closureBands("after-off").length>0,
+    "exit just before downstream reentry MUST close");
+  assert.equal(scenario.closureBands("after-on").length,0,
+    "downstream reentry ramp MUST remain open");
+  const downstream=sim => sim.closureBands("main")[0];
+  assert.ok(downstream(scenario).toM<.04*metresPerDegree,
+    "mainline AFTER downstream reentry remains open");
+});
+
 test("published 2026/27 vacation windows and Easter public holidays change modeled daily traffic",async()=>{
   const window={};
   runInNewContext(await readFile("web/traffic-reference.js","utf8"),{window});
