@@ -94,3 +94,31 @@ test("real AK Köln-Gremberg A4 closure leaves A559 and reverse A4 through route
   sim.advance(1);
   assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
 });
+
+test("real AK Bonn/Siegburg: A560 through open, only ramps into closed A3 Köln blocked",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const sim=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
+  const id="A3-266009538",preview=sim.recommendedClosureLength(id,150);
+  assert.ok(preview,"real A3 motorway segment at Bonn/Siegburg must resolve");
+  assert.match(preview.label,/AK Bonn\/Siegburg/);
+  const event=closure(sim,"siegburg",id,150);
+  assert.equal(state(sim,id),true);
+  for(const through of ["extra-a560-bonn","extra-a560-hennef"]){
+    assert.equal(state(sim,through),false,
+      "A560 through-traffic must remain open: "+through);
+  }
+  for(const feeder of ["extra-siegburg-A560-bonn-to-A3-koeln",
+    "extra-siegburg-A560-hennef-to-A3-koeln"]){
+    assert.equal(state(sim,feeder),true,
+      "all feeders into the blocked A3 toward Köln must be closed: "+feeder);
+  }
+  for(const other of ["extra-siegburg-A560-bonn-to-A3-frankfurt",
+    "extra-siegburg-A560-hennef-to-A3-frankfurt"]){
+    assert.equal(state(sim,other),false,
+      "other A3 direction must remain accessible: "+other);
+  }
+  for(let i=0;i<6;i++)sim.advance(12);
+  assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
+});
