@@ -292,7 +292,7 @@ function createLegacyTrafficScenario(data){
     // unambiguously joins an A3/A4/... carriageway. Infer the DESTINATION's
     // motorway from that real mapped movement, never from geographic proximity.
     const refs=new Set(realDestinations.map(target=>target.ref));
-    const inferredRef=edge.ref||refs.size===1?[...refs][0]:null;
+    const inferredRef=edge.ref||(refs.size===1?[...refs][0]:null);
     if(!inferredRef)continue;
     const rowWithRef=[row[0],row[1],inferredRef,row[3],row[4],row[5]];
     const profile=traffic.referenceForRoad(rowWithRef);
