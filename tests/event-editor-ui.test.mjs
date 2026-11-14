@@ -100,7 +100,7 @@ test("iPhone incident editor saves exact lanes, shoulder, recurrence and edit/re
   assert.equal(saved[0].offsetM,150);
   assert.equal(saved[0].schedule.mode,"repeat");
   assert.deepEqual([...saved[0].schedule.weekdays],[2,4]);
-  assert.ok(storage.get("stau-simulator-local-events-v2").includes("roadworks"));
+  assert.ok(storage.get("stau-simulator-local-events-v3").includes("roadworks"));
   assert.equal(element("event-form").hidden,true);
 
   // List uses real edit/delete actions; changing the existing record preserves ID.
@@ -119,5 +119,5 @@ test("iPhone incident editor saves exact lanes, shoulder, recurrence and edit/re
   actions=row.children.find(x=>x.className==="event-list-actions");
   handlers.get(actions.children[1].id+":click")();
   assert.equal(scenario.listEvents().length,0);
-  assert.equal(JSON.parse(storage.get("stau-simulator-local-events-v2")).length,0);
+  assert.equal(JSON.parse(storage.get("stau-simulator-local-events-v3")).length,0);
 });
