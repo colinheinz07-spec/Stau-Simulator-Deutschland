@@ -386,7 +386,11 @@ test("real A3 Dierdorf to Neuwied: last exit open, both entry/exit gates correct
   ["extra-heumar-24492229",false,"Neuwied Auffahrt Köln must stay OPEN"]
  ];
  for(const [id,blocked,meaning] of cases)
-   assert.equal(sim.closureBands(id).length>0,blocked,meaning);
+   assert.equal(sim.closureBands(id).length>0,blocked,meaning+
+     "; segment="+evt.closureFrom+"→"+evt.closureTo+
+     "; nearby mainlines="+JSON.stringify(["A3-314180029","A3-314180033","A3-314180030"]
+       .map(id=>({id,closed:sim.closureBands(id)})))+
+     "; turn blocked="+sim.movementBlocked("A3-314180029","extra-heumar-24492231"));
  assert.ok(evt.coveredLengthM<18000,
    "Dierdorf-Neuwied closure may not extend toward Siebengebirge");
 });
