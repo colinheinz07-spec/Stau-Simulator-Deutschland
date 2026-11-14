@@ -723,8 +723,22 @@ function createLegacyTrafficScenario(data){
         // Only the actual physical closure interval counts. A closure
         // between A59 AS31 and AS32 must NEVER close AS35 at Wahn merely
         // because both touch the same 26 km OSM Way.
-        return (spansById.get(target.id)||[]).some(span=>
-          link.toM>=span.fromM-.05&&link.toM<span.toM-.05);
+        return (spansById.get(target.id)||[]).some(span=>{
+          if(link.toM>=span.fromM-.05&&link.toM<span.toM-.05)
+            return true;
+          if(target.kind!=="mainline"||link.toM>=span.fromM)return false;
+          // A feeder may merge just BEFORE the closure on the same OSM
+          // Way. It is forbidden only if there is no legal exit between
+          // its real merge and the physical closure start.
+          const escape=target.links.some(turn=>{
+            const other=edges[turn.to];
+            return turn.fromM>=link.toM-.05&&turn.fromM<span.fromM-.05&&
+              !closed.has(other.id)&&
+              (other.kind==="ramp"||
+                other.kind==="mainline"&&other.ref!==target.ref);
+          });
+          return !escape;
+        });
       }
       // Repeated fixed-point resolution covers ramp->ramp->mainline chains,
       // independent of OSM Way fragments.
@@ -1075,8 +1089,28 @@ function createLegacyTrafficScenario(data){
     if(!toEffects.length)return false;
     const upstream=activeEffects.get(from.id)||NO_EFFECTS;
     return toEffects.some(item=>{
-      const buffer=0; // Only the real blocked interval, never nearby open ramps.
-      if(link.toM<item.fromM-buffer||link.toM>=item.toM-.05)return false;
+      if(link.toM>=item.toM-.05)return false;
+      if(link.toM<item.fromM-.05){
+        if(item.event.kind!=="closure"||target.kind!=="mainline"||
+          // On the same carriageway, cars may approach and queue at the
+          // real gate. A feeder from another motorway may NOT turn in.
+          (from.kind==="mainline"&&from.ref===target.ref))
+          return false;
+        // An early incoming motorway/feeder turn is blocked only if there
+        // is no legal open exit before the actual closure start. Geometry
+        // determines this, NOT an arbitrary 140-metre distance buffer.
+        const safeExit=target.links.some(turn=>{
+          if(turn.fromM<link.toM-.05||turn.fromM>=item.fromM-.05)
+            return false;
+          const other=edges[turn.to];
+          if(other.kind!=="ramp"&&
+            !(other.kind==="mainline"&&other.ref!==target.ref))return false;
+          return !(activeEffects.get(other.id)||NO_EFFECTS)
+            .some(closure=>closure.event.kind==="closure"&&
+              closure.event.id===item.event.id);
+        });
+        if(safeExit)return false;
+      }
       if(item.event.kind!=="closure"&&
         (item.event.closedLanes.length!==target.lanes||
         item.event.shoulder==="open"))return false;
