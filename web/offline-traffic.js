@@ -323,6 +323,10 @@ function createLegacyTrafficScenario(data){
     seen.add(index);
     return edge.links.some(turn=>leadsToMainline(turn.to,seen,depth+1));
   }
+  // Stable graph index: prevent O(edges²) pin scans on every mobile draw.
+  const incomingTurnEdges=edges.map(()=>[]);
+  for(const from of edges)for(const turn of from.links)
+    incomingTurnEdges[turn.to].push(from);
   const boundaryExit=edges.map(edge=>{
     const outgoing=edge.links.filter(link=>link.fromM>=edge.lengthM-.1);
     if(!outgoing.length)return true;
@@ -1536,7 +1540,7 @@ function createLegacyTrafficScenario(data){
           // A ramp starts at its true physical fork. Only pin the gate at
           // the first blocked access from an OPEN approach, not at 70% of
           // every small ramp fragment (which looked like a mid-ramp barrier).
-          const entering=edges.filter(from=>from.links.some(turn=>turn.to===edge.index));
+          const entering=incomingTurnEdges[edge.index];
           const openApproach=entering.some(from=>
             !(activeEffects.get(from.id)||NO_EFFECTS)
               .some(effect=>effect.event.id===own.event.id));
