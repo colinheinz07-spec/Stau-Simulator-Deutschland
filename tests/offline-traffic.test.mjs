@@ -300,6 +300,101 @@ test("a closed ramp branch must not close its shared open approach or adjacent b
     assert.equal(scenario.closureBands(id).length,0,
       "unselected accessible road must remain open: "+id);
 });
+
+test("AS-to-AS closure uses physical off-ramp fork to downstream on-ramp merge; never blocks the reentry",async()=>{
+  const scenario=(await engine())({roads:[
+    ["main","mainline","A7",3,[[50,7],[50,7.01],[50,7.014],[50,7.016],
+      [50,7.024],[50,7.028],[50,7.031],[50,7.034],[50,7.04]],"",1],
+    ["before-off","ramp","A7",1,[[50,7.01],[50.005,7.01]],
+      "AS 1 Vorne · Abfahrt von A7",2],
+    ["before-on","ramp","A7",1,[[50.005,7.016],[50,7.016]],
+      "AS 1 Vorne · Auffahrt auf A7",3],
+    ["after-off","ramp","A7",1,[[50,7.028],[50.005,7.028]],
+      "AS 2 Hinten · Abfahrt von A7",4],
+    ["after-on","ramp","A7",1,[[50.005,7.034],[50,7.034]],
+      "AS 2 Hinten · Auffahrt auf A7",5]
+  ],junctions:[
+    ["A7","1","Vorne",[50,7.014]],["A7","2","Hinten",[50,7.031]]
+  ]});
+  const tap=(.024)*111194.93*Math.cos(50*Math.PI/180);
+  const e=scenario.setEvent({id:"korridor",kind:"closure",edgeId:"main",
+    closedLanes:[0,1,2],offsetM:tap,lengthM:100,
+    speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  assert.match(e.closureFrom,/A7 1/);
+  assert.match(e.closureTo,/A7 2/);
+  const band=scenario.closureBands("main")[0];
+  const metresPerDegree=111194.93*Math.cos(50*Math.PI/180);
+  assert.ok(Math.abs(band.fromM-.01*metresPerDegree)<35,
+    "start must be at OFF-RAMP split, not AS centre: "+band.fromM);
+  assert.ok(Math.abs(band.toM-.034*metresPerDegree)<35,
+    "end must be at ON-RAMP merge, not AS centre: "+band.toM);
+  assert.equal(scenario.closureBands("before-off").length,0,
+    "last available exit before closure MUST remain open");
+  assert.ok(scenario.closureBands("before-on").length>0,
+    "upstream on-ramp feeds closed mainline and MUST close");
+  assert.ok(scenario.closureBands("after-off").length>0,
+    "exit just before downstream reentry MUST close");
+  assert.equal(scenario.closureBands("after-on").length,0,
+    "downstream reentry ramp MUST remain open");
+  const downstream=sim => sim.closureBands("main")[0];
+  assert.ok(downstream(scenario).toM<.04*metresPerDegree,
+    "mainline AFTER downstream reentry remains open");
+});
+
+
+test("real A3 Dierdorf to Neuwied: last exit open, both entry/exit gates correct, first reentry open",async()=>{
+ const w={};
+ for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+   runInNewContext(await readFile(path,"utf8"),{window:w});
+ const data=w.STAU_LEGACY_GEOMETRY,sim=w.createLegacyTrafficScenario(data);
+ // Use only real imported directed mainline geometry near the physical
+ // midpoint. The same planner is used for every motorway nationwide.
+ const candidates=data.roads.filter(r=>r[1]==="mainline"&&r[2]==="A3")
+   .map(r=>({row:r,dist:Math.min(...r[4].map(p=>
+     Math.hypot((p[0]-50.55)*111000,(p[1]-7.56)*71000)))}))
+   .sort((a,b)=>a.dist-b.dist).slice(0,40);
+ let chosen=null;
+ for(const {row} of candidates){
+   const path=row[4];let walked=0,best=Infinity,offset=0;
+   for(let k=1;k<path.length;k++){
+     const a=path[k-1],b=path[k],x=(b[1]-a[1])*71000,y=(b[0]-a[0])*111000;
+     const qx=(7.56-a[1])*71000,qy=(50.55-a[0])*111000;
+     const t=Math.min(1,Math.max(0,(x*qx+y*qy)/Math.max(1,x*x+y*y)));
+     const delta=Math.hypot(qx-t*x,qy-t*y);
+     if(delta<best){best=delta;offset=walked+t*Math.hypot(x,y);}
+     walked+=Math.hypot(x,y);
+   }
+   const info=sim.recommendedClosureLength(row[0],Math.max(0,offset));
+   if(info&&/A3 37 Dierdorf\s*–\s*A3 36 Neuwied/.test(info.label)){
+     chosen={id:row[0],offset,info};break;
+   }
+ }
+ assert.ok(chosen,"directed A3 Dierdorf -> Neuwied corridor must resolve");
+ const row=data.roads.find(x=>x[0]===chosen.id);
+ const evt=sim.setEvent({id:"a3-dierdorf-neuwied",edgeId:chosen.id,kind:"closure",
+   closedLanes:Array.from({length:row[3]},(_,i)=>i),
+   offsetM:Math.min(chosen.offset-0.001,
+     sim.edgeActivity(chosen.id,chosen.offset).lengthM||chosen.offset+1),
+   lengthM:chosen.info.lengthM,speedKmh:0,
+   hasShoulder:false,shoulder:"normal",schedule:null});
+ assert.match(evt.closureFrom,/Dierdorf/);
+ assert.match(evt.closureTo,/Neuwied/);
+ const cases=[
+  ["extra-heumar-24492793",false,"Dierdorf Abfahrt Köln must stay OPEN"],
+  ["extra-heumar-1352049124",true,"Dierdorf Auffahrt Köln must CLOSE"],
+  ["extra-heumar-24492231",true,"Neuwied Abfahrt Köln must CLOSE"],
+  ["extra-heumar-24492229",false,"Neuwied Auffahrt Köln must stay OPEN"]
+ ];
+ for(const [id,blocked,meaning] of cases)
+   assert.equal(sim.closureBands(id).length>0,blocked,meaning+
+     "; segment="+evt.closureFrom+"→"+evt.closureTo+
+     "; nearby mainlines="+JSON.stringify(["A3-314180029","A3-314180033","A3-314180030"]
+       .map(id=>({id,closed:sim.closureBands(id)})))+
+     "; turn blocked="+sim.movementBlocked("A3-314180029","extra-heumar-24492231"));
+ assert.ok(evt.coveredLengthM<18000,
+   "Dierdorf-Neuwied closure may not extend toward Siebengebirge");
+});
+
 test("published 2026/27 vacation windows and Easter public holidays change modeled daily traffic",async()=>{
   const window={};
   runInNewContext(await readFile("web/traffic-reference.js","utf8"),{window});
@@ -670,8 +765,10 @@ test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and 
     "A3 to A59 Heumar turning movement must not enter after closure");
   assert.equal(sim.closureBands("extra-heumar-328948525").length,0,
     "A59 Wahn ramp far downstream must NOT be closed merely due to shared OSM Way");
-  assert.equal(sim.closureBands("extra-heumar-132618673").length,0,
-    "Rath exit at end of closure stays usable");
+  assert.ok(sim.closureBands("extra-heumar-132618673").length>0,
+    "downstream Rath EXIT is inside the blocked corridor and must close");
+  assert.equal(sim.closureBands("extra-heumar-132618574").length,0,
+    "opposite-direction Rath on-ramp remains open");
   const normal=sim.recommendedClosureLength("extra-a59-bonn",950);
   assert.equal(normal.lengthM,2132);
 });
@@ -685,7 +782,11 @@ test("A3 Köln-Ost to Heumar motorway closure covers all connected Ways and feed
     speedKmh:0,shoulder:"normal",hasShoulder:false});
   assert.match(event.closureFrom,/A3 27 AK Köln-Ost/);
   assert.match(event.closureTo,/A3 28 AD Köln-Heumar/);
-  assert.ok(event.coveredLengthM>3500&&event.coveredLengthM<4300);
+  // Physical closure gates extend from the final exit fork to the first
+  // subsequent on-ramp merge, not merely the two junction label centres.
+  assert.ok(event.coveredLengthM>3500&&event.coveredLengthM<5500,
+    "observed physical closure length: "+Math.round(event.coveredLengthM)+
+    " metres; "+event.closureFrom+" -> "+event.closureTo);
   const closedWays=w.STAU_LEGACY_GEOMETRY.roads
     .filter(row=>row[1]==="mainline"&&sim.closureBands(row[0]).length);
   const closedRamps=w.STAU_LEGACY_GEOMETRY.roads

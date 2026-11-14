@@ -515,31 +515,55 @@ function createLegacyTrafficScenario(data){
     }
     const ordered=[...unique.values()].sort((a,b)=>a.position-b.position);
     if(ordered.length<2)return null;
-    // The clicked road is between successive real AS/AK anchors. A tap
-    // within 140m before the next AS means the following AS-to-AS section.
-    let ix=ordered.findIndex(mark=>mark.position>=point);
-    if(ix===-1){
-      if(point-ordered.at(-1).position>450)return null;
-      ix=ordered.length-1;
-    }
-    if(ix===0&&ordered[0].position-point>450)return null;
-    let left,right;
-    if(ix===0||ix<ordered.length&&
-      ordered[ix].position-point<=450){
-      left=ordered[ix];right=ordered[ix+1];
-      if(!right){left=ordered[ix-1];right=ordered[ix];}
-    }else{
-      left=ordered[ix-1];right=ordered[ix];
-    }
-    if(!left||!right)return null;
+    // A finger tap belongs to the TWO junction anchors actually
+    // surrounding that point. Do not silently jump to the FOLLOWING
+    // corridor merely because the tap is within 450 m of its next AS.
+    // At the outside of an incomplete graph, reject instead of guessing.
+    const ix=ordered.findIndex(mark=>mark.position>=point);
+    if(ix<=0)return null;
+    const left=ordered[ix-1],right=ordered[ix];
     if(!right||left.junction[1]===right.junction[1]||
       right.position-left.position<100)return null;
+    // An AS centre is only a map LABEL, never the true legal closure gate.
+    // Move upstream boundary to the last usable off-ramp split, and the
+    // downstream boundary to the first actual on-ramp merge. This also
+    // ensures the downstream exit is INSIDE the closure, while the on-ramp
+    // directly behind it remains OPEN to returning traffic.
+    const offSplits=[],onMerges=[];
+    for(const main of chain){
+      const base=starts.get(main.id);
+      for(const turn of main.links)
+        if(edges[turn.to].kind==="ramp")
+          offSplits.push(base+turn.fromM);
+    }
+    for(const ramp of edges){
+      if(ramp.kind!=="ramp")continue;
+      for(const turn of ramp.links){
+        const target=edges[turn.to],base=starts.get(target.id);
+        if(target.kind==="mainline"&&base!==undefined)
+          onMerges.push(base+turn.toM);
+      }
+    }
+    const nearestGate=(candidates,mark,lower,upper)=>{
+      const viable=candidates.filter(at=>
+        at>=Math.max(0,mark-1500)&&at<=mark+1500&&
+        at>lower&&at<upper);
+      viable.sort((a,b)=>Math.abs(a-mark)-Math.abs(b-mark)||a-b);
+      return viable[0];
+    };
+    const startGate=nearestGate(offSplits,left.position,-1,point);
+    const endGate=nearestGate(onMerges,right.position,point,advance+1);
+    // Never let a guessed ramp gate reverse the tapped carriageway.
+    const fromPosition=startGate??left.position;
+    const toPosition=endGate??right.position;
+    if(fromPosition>=point||toPosition<=point||
+      toPosition-fromPosition<100)return null;
     const spans=[];
     for(const road of chain){
       const begin=starts.get(road.id),end=begin+road.lengthM;
-      const fromM=Math.max(0,left.position-begin);
-      const toM=Math.min(road.lengthM,right.position-begin);
-      if(toM>fromM+.05&&end>=left.position&&begin<=right.position)
+      const fromM=Math.max(0,fromPosition-begin);
+      const toM=Math.min(road.lengthM,toPosition-begin);
+      if(toM>fromM+.05&&end>=fromPosition&&begin<=toPosition)
         spans.push({edgeId:road.id,fromM,toM,gate:spans.length===0});
     }
     if(!spans.length)return null;
@@ -753,12 +777,36 @@ function createLegacyTrafficScenario(data){
           }
         }
       }
-      for(const id of ramps){
+      // Off-ramps whose physical diverge occurs INSIDE the already closed
+      // mainline interval are closed to new entering traffic too. In contrast,
+      // the last off-ramp immediately BEFORE the gate stays OPEN and the
+      // first reentry on-ramp just AFTER the gate stays OPEN.
+      const downstreamExits=new Set();
+      for(const mainSpan of record.spans){
+        const main=byId.get(mainSpan.edgeId);
+        if(main?.kind!=="mainline")continue;
+        for(const turn of main.links){
+          const next=edges[turn.to];
+          // An OSM mainline consists of many short Ways. A downstream
+          // exit can diverge at metre ZERO of a later Way and is still
+          // INSIDE the closure. Only the very FIRST gate's off-ramp
+          // remains open so all approaching vehicles can leave.
+          const beyondInitialGate=!mainSpan.gate||
+            turn.fromM>mainSpan.fromM+.3;
+          if(next.kind==="ramp"&&beyondInitialGate&&
+            turn.fromM>=mainSpan.fromM-.05&&
+            turn.fromM<=mainSpan.toM+.05)
+            downstreamExits.add(next.id);
+        }
+      }
+      for(const id of [...ramps,...downstreamExits]){
         const edge=byId.get(id);
         const list=byEdge.get(id)||[];
-        // Closing the entrance does not delete vehicles already on a ramp.
-        list.push({edgeId:id,fromM:0,toM:edge.lengthM,gate:true,
-          derivedRampClosure:true,event:record.spec});
+        // Cars already inside the administrative closure may still flow
+        // out; the receiving gate blocks only NEW arrivals.
+        if(!list.some(span=>span.event.id===record.spec.id))
+          list.push({edgeId:id,fromM:0,toM:edge.lengthM,gate:true,
+            derivedRampClosure:true,event:record.spec});
         byEdge.set(id,list);
       }
     }
@@ -1257,7 +1305,11 @@ function createLegacyTrafficScenario(data){
           const road=edges[turn.to],base=downstream.get(road.id);
           if(road.kind!=="mainline"||road.ref!==endEdge.ref||base===undefined)continue;
           const distance=road===endEdge?turn.toM-last.toM:base+turn.toM;
-          if(!(distance>80&&distance<60000))continue;
+          // The first legal reentry is often the ramp that MERGES at the
+          // exact end of the blocked mainline (distance 0). Requiring
+          // 80 metres beyond the closure silently discarded that ramp and
+          // stranded diverted drivers despite a lawful open reentry.
+          if(!(distance>=-.05&&distance<60000))continue;
           // A long OSM interchange can have several ramp pieces. Treat an
           // Anschlussstelle as ONE candidate, not three phantom destinations.
           const junction=(ramp.name.split(" · ")[0]||ramp.id)
