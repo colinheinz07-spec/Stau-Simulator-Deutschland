@@ -765,8 +765,10 @@ test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and 
     "A3 to A59 Heumar turning movement must not enter after closure");
   assert.equal(sim.closureBands("extra-heumar-328948525").length,0,
     "A59 Wahn ramp far downstream must NOT be closed merely due to shared OSM Way");
-  assert.equal(sim.closureBands("extra-heumar-132618673").length,0,
-    "Rath exit at end of closure stays usable");
+  assert.ok(sim.closureBands("extra-heumar-132618673").length>0,
+    "downstream Rath EXIT is inside the blocked corridor and must close");
+  assert.equal(sim.closureBands("extra-heumar-132618574").length,0,
+    "opposite-direction Rath on-ramp remains open");
   const normal=sim.recommendedClosureLength("extra-a59-bonn",950);
   assert.equal(normal.lengthM,2132);
 });
