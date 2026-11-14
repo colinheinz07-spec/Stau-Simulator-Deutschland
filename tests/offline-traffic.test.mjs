@@ -500,7 +500,7 @@ test("AD Dernbach A3 Frankfurt closure closes FULL A48 to Frankfurt ramp and blo
   const splitRisk=sim.closureExposureAhead("A48-127602519");
   assert.ok(splitRisk>.2&&splitRisk<.8,
     "A48 approach must foresee closed Frankfurt vs OPEN Köln ramps; risk "+splitRisk);
-  const approaching=sim.closureExposureAhead("A48-1338571522");
+  const approaching=sim.closureExposureAhead("A48-224110323");
   assert.ok(approaching>.2&&approaching<.8,
     "A48 traffic near AS Höhr-Grenzhausen must anticipate Frankfurt closure "+
     "before the final AD Dernbach fork, risk "+approaching);
