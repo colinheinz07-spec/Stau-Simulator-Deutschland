@@ -385,7 +385,7 @@ function createLegacyTrafficScenario(data){
       if(previous.length!==1)break;
       const candidate=previous[0];
       chain.unshift(candidate);seen.add(candidate.id);
-      if(chain.reduce((s,e)=>s+e.lengthM,0)>75000)break;
+      if(chain.length>2500)break;
     }
     for(let i=0;i<500;i++){
       const last=chain.at(-1),forward=(mainlineNext.get(last.id)||[])
@@ -393,7 +393,7 @@ function createLegacyTrafficScenario(data){
       if(forward.length!==1)break;
       const candidate=forward[0];
       chain.push(candidate);seen.add(candidate.id);
-      if(chain.reduce((s,e)=>s+e.lengthM,0)>75000)break;
+      if(chain.length>2500)break;
     }
     let advance=0,point=-1;
     const marks=[],starts=new Map();
@@ -405,18 +405,37 @@ function createLegacyTrafficScenario(data){
       advance+=road.lengthM;
     }
     if(point<0||marks.length<2)return null;
-    // The clicked road lies BETWEEN two successive AS/AK; preserve actual
-    // kilometrage of the direction including all OSM Way splits.
-    const before=marks.filter(m=>m.position<=point+.001)
-      .sort((a,b)=>b.position-a.position)[0];
-    // A tap just BEFORE a real junction node is still a tap on that
-    // junction: snap to it instead of claiming the whole previous corridor.
-    const nearStart=marks.filter(m=>m.position>point&&
-      m.position-point<=140).sort((a,b)=>a.position-b.position)[0];
-    const left=nearStart||before;
-    if(!left)return null; // avoid crashing on a motorway before its first AS
-    const right=marks.filter(m=>m.position>left.position+1)
-      .sort((a,b)=>a.position-b.position)[0];
+    // A junction coordinate can project onto several short adjacent OSM
+    // Ways. These are NOT distinct exits! Deduplicate by motorway+AS number,
+    // choosing the best geometrical projection (lowest perpendicular error).
+    const unique=new Map();
+    for(const mark of marks){
+      const key=mark.junction[0]+":"+mark.junction[1];
+      const old=unique.get(key);
+      if(!old||mark.best<old.best-.01||
+        (Math.abs(mark.best-old.best)<.01&&
+          Math.abs(mark.position-point)<Math.abs(old.position-point)))
+        unique.set(key,mark);
+    }
+    const ordered=[...unique.values()].sort((a,b)=>a.position-b.position);
+    if(ordered.length<2)return null;
+    // The clicked road is between successive real AS/AK anchors. A tap
+    // within 140m before the next AS means the following AS-to-AS section.
+    let ix=ordered.findIndex(mark=>mark.position>=point);
+    if(ix===-1){
+      if(point-ordered.at(-1).position>140)return null;
+      ix=ordered.length-1;
+    }
+    if(ix===0&&ordered[0].position-point>140)return null;
+    let left,right;
+    if(ix===0||ix<ordered.length&&
+      ordered[ix].position-point<=140){
+      left=ordered[ix];right=ordered[ix+1];
+      if(!right){left=ordered[ix-1];right=ordered[ix];}
+    }else{
+      left=ordered[ix-1];right=ordered[ix];
+    }
+    if(!left||!right)return null;
     if(!right||left.junction[1]===right.junction[1]||
       right.position-left.position<100)return null;
     const spans=[];
