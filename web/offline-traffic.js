@@ -776,28 +776,47 @@ function createLegacyTrafficScenario(data){
         const arr=spansById.get(span.edgeId)||[];
         arr.push(span);spansById.set(span.edgeId,arr);
       }
+      // Follow the exact directed through-carriageway across arbitrarily
+      // many OSM Way boundaries. A 10-km-upstream on-ramp must remain OPEN
+      // when a later real exit exists before the gate; conversely, a ramp
+      // with NO legal exit until the barrier must be closed. Neither rule
+      // depends on a search radius, road fragment length or junction name.
+      const mainlineReachMemo=new Map();
       function leadsIntoClosed(link){
         const target=edges[link.to];
         if(closed.has(target.id))return true;
-        // Only the actual physical closure interval counts. A closure
-        // between A59 AS31 and AS32 must NEVER close AS35 at Wahn merely
-        // because both touch the same 26 km OSM Way.
-        return (spansById.get(target.id)||[]).some(span=>{
-          if(link.toM>=span.fromM-.05&&link.toM<span.toM-.05)
-            return true;
-          if(target.kind!=="mainline"||link.toM>=span.fromM)return false;
-          // A feeder may merge just BEFORE the closure on the same OSM
-          // Way. It is forbidden only if there is no legal exit between
-          // its real merge and the physical closure start.
-          const escape=target.links.some(turn=>{
+        if(target.kind!=="mainline")return false;
+        let current=target,position=link.toM;
+        const visited=new Set(),history=[];
+        const result=value=>{
+          for(const key of history)mainlineReachMemo.set(key,value);
+          return value;
+        };
+        for(let hops=0;hops<=edges.length;hops++){
+          const key=current.id+":"+Math.round(position*100);
+          if(mainlineReachMemo.has(key))
+            return result(mainlineReachMemo.get(key));
+          if(visited.has(key))return result(false);
+          visited.add(key);history.push(key);
+          const span=(spansById.get(current.id)||[])
+            .find(s=>s.toM>position+.05);
+          if(span&&position>=span.fromM-.05)
+            return result(true);
+          const gate=span?span.fromM:current.lengthM;
+          const escape=current.links.some(turn=>{
+            if(turn.fromM<position-.05||turn.fromM>gate+.05)return false;
             const other=edges[turn.to];
-            return turn.fromM>=link.toM-.05&&turn.fromM<span.fromM-.05&&
-              !closed.has(other.id)&&
+            return !closed.has(other.id)&&
               (other.kind==="ramp"||
-                other.kind==="mainline"&&other.ref!==target.ref);
+                other.kind==="mainline"&&other.ref!==current.ref);
           });
-          return !escape;
-        });
+          if(escape)return result(false);
+          if(span)return result(true);
+          const next=mainlineNext.get(current.id)||[];
+          if(next.length!==1)return result(false);
+          current=next[0];position=0;
+        }
+        return result(false);
       }
       // Repeated fixed-point resolution covers ramp->ramp->mainline chains,
       // independent of OSM Way fragments.
@@ -805,6 +824,9 @@ function createLegacyTrafficScenario(data){
       let changed=true,iterations=0;
       while(changed&&iterations++<edges.length){
         changed=false;
+        // Newly closed exclusive ramp branches can invalidate an earlier
+        // apparent "escape"; recompute reachability to fixed point.
+        mainlineReachMemo.clear();
         for(const edge of edges){
           if(edge.kind!=="ramp"||closed.has(edge.id)||!edge.links.length)continue;
           if(edge.links.every(leadsIntoClosed)){
