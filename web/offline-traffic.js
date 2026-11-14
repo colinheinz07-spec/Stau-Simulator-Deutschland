@@ -104,7 +104,14 @@ function createLegacyTrafficScenario(data){
       // User-defined unrestricted motorway service, not a speed threshold.
        capacityPerLane:row[1]==="ramp"?1500:2200,
       freeKmh:row[1]==="ramp"?75:120,
-      jamPerCell:130*lanes*(meters/count)/1000,
+      // CTM cell storage must cover at least one five-second free-flow
+      // distance. Many original OSM Ways are only 3-25m long. Treating such
+      // micro-Ways as independent physical storage limited unrestricted
+      // 3-lane throughput to <1500 Kfz/h and made phantom congestion.
+      // This is a virtual numerical connector: rendered/geographic lengths
+      // and kilometre-based jam measurements stay at the real OSM metres.
+      jamPerCell:130*lanes*Math.max(meters/count,
+        (row[1]==="ramp"?75:120)*5/3.6)/1000,
       next:[],incoming:0,incomingAtStart:0,mainlineIncomingAtStart:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
       links:[],linksFrom:Array.from({length:count},()=>[]),
