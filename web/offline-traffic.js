@@ -704,6 +704,7 @@ function createLegacyTrafficScenario(data){
     // destination remains legal, and do not flood a whole interchange.
     const roadClosures=[...eventRecords.values()].filter(record=>
       record.spec.kind==="closure"&&
+      record.spans.some(span=>byId.get(span.edgeId)?.kind==="mainline")&&
       (!record.spec.schedule||
         global.StauEventSchedule.active(record.spec.schedule,time)));
     const fingerprint=roadClosures.map(x=>x.spec.id).sort().join("|");
