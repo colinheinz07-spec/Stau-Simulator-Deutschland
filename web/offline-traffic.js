@@ -1253,7 +1253,7 @@ function createLegacyTrafficScenario(data){
     const target=edges[turn.to];
     if(!target||visited.has(target.id))return false;
     if(target.kind==="mainline")
-      return closureDistanceAhead(target,turn.toM,16000)===Infinity;
+      return closureDistanceAhead(target,turn.toM,Infinity)===Infinity;
     visited.add(target.id);
     if(!target.links.length)return true;
     for(const move of target.links){
@@ -1371,7 +1371,7 @@ function createLegacyTrafficScenario(data){
           if(next.kind!=="mainline"||next.ref!==endEdge.ref||
             downstream.has(next.id))continue;
           const metres=base+Math.max(0,remaining);
-          if(metres>60000)continue;
+          if(metres>60000&&obstacle.spec.kind!=="closure")continue;
           downstream.set(next.id,metres);queue.push(next);
         }
       }
@@ -1388,7 +1388,8 @@ function createLegacyTrafficScenario(data){
           // exact end of the blocked mainline (distance 0). Requiring
           // 80 metres beyond the closure silently discarded that ramp and
           // stranded diverted drivers despite a lawful open reentry.
-          if(!(distance>=-.05&&distance<60000))continue;
+          if(!(distance>=-.05&&
+            (obstacle.spec.kind==="closure"||distance<60000)))continue;
           // A long OSM interchange can have several ramp pieces. Treat an
           // Anschlussstelle as ONE candidate, not three phantom destinations.
           const junction=(ramp.name.split(" · ")[0]||ramp.id)
@@ -1411,8 +1412,8 @@ function createLegacyTrafficScenario(data){
           const first=edges[turn.to];
           const fullClosure=obstacle.spec.kind==="closure";
           const affected=fullClosure?
-            closureDistanceAhead(main,turn.fromM,16000)!==Infinity||
-              closureExposureAhead(main,turn.fromM)>0:
+            closureDistanceAhead(main,turn.fromM,Infinity)!==Infinity||
+              closureExposureAhead(main,turn.fromM,Infinity)>0:
             measuredDelayAhead(main,turn.fromM)>=45;
           if(first.kind!=="ramp"||!affected)continue;
           const pending=[first],seen=new Set();
@@ -1575,7 +1576,7 @@ function createLegacyTrafficScenario(data){
           edges[link.to].kind==="ramp"||
           edges[link.to].kind==="mainline"&&edges[link.to].ref!==edge.ref)){
           const distance=anyClosureActive?
-            closureDistanceAhead(edge,k*edge.cellLength,16000):Infinity;
+            closureDistanceAhead(edge,k*edge.cellLength,Infinity):Infinity;
           // Avoid expensive downstream route searches when there is no
           // closure nearby and less than 45 min measured delay.
           // At a last Autobahn-to-Autobahn split, keep the OPEN direction
@@ -1583,7 +1584,7 @@ function createLegacyTrafficScenario(data){
           // enters the closed one. Earlier same-ref mainline exits can absorb
           // that diversion before vehicles reach the terminal interchange.
           const closureShare=Number.isFinite(distance)?1:
-            anyClosureActive?closureExposureAhead(edge,k*edge.cellLength):0;
+            anyClosureActive?closureExposureAhead(edge,k*edge.cellLength,Infinity):0;
           // If motorists can still leave at a later OPEN AS/AK fork before
           // the closure, they must not all be forced off here kilometres
           // upstream. Ordinary local AS traffic retains its usual split.
