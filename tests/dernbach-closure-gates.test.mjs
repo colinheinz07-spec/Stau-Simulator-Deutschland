@@ -190,7 +190,12 @@ test("last usable AS exit still forces diversion if the next full closure is ove
   assert.ok(plans.some(p=>p.closureId==="very-long-gap"&&
     p.terminalEdgeId==="off"&&p.reentryEdgeId==="in"),
     "full closure detour must find a real last AS exit and next legal on-ramp "+
-    "regardless of any 16/25/60km search limits");
+    "regardless of any 16/25/60km search limits; plans="+
+      JSON.stringify(plans)+"; ahead="+
+      sim.closureDistanceAhead("approach",0,Infinity)+
+      "; exposure="+sim.closureExposureAhead("approach",0,Infinity)+
+      "; offSink="+JSON.stringify(sim.edgeActivity("off"))+
+      "; onSource="+JSON.stringify(sim.edgeActivity("in")));
   for(let i=0;i<20;i++)sim.advance(12);
   assert.ok(sim.edgeActivity("off").enteredVph>500,
     "all obstructed traffic diverts at the last exit, even if >30km from the barrier; got "+
