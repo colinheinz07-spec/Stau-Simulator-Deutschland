@@ -1657,7 +1657,8 @@ function createLegacyTrafficScenario(data){
       if(edge.kind!=="ramp"&&edge.kind!=="mainline")continue;
       if(edge.kind==="ramp"){
         const own=(activeEffects.get(edge.id)||NO_EFFECTS)
-          .find(x=>x.derivedRampClosure);
+          .find(x=>x.derivedRampClosure||
+            (x.event.kind==="closure"&&x.gate));
         if(own){
           // A ramp starts at its true physical fork. Only pin the gate at
           // the first blocked access from an OPEN approach, not at 70% of
