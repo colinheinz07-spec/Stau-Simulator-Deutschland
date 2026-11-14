@@ -302,6 +302,20 @@ function createLegacyTrafficScenario(data){
       sources:sources.length,edges:edges.length,excludedRest};
   }
   function clockMs(){return simStart+elapsed*1000;}
+  function migrateLegacyEvent(raw){
+    if(!raw||!reversedWays.includes(raw.edgeId)||!finite(Number(raw.offsetM)))
+      return raw;
+    const edge=byId.get(raw.edgeId);
+    if(!edge)return raw;
+    const old=Number(raw.offsetM);
+    // Earlier SPCK versions displayed the same vertices in the reverse
+    // order on 48 A3/A48 ways. Preserve the physical event interval.
+    const eventLength=raw.kind==="closure"?.1:
+      Math.min(Math.max(0,Number(raw.lengthM)||0),edge.lengthM-old);
+    const newOffset=Math.max(0,Math.min(edge.lengthM-.001,
+      edge.lengthM-old-eventLength));
+    return {...raw,offsetM:newOffset};
+  }
   function listEvents(){
     return [...eventRecords.values()].map(record=>({...record.spec,
       coveredLengthM:record.coveredLengthM,truncated:record.truncated}));
@@ -1093,6 +1107,7 @@ function createLegacyTrafficScenario(data){
     entryIncomingCount:id=>byId.get(id)?.incomingAtStart??0,
     sourceIds:()=>sources.map(x=>x.id),
     normalizedReversedWays:()=>[...reversedWays],
+    migrateLegacyEvent,
     sourceProfiles:()=>sources.map(edge=>({id:edge.id,ref:edge.ref,
       direction:edge.directionKey,peakVph:edge.referencePeakVph,
       kind:edge.kind,name:edge.name})),
