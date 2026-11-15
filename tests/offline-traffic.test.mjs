@@ -488,7 +488,7 @@ test("full closure sends ALL approaching demand to a legal exit, with ramp conge
     "the physical queue dissolves after the motorway reopens");
 });
 
-test("A3 Heumar–Köln-Ost closure blocks the A59 feeder turn but leaves A59 through lanes open",async()=>{
+test("A3 Heumar–Köln-Ost closes the A59 exactly from AD Porz, including the whole trapped feeder",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
     runInNewContext(await readFile(path,"utf8"),{window:w});
@@ -498,8 +498,18 @@ test("A3 Heumar–Köln-Ost closure blocks the A59 feeder turn but leaves A59 th
     speedKmh:0,shoulder:"normal",hasShoulder:false});
   assert.match(closure.closureFrom,/A3 28 AD Köln-Heumar/);
   assert.match(closure.closureTo,/A3 27 AK Köln-Ost/);
-  assert.equal(sim.closureBands("extra-a59-koeln").length,0,
-    "A59 mainline remains open and green");
+  const a59=sim.closureBands("extra-a59-koeln");
+  assert.equal(a59.length,1);
+  assert.ok(Math.abs(a59[0].fromM-22940.907)<1,
+    "closure starts at the real A559 diverge at AD Porz, not at the previous AS or Heumar");
+  assert.ok(Math.abs(a59[0].toM-25954.604)<1,
+    "entire A59 suffix (about 3 km) must be closed up to A3");
+  assert.equal(sim.closureBands("extra-a59-bonn").length,0);
+  assert.equal(sim.closureBands("extra-a559-gremberg").length,0);
+  assert.equal(sim.movementBlocked("extra-a59-koeln","extra-a559-gremberg"),false,
+    "Porz escape toward A559 remains open");
+  assert.equal(sim.closureBands("extra-heumar-132618574").length,1,
+    "Rath entrance that joins the A59 AFTER the last Porz exit closes");
   assert.equal(sim.closureBands("A3-26164974").length,0,
     "opposite A3 carriageway stays fully open");
   const approaching=sim.closureDistanceAhead("extra-a59-koeln",0,50000);
@@ -507,10 +517,18 @@ test("A3 Heumar–Köln-Ost closure blocks the A59 feeder turn but leaves A59 th
     "A59 traffic must recognize a downstream A3 closure before reaching the Heumar junction");
   assert.ok(sim.closureBands("A3-132624375").length>0,
     "A3 section beyond A59 join is physically closed");
-  assert.equal(sim.movementBlocked("extra-a59-koeln","A3-132624375"),true,
-    "A59 vehicles cannot enter the closed A3 direction");
-  assert.ok(sim.closureAccessPoints().some(p=>p.edgeId==="extra-a59-koeln"),
-    "the unavailable transition is marked instead of painting A59 closed");
+  assert.equal(sim.movementBlocked("extra-a59-koeln","A3-132624375"),false,
+    "vehicles already inside the closed A59 suffix evacuate through the closed A3");
+  assert.ok(sim.closureAccessPoints().some(p=>p.edgeId==="extra-a59-koeln"&&
+    Math.abs(p.offsetM-a59[0].fromM)<1),"access sign at the true Porz gate");
+  for(const id of ["extra-heumar-132624422","extra-heumar-208913379",
+    "extra-heumar-753544621"])
+    assert.ok(sim.closureBands(id).length,"closed Köln-Ost exit including small fragments: "+id);
+  for(const id of ["extra-heumar-132624449","extra-heumar-132614508",
+    "extra-a4-aachen"])
+    assert.equal(sim.closureBands(id).length,0,"open shared/opposite transfer stays available: "+id);
+  sim.removeEvent("heumar-a3");
+  assert.equal(sim.closureBands("extra-a59-koeln").length,0,"derived feeder reopens with event");
 });
 
 test("cars already inside a road closure evacuate, but a separate three-lane crash stops them",async()=>{
@@ -743,7 +761,7 @@ test("real A3 Heumar to Köln-Ost closure offers a genuine A59 upstream off-ramp
   conservation(sim.totals());
 });
 
-test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and blocks A3 entering turn",async()=>{
+test("A59 Köln-Heumar full closure starts AFTER the last A4 Aachen escape, not at the junction label",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
     runInNewContext(await readFile(path,"utf8"),{window:w});
@@ -754,15 +772,19 @@ test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and 
     speedKmh:0,shoulder:"normal",hasShoulder:false});
   assert.match(event.closureFrom,/A59 31 AD Köln-Heumar/);
   assert.match(event.closureTo,/A59 32 Rath/);
-  assert.ok(event.coveredLengthM>2000&&event.coveredLengthM<2400);
+  assert.ok(event.coveredLengthM>1700&&event.coveredLengthM<1750);
   assert.equal(event.offsetM,950,
     "keep user's originally tapped point rather than moving the event icon");
   const span=sim.closureBands("extra-a59-bonn")[0];
-  assert.ok(span.toM-span.fromM>2000,"all 2.1 km must have red-white overlay");
+  assert.ok(Math.abs(span.fromM-507.736)<1,"last A4 branch is the true gate");
+  assert.ok(span.toM-span.fromM>1700,"all 1.7 km must have red-white overlay");
   assert.equal(sim.closureBands("extra-a59-koeln").length,0,
     "opposite direction must remain open");
-  assert.equal(sim.movementBlocked("A3-258495162","extra-a59-bonn"),true,
-    "A3 to A59 Heumar turning movement must not enter after closure");
+  assert.equal(sim.movementBlocked("A3-258495162","extra-a59-bonn"),false,
+    "shared A3 approach to A4 Aachen stays accessible before the closure gate");
+  assert.equal(sim.movementBlocked("extra-a59-bonn","extra-a4-aachen"),false,
+    "direct A4 Aachen exit at the closure gate remains usable");
+  assert.equal(sim.closureBands("extra-a4-aachen").length,0);
   assert.equal(sim.closureBands("extra-heumar-328948525").length,0,
     "A59 Wahn ramp far downstream must NOT be closed merely due to shared OSM Way");
   assert.ok(sim.closureBands("extra-heumar-132618673").length>0,
@@ -770,7 +792,7 @@ test("A59 Köln-Heumar full closure is AS 31 to AS 32, not an OSM fragment, and 
   assert.equal(sim.closureBands("extra-heumar-132618574").length,0,
     "opposite-direction Rath on-ramp remains open");
   const normal=sim.recommendedClosureLength("extra-a59-bonn",950);
-  assert.equal(normal.lengthM,2132);
+  assert.equal(normal.lengthM,1716);
 });
 test("A3 Köln-Ost to Heumar motorway closure covers all connected Ways and feeder ramps",async()=>{
   const w={};

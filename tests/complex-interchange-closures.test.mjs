@@ -122,3 +122,48 @@ test("real AK Bonn/Siegburg: A560 through open, only ramps into closed A3 Köln 
   for(let i=0;i<6;i++)sim.advance(12);
   assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
 });
+
+test("generic terminal highway closes from its last escape over multiple Ways; exclusive exit fragments close but shared branch stays open",async()=>{
+  const data={roads:[
+    ["main","mainline","A7",3,[[50,7],[50,7.01],[50,7.015],[50,7.02]],"",1],
+    ["after","mainline","A7",3,[[50,7.02],[50,7.04]],"",2],
+    ["side","mainline","A8",2,[[50.03,7],[50.02,7],[50.01,7]],"",3],
+    ["side-tail","mainline","A8",2,[[50.01,7],[50,7]],"",4],
+    ["escape","mainline","A9",2,[[50.02,7],[50.02,7.04]],"",5],
+    ["exit-head","ramp","A7",1,[[50,7.01],[50.005,7.01]],"Abfahrt",6],
+    ["exit-tail","ramp","A7",1,[[50.005,7.01],[50.01,7.01]],"Rampenzweig",7],
+    ["exit-shared","ramp","A9",1,[[50.01,7.01],[50.015,7.01]],"Rampenzweig",8],
+    ["open-in","ramp","A9",1,[[50.02,7.01],[50.01,7.01]],"Abfahrt",9],
+    ["ramp-trunk","ramp","A9",1,[[50.02,7.02],[50.01,7.02],[50,7.015]],"Überleitung",10],
+    ["ramp-open","ramp","A9",1,[[50.01,7.02],[50.01,7.03]],"Abfahrt",11]
+  ]};
+  const sim=await scenario(data);
+  sim.setSimulationStart(Date.parse("2026-11-13T02:00:00Z"));
+  sim.warmStart();
+  sim.setEvent({id:"terminal-feeder",edgeId:"main",kind:"closure",offsetM:0,
+    lengthM:1400,closedLanes:[0,1,2],speedKmh:0,shoulder:"normal",hasShoulder:false});
+  const side=sim.closureBands("side");
+  assert.equal(side.length,1);
+  assert.ok(Math.abs(side[0].fromM-1111.95)<1,"only suffix after open direct motorway fork");
+  assert.ok(Math.abs(side[0].toM-2223.90)<1);
+  assert.equal(state(sim,"side-tail"),true);
+  assert.equal(state(sim,"escape"),false);
+  assert.equal(sim.movementBlocked("side","escape"),false);
+  assert.equal(sim.movementBlocked("side","side-tail"),false,"existing vehicles evacuate");
+  assert.equal(state(sim,"exit-head"),true);
+  assert.equal(state(sim,"exit-tail"),true,"exclusive downstream ramp fragment follows closure");
+  assert.equal(state(sim,"exit-shared"),false,"shared open incoming transfer remains open");
+  assert.equal(sim.movementBlocked("open-in","exit-shared"),false);
+  const ramp=sim.closureBands("ramp-trunk");
+  assert.equal(ramp.length,1);
+  assert.ok(Math.abs(ramp[0].fromM-1111.95)<1,"shared ramp stays open to its own fork");
+  assert.equal(state(sim,"ramp-open"),false);
+  assert.equal(sim.movementBlocked("ramp-trunk","ramp-open"),false);
+  assert.equal(state(sim,"after"),false);
+  for(let i=0;i<120;i++)sim.advance(12);
+  assert.ok(sim.edgeActivity("side-tail").vehicles<.5,"trapped feeder drains without new traffic");
+  assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
+  sim.removeEvent("terminal-feeder");
+  for(const id of ["side","side-tail","exit-head","exit-tail","ramp-trunk"])
+    assert.equal(state(sim,id),false,"all derived intervals reopen: "+id);
+});
