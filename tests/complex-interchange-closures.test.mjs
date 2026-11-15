@@ -167,3 +167,60 @@ test("generic terminal highway closes from its last escape over multiple Ways; e
   for(const id of ["side","side-tail","exit-head","exit-tail","ramp-trunk"])
     assert.equal(state(sim,id),false,"all derived intervals reopen: "+id);
 });
+
+test("real Köln-Süd–Eifeltor reopens the collector for local entry toward Aachen; Klettenberg–Köln-West instead closes its motorway merge",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const sim=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
+  const r=id=>"extra-koelnwest-link-"+id;
+  const first=closure(sim,"eifeltor","extra-a4-aachen",10150);
+  assert.match(first.closureFrom,/Köln-Süd/);
+  assert.match(first.closureTo,/Köln-Eifeltor/);
+  const band=sim.closureBands("extra-a4-aachen")[0];
+  assert.ok(band.toM>11260&&band.toM<11300,"mainline reopens at Eifeltor");
+  assert.equal(state(sim,r(30760401)),true,"old motorway approach closes");
+  assert.equal(state(sim,r(455315447)),true,"closed outgoing direction");
+  for(const id of ["142169746","455315447:reverse","455315446","114123483",
+    "455315451","30760403","224670396","10089982","71505392","10089983"]){
+    assert.equal(state(sim,r(id)),false,"local entry and its complete onward chain stay open: "+id);
+  }
+  assert.equal(sim.edgeActivity(r(142169746)).source,true,"verified local street is an actual source");
+  assert.equal(sim.movementBlocked(r(142169746),r("455315447:reverse")),false);
+  assert.equal(sim.movementBlocked(r("455315447:reverse"),r(455315446)),false);
+  assert.equal(sim.movementBlocked(r(224670396),"extra-a4-aachen"),false);
+  sim.advance(1);
+  assert.ok(sim.detourPlans().some(p=>p.reentryEdgeId===r(142169746)),
+    "return from Köln-Süd closure via the verified Eifeltor ramp chain");
+  sim.removeEvent("eifeltor");
+  const second=closure(sim,"klettenberg","extra-a4-aachen",14500);
+  assert.match(second.closureFrom,/Köln-Klettenberg/);
+  assert.match(second.closureTo,/Köln-West/);
+  assert.ok(Math.abs(sim.closureBands("extra-a4-aachen")[0].fromM-11260.059)<1,
+    "mainline closure begins at Eifeltor collector diverge, the last lawful Klettenberg exit");
+  for(const id of [30760401,142169746,455315446,114123483,455315451,30760403,10089982])
+    assert.equal(state(sim,r(id)),false,"Eifeltor collector to Klettenberg exit stays open: "+id);
+  for(const id of [224670396,71505392,10089983])
+    assert.equal(state(sim,r(id)),true,"entry into now blocked A4 must close: "+id);
+  assert.equal(state(sim,"extra-a4-olpe"),false);
+  assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
+});
+
+test("real Siebengebirge–Bonn/Siegburg leaves downstream motorway exits and A560 through movements available",async()=>{
+  const window={};
+  for(const file of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
+  const sim=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
+  const evt=closure(sim,"siegburg-end","A3-37264385",650,2);
+  assert.match(evt.closureFrom,/Siebengebirge/);
+  assert.match(evt.closureTo,/Bonn\/Siegburg/);
+  assert.equal(state(sim,"A3-37264385"),true);
+  for(const id of ["extra-siegburg-A3-koeln-to-A560-bonn","extra-siegburg-A3-koeln-to-A560-hennef",
+    "extra-siegburg-A3-frankfurt-to-A560-bonn","extra-siegburg-A3-frankfurt-to-A560-hennef",
+    "extra-siegburg-A560-bonn-to-A3-koeln","extra-siegburg-A560-hennef-to-A3-koeln",
+    "extra-a560-bonn","extra-a560-hennef"]){
+    assert.equal(state(sim,id),false,"downstream interchange exit or lawful reentry stays open: "+id);
+  }
+  sim.advance(1);
+  assert.ok(Math.abs(sim.totals().conservationResidual)<1e-6);
+});

@@ -167,3 +167,10 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Kleine Rampenteilstücke werden in beiden Richtungen entlang echter OSM-Verbindungen verfolgt. Gemeinsame Rampenabschnitte bleiben ab dem nächsten offenen Zulauf befahrbar. Direkte Autobahn-zu-Autobahn-Abzweige zählen ebenso wie Rampen als legale Ausweichmöglichkeit.
 - Sperrmarkierung, Zugangssperre und Abfluss beruhen auf denselben gerichteten Intervallen. Bereits innerhalb der Sperrung vorhandene Fahrzeuge können abfließen; neue Fahrzeuge dürfen nicht nachrücken. Die abgeleiteten Sperrungen werden beim Aufheben oder Ablauf des Ereignisses zurückgenommen.
 - Die Regeln gelten ohne Sonderfall für Köln; die Tests enthalten reale Kreuzungen und künstliche fragmentierte Zubringer mit gemeinsamen Ausfahrten.
+
+## SPCK 0.9.8 – Parallelfahrbahnen und Freigabe am nächsten Knoten
+
+- Bei der A4 Köln-Süd → Eifeltor bleibt die echte Eifeltor-Auffahrt über die Parallelfahrbahn bis zur Einfädelung Richtung Aachen zugänglich. Die bisher fehlenden Rückrichtungen zweier OSM-Links (`455315441`, `455315447`, jeweils `oneway=no`) wurden anhand der Original-Tags rekonstruiert; beide Fahrtrichtungen erscheinen separat. Die bestätigten westwärts gerichteten lokalen Zufahrten (Am Eifeltor und Luxemburger Straße) sind über ihre realen Rampenketten angebunden.
+- Köln-Klettenberg → Köln-West beginnt dagegen auf der Hauptfahrbahn schon am Eifeltor-Abzweig, weil die Parallelfahrbahn die letzte Abfahrt Richtung Klettenberg bedient. Die Abfahrt bleibt erreichbar, die Einfädelung in die gesperrte A4 bleibt geschlossen.
+- Am nachgelagerten Autobahnkreuz bleiben Abfahrten zu einer unabhängigen offenen Autobahn frei (z.B. A3 Siebengebirge → Bonn/Siegburg: Überleitungen zur A560). Normale Rampen innerhalb des gesperrten Korridors bleiben nach wie vor gesperrt.
+- Der Offline-Import unterscheidet ausdrücklich verifizierte zweirichtungsfähige OSM-Links, örtliche Quellen und durchgehende Parallelfahrbahnen. Es werden keine geometrisch nur benachbarten Straßen verbunden. Die lokalen OSM-Bestandsdaten sind weiterhin kein flächendeckend auditierter Deutschland-Datensatz.
