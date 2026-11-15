@@ -67,8 +67,8 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   });
   await window.startLegacyCanvas();
   while(frames.length)frames.shift()();
-  assert.equal(element("chip-roads").textContent,"1.929 Fahrwege");
-  assert.equal(element("chip-ramps").textContent,"943 Rampen");
+  assert.equal(element("chip-roads").textContent,"1.931 Fahrwege");
+  assert.equal(element("chip-ramps").textContent,"945 Rampen");
   assert.match(element("map-status").textContent,/Modell 0 min/);
   assert.deepEqual([element("create-canvas").width,element("create-canvas").height],[780,1360]);
   assert.ok(draw.lines>10000,"Real road geometry must draw even when map tiles fail");

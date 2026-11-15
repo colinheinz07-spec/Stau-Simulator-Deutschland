@@ -34,7 +34,12 @@ function prepareGeometry(data){
       minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);
       if(i){meters+=distance(row[4][i-1],row[4][i]);cumulative.push(meters);}
     }
-    return {id:row[0],kind:row[1],ref:row[2],lanes:row[3],
+    const normals=row[8]==="two-way"?path.map((p,i)=>{
+      const a=path[Math.max(0,i-1)],b=path[Math.min(path.length-1,i+1)];
+      const dx=b[0]-a[0],dy=b[1]-a[1],length=Math.hypot(dx,dy)||1;
+      return [-dy/length,dx/length];
+    }):null;
+    return {id:row[0],kind:row[1],ref:row[2],lanes:row[3],normals,
       points:path,bbox:[minX,minY,maxX,maxY],meters,cumulative,
       name:row[5],osm:row[6],shoulderTag:row[7]||null};
   });
@@ -129,16 +134,22 @@ async function startLegacyCanvas(existingMap=null){
     return [(world[0]-center[0])*scale+width/2,
       (world[1]-center[1])*scale+height/2];
   }
+  // Both directions of a physically two-way ramp use their own thin
+  // parallel strokes; a red-white exit must not paint an open entry red.
+  function roadWorld(road,i,scale=2**zoom){
+    const p=road.points[i],n=road.normals?.[i];
+    return n?[p[0]+3*n[0]/scale,p[1]+3*n[1]/scale]:p;
+  }
   function pointAlong(road,metres){
     const at=clamp(metres,0,road.meters);
     for(let i=1;i<road.points.length;i++){
       if(road.cumulative[i]<at)continue;
       const start=road.cumulative[i-1],length=road.cumulative[i]-start;
       const t=length>0?(at-start)/length:0;
-      const a=road.points[i-1],b=road.points[i];
+      const a=roadWorld(road,i-1),b=roadWorld(road,i);
       return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
     }
-    return road.points.at(-1);
+    return roadWorld(road,road.points.length-1);
   }
   function zoomAt(x,y,step){
     const oldScale=2**zoom;
@@ -199,8 +210,9 @@ async function startLegacyCanvas(existingMap=null){
   function appendRoad(s,scale){
     const points=s.points;
     for(let i=0;i<points.length;i++){
-      const x=(points[i][0]-center[0])*scale+width/2;
-      const y=(points[i][1]-center[1])*scale+height/2;
+      const p=roadWorld(s,i,scale);
+      const x=(p[0]-center[0])*scale+width/2;
+      const y=(p[1]-center[1])*scale+height/2;
       if(i===0)context.moveTo(x,y);else context.lineTo(x,y);
     }
   }
@@ -218,7 +230,7 @@ async function startLegacyCanvas(existingMap=null){
       if(b<=left||a>=right||b-a<.00001)continue;
       const t0=clamp((left-a)/(b-a),0,1),t1=clamp((right-a)/(b-a),0,1);
       if(t1<=t0)continue;
-      const p=road.points[i-1],q=road.points[i];
+      const p=roadWorld(road,i-1,scale),q=roadWorld(road,i,scale);
       const xy=t=>[(p[0]+(q[0]-p[0])*t-center[0])*scale+width/2,
         (p[1]+(q[1]-p[1])*t-center[1])*scale+height/2];
       if(!started){const start=xy(t0);context.moveTo(start[0],start[1]);started=true;}
@@ -588,7 +600,7 @@ async function startLegacyCanvas(existingMap=null){
       if(!inView(s,scale))continue;
       let prev=null;
       for(let i=0;i<s.points.length;i++){
-        const p=s.points[i];
+        const p=roadWorld(s,i,scale);
         const px=(p[0]-center[0])*scale+width/2;
         const py=(p[1]-center[1])*scale+height/2;
         if(prev){
