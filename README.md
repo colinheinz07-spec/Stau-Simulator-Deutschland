@@ -160,3 +160,10 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Automatisierte Regressionen für AD Dernbach → Ransbach-Baumbach, Ransbach-Baumbach → Dierdorf, A3 Dierdorf → Neuwied, AD Köln-Heumar, AK Köln-Gremberg, AK Bonn/Siegburg, verästelte Kreuzungsrampen und Abschnittslängen von 2 m bis 14 km sowie lange Umleitungswege. Unvollständige Knoten im echten OSM-Netz lösen einen sichtbaren Fehler aus, keine erfundene Teilsperrung.
 
 **Wichtige Grenze:** Die Regeln sind für beliebige gerichtete Autobahnnetze konzipiert; die vorhandene offline SPCK-Karte enthält aber noch nicht das komplette deutsche Autobahnnetz und ersetzt keine getesteten, realen Abbiegeverbots-/OD-Routingdaten. Das bundesweite Verhalten ist daher noch nicht flächendeckend bestätigt. Bei aktiven Alt-Ereignissen vor einem Vergleich bitte unter „Ereignisse und Simulation zurücksetzen“ aufräumen, damit keine mehreren gespeicherten Vollsperrungen miteinander verwechselt werden.
+
+## SPCK 0.9.7 – vollständige Zubringer und Rampenketten
+
+- Eine Autobahn, die direkt in eine gesperrte Fahrbahn mündet, wird ab ihrem letzten legalen Abzweig ebenfalls gesperrt. Beispiel: A3 Heumar → Köln-Ost sperrt die A59 Richtung Heumar ab dem realen Abzweig A559 am AD Porz (ca. 3 km); die A559 und die A59 Richtung Bonn bleiben befahrbar.
+- Kleine Rampenteilstücke werden in beiden Richtungen entlang echter OSM-Verbindungen verfolgt. Gemeinsame Rampenabschnitte bleiben ab dem nächsten offenen Zulauf befahrbar. Direkte Autobahn-zu-Autobahn-Abzweige zählen ebenso wie Rampen als legale Ausweichmöglichkeit.
+- Sperrmarkierung, Zugangssperre und Abfluss beruhen auf denselben gerichteten Intervallen. Bereits innerhalb der Sperrung vorhandene Fahrzeuge können abfließen; neue Fahrzeuge dürfen nicht nachrücken. Die abgeleiteten Sperrungen werden beim Aufheben oder Ablauf des Ereignisses zurückgenommen.
+- Die Regeln gelten ohne Sonderfall für Köln; die Tests enthalten reale Kreuzungen und künstliche fragmentierte Zubringer mit gemeinsamen Ausfahrten.
