@@ -241,6 +241,14 @@ function createOfflineEventEditor(options){
       status.className="planned-state";
       status.textContent={active:"Aktiv",planned:"Geplant",between:"Derzeit außerhalb Zeitfenster",
         finished:"Abgeschlossen",inactive:"Inaktiv"}[scenario.eventStatus(ev.id)]||"Unbekannt";
+      if(ev.kind==="closure"&&scenario.eventStatus(ev.id)==="active"&&scenario.detourDestinations){
+        const destinations=scenario.detourDestinations(ev.id);
+        const detour=document.createElement("small");
+        detour.textContent=destinations.length?
+          "Wiedereinfahrt (Modell): "+destinations.join(" / "):
+          "Keine lokale Wiedereinfahrt im vorhandenen Netz nachgewiesen.";
+        box.append(name,info,detour);
+      }else box.append(name,info);
       const buttons=document.createElement("div");buttons.className="event-list-actions";
       const edit=document.createElement("button"),del=document.createElement("button");
       edit.type=del.type="button";edit.textContent="Bearbeiten";del.textContent="Entfernen";
@@ -251,7 +259,7 @@ function createOfflineEventEditor(options){
       del.addEventListener("click",()=>{
         scenario.removeEvent(ev.id);persist();renderList();redraw();
       });
-      buttons.append(edit,del);box.append(name,info,status,buttons);list.append(box);
+      buttons.append(edit,del);box.append(status,buttons);list.append(box);
     }
   }
   function save(ev){

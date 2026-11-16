@@ -301,6 +301,37 @@ test("a closed ramp branch must not close its shared open approach or adjacent b
       "unselected accessible road must remain open: "+id);
 });
 
+test("two explicitly closed transfer ramps close their common trunk and route to real entries in both directions",async()=>{
+  const sim=(await engine())({roads:[
+    ["approach","mainline","A4",3,[[50,7],[50,7.02],[50,7.05]],"",1],
+    ["exit","ramp","A4",1,[[50,7.02],[50.004,7.02]],"AS Vorne · Abfahrt",2],
+    ["branch-a","ramp","A3",1,[[50,7.05],[50.01,7.06]],"AD Test · Überleitung",3],
+    ["branch-b","ramp","A59",1,[[50,7.05],[49.99,7.06]],"AD Test · Überleitung",4],
+    ["a","mainline","A3",3,[[50.01,7.06],[50.01,7.07],[50.01,7.08],[50.01,7.11]],"",5],
+    ["b","mainline","A59",2,[[49.99,7.06],[49.99,7.08],[49.99,7.11]],"",6],
+    ["fake","ramp","A3",1,[[50.014,7.07],[50.01,7.07]],"AD Test · Auffahrt auf A3",7],
+    ["real-a","ramp","A3",1,[[50.014,7.08],[50.01,7.08]],"AS Danach · Auffahrt auf A3",8],
+    ["real-b","ramp","A59",1,[[49.986,7.08],[49.99,7.08]],"AS Danach · Auffahrt auf A59",9]
+  ]});
+  const close=(id,edgeId)=>sim.setEvent({id,edgeId,kind:"closure",closedLanes:[0],
+    offsetM:10,lengthM:100,speedKmh:0,shoulder:"normal",hasShoulder:false});
+  close("a-closed","branch-a");
+  assert.equal(sim.closureBands("approach").length,0);
+  close("b-closed","branch-b");
+  assert.ok(sim.closureBands("approach").some(s=>Math.abs(s.fromM-1429.5)<2),
+    "the common carriageway must close precisely after its last local exit");
+  assert.equal(sim.closureBands("exit").length,0);
+  assert.ok(!sim.sourceIds().includes("fake"),"an AD transfer is not an external traffic source");
+  sim.advance(1);
+  const plan=sim.detourPlans().find(p=>p.terminalEdgeId==="exit");
+  assert.ok(plan,"explicit ramp closures must generate detours too");
+  assert.deepEqual(Array.from(plan.reentries,e=>e.edgeId).sort(),["real-a","real-b"]);
+  assert.ok(Math.abs(plan.reentries.reduce((s,e)=>s+e.weight,0)-1)<1e-9);
+  sim.removeEvent("b-closed");
+  assert.equal(sim.closureBands("approach").length,0);
+  conservation(sim.totals());
+});
+
 test("AS-to-AS closure uses physical off-ramp fork to downstream on-ramp merge; never blocks the reentry",async()=>{
   const scenario=(await engine())({roads:[
     ["main","mainline","A7",3,[[50,7],[50,7.01],[50,7.014],[50,7.016],
@@ -737,7 +768,7 @@ test("real Montabaur full closure identifies real upstream ramp and downstream m
   conservation(sim.totals());
 });
 
-test("real A3 Heumar to Köln-Ost closure offers a genuine A59 upstream off-ramp and A3 reentry",async()=>{
+test("real A3 Heumar to Köln-Ost closure does not invent a local entrance at the motorway cross",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
     runInNewContext(await readFile(path,"utf8"),{window:w});
@@ -750,14 +781,38 @@ test("real A3 Heumar to Köln-Ost closure offers a genuine A59 upstream off-ramp
   assert.match(event.closureTo,/A3 27 AK Köln-Ost/);
   sim.advance(1);
   const plans=sim.detourPlans();
-  assert.ok(plans.some(x=>x.closureId==="koeln-heumar"&&
-    x.terminalEdgeId.startsWith("extra-heumar-")&&
-    x.reentryEdgeId.startsWith("extra-heumar-")),
-    "must identify real A59 off-ramp and after-closure A3 entrance; actual "+
-    JSON.stringify(plans.slice(0,10))+"; A3 ramp sources="+
-    JSON.stringify(sim.sourceProfiles().filter(x=>x.kind==="ramp"&&
-      (x.ref==="A3"||x.ref==="A59")).map(x=>({id:x.id,name:x.name,direction:x.direction})).slice(0,28))+
-    "; A59 lookahead "+sim.closureDistanceAhead("extra-a59-koeln",16000,16000));
+  const byId=new Map(w.STAU_LEGACY_GEOMETRY.roads.map(r=>[r[0],r]));
+  for(const p of plans.filter(x=>x.closureId==="koeln-heumar"))
+    for(const entry of p.reentries)
+      assert.doesNotMatch(byId.get(entry.edgeId)[5].split(" · ")[0],/\b(?:AK|AD)\b/);
+  assert.ok(!plans.some(p=>p.reentryEdgeId==="extra-heumar-208913377"),
+    "the Köln-Ost transfer is not a proven local-road entrance in this extract");
+  conservation(sim.totals());
+});
+
+test("simultaneous Heumar north/south closures seal A4 from Gremberg and only use real local entries",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  const close=(id,edgeId,offsetM)=>sim.setEvent({id,edgeId,offsetM,kind:"closure",
+    closedLanes:[0,1,2],lengthM:200,speedKmh:0,shoulder:"normal",hasShoulder:false});
+  close("north","A3-132614491",20);
+  const gate=()=>Math.min(...sim.closureBands("extra-a4-olpe").map(x=>x.fromM));
+  const single=gate();
+  close("south","A3-318531283",150);
+  assert.ok(Math.abs(gate()-15626.576)<1,"last remaining exit is at Gremberg");
+  assert.ok(single-gate()>1700,"two closures must extend the A4 gate upstream");
+  assert.equal(sim.closureBands("extra-a4-aachen").length,0,"opposite direction remains open");
+  sim.advance(1);
+  const plans=sim.detourPlans();
+  assert.ok(plans.some(p=>p.reentryEdgeId==="extra-heumar-29242778"),
+    "A3 Frankfurt reentry at genuine AS Königsforst");
+  const byId=new Map(w.STAU_LEGACY_GEOMETRY.roads.map(r=>[r[0],r]));
+  for(const plan of plans)for(const entry of plan.reentries)
+    assert.doesNotMatch(byId.get(entry.edgeId)[5].split(" · ")[0],/\b(?:AK|AD)\b/);
+  sim.removeEvent("south");
+  assert.equal(gate(),single,"removing one event restores its independent open branch");
   conservation(sim.totals());
 });
 
