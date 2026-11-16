@@ -57,3 +57,5 @@
 .map-legend-strip{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:7px 12px;padding:9px 12px;border:1px solid #304d63;border-radius:10px;background:#10273a;color:#c9ddea;font-size:11px}.map-legend-strip span{display:flex;align-items:center;gap:5px;white-space:nowrap}.map-legend-strip .legend-swatch,.map-legend-strip .legend-stripes{width:16px}.planned-state[data-status="active"]{color:#7ce0ad}.planned-state[data-status="planned"]{color:#e7c18d}.planned-state[data-status="finished"],.planned-state[data-status="inactive"]{color:#a3b8c5}
 
 .map-status{max-height:44px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+.jam-card-delay.is-unknown{font-size:12px;max-width:92px;white-space:normal;text-align:right;line-height:1.25;color:#b2d0dd}

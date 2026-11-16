@@ -14,8 +14,8 @@
     "extra-a555-koeln":"Köln","extra-a555-bonn":"Bonn"
   };
   function describeJam(group,road={}){
-    const speed=Number(group.worstKmh),known=Number.isFinite(speed);
-    const severity=!known?"jam":speed<=10?"standstill":speed<=30?"jam":"slow";
+    const worst=Number(group.worstKmh),speed=Number(group.meanKmh??group.worstKmh),known=Number.isFinite(speed);
+    const severity=!known?"jam":worst<=10?"standstill":worst<=30?"jam":"slow";
     const states={slow:["Stockender Verkehr","#efae47"],jam:["Stau / Stop-and-Go","#e34f56"],standstill:["Stillstand / Kriechverkehr","#a85169"]};
     const [state,color]=states[severity];
     const destination=directionNames[road.direction];
@@ -24,14 +24,14 @@
     const delay=Number.isFinite(group.delayMin)?Math.max(1,Math.round(group.delayMin)):null;
     return {title,location:road.location||road.name||(road.kind==="ramp"?"Auf-/Abfahrt oder Überleitung":"Autobahnabschnitt"),
       ref:road.ref||"Autobahn",severity,state,color,length:km+" km",
-      delay:delay===null?"–":"+"+delay+" min",speed:known?Math.round(speed)+" km/h":"–"};
+      delay:delay===null?"Nicht berechenbar":"+"+delay+" min",shortDelay:delay===null?"Zeit offen":"+"+delay+" min",speed:known?Math.round(speed)+" km/h":"–"};
   }
   function renderJams(groups,roadFor,focus){
     const list=$("jam-list"),count=$("jam-count");
     if(!list||!count)return;
     const sorted=[...groups].sort((a,b)=>b.delayMin-a.delayMin);
     count.textContent=String(sorted.length);
-    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),Math.round(g.lengthM/100),Math.round(g.delayMin),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2]));
+    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2]));
     if(list.dataset.signature===key)return;
     list.dataset.signature=key;
     list.replaceChildren();
@@ -48,9 +48,9 @@
       card.setAttribute("aria-label",view.title+", "+view.location+", "+view.length+", "+view.delay+", auf Karte anzeigen");
       const header=el("div","jam-card-header"),heading=el("div","jam-card-heading");
       heading.append(el("strong","",view.title),el("span","",view.location));
-      header.append(el("span","jam-card-icon","▰"),heading,el("strong","jam-card-delay",view.delay));
+      header.append(el("span","jam-card-icon","▰"),heading,el("strong","jam-card-delay"+(g.delayMin===null?" is-unknown":""),view.delay));
       const metrics=el("div","jam-card-metrics");
-      metrics.append(el("span","jam-card-state",view.state),el("span","",view.length),el("span","","Langsamste Stelle: "+view.speed));
+      metrics.append(el("span","jam-card-state",view.state),el("span","",view.length),el("span","","Ø Geschwindigkeit: "+view.speed));
       card.append(header,metrics);
       card.addEventListener("click",()=>focus(g.edgeId,g.offsetM));
       list.append(card);

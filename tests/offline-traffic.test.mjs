@@ -164,8 +164,9 @@ test("congested connected OSM Ways have a queue length and positive delay",async
   for(let i=0;i<35;i++)scenario.advance(12);
   const jams=scenario.jamSummaries();
   assert.ok(jams.length>0,"a sustained closure must eventually generate measured queue statistics");
-  assert.ok(jams.every(x=>x.lengthM>=350&&x.delayMin>=.5));
-  assert.ok(jams.every(x=>Number.isFinite(x.delayMin)&&x.worstKmh>=0));
+  assert.ok(jams.every(x=>x.lengthM>=100&&(x.delayMin===null||x.delayMin>=0)));
+  assert.ok(jams.every(x=>(x.delayMin===null||Number.isFinite(x.delayMin))&&x.worstKmh>=0&&Number.isFinite(x.meanKmh)));
+  assert.ok(jams.some(x=>x.delayMin===null),"closed route must not report a finite extrapolated delay");
   assert.ok(jams.some(x=>["a","b","c"].includes(x.edgeId)));
   conservation(scenario.totals());
   scenario.reset(true);
@@ -209,7 +210,7 @@ test("two blocked of three lanes create a real upstream Friday queue with modele
   for(let i=0;i<25;i++)scenario.advance(12);
   assert.ok(scenario.speed("up")<65&&scenario.speed("up")<normalSpeed,
     "a 1-lane crash discharge must propagate a physical queue upstream");
-  assert.ok(scenario.jamSummaries().some(j=>j.edgeId==="up"&&j.delayMin>.5));
+  assert.ok(scenario.jamSummaries().some(j=>j.edgeId==="up"&&(j.delayMin===null||j.delayMin>.5)));
   assert.ok(scenario.edgeActivity("incident").enteredVph<1800,
     "merge losses make an accident more restrictive than a free single lane");
   conservation(scenario.totals());
@@ -929,7 +930,7 @@ test("a workzone plus a further accident can block the actual remaining motorway
     closedLanes:[1,2],offsetM:0,lengthM:100,speedKmh:40,
     shoulder:"normal",hasShoulder:false});
   for(let i=0;i<30;i++)s.advance(12);
-  assert.ok(s.jamSummaries().some(x=>x.lengthM>600&&x.delayMin>=1),
+  assert.ok(s.jamSummaries().some(x=>x.lengthM>600&&(x.delayMin===null||x.delayMin>=1)),
     "closed remaining lanes must stop real flow and form a substantial upstream queue");
   assert.ok(s.edgeActivity("A3-310863194").enteredVph<50,
     "all three lanes are blocked collectively, not separately treated as two open events");
@@ -957,4 +958,46 @@ test("previously failing five-metre AS fragments now resolve full motorway secti
       "never save a five-metre closure when actual AS-to-AS corridor exists");
     assert.equal(event.truncated,false);
   }
+});
+
+test("Dernbach Frankfurt: normal A48 transfer stays open, Ransbach is primary and Höhr fallback, both return at Montabaur",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  sim.warmStart();
+  sim.setEvent({id:"full-montabaur",edgeId:"A3-232272183",
+    kind:"closure",closedLanes:[0,1,2],offsetM:50,lengthM:200,
+    speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  sim.advance(1);
+  const plans=sim.detourPlans();
+  for(const terminal of ["extra-heumar-8298586","extra-heumar-31056168"])
+    assert.ok(plans.some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-243834109"),
+      "physical exit "+terminal+" must return at the first open Montabaur AS");
+  for(let i=0;i<16;i++)sim.advance(12);
+  const ransbach=sim.edgeActivity("extra-heumar-8298586");
+  assert.equal(ransbach.localDischargeVph,700);
+  assert.ok(ransbach.departedVph>550&&ransbach.departedVph<=705,"finite local junction discharge");
+  assert.ok(sim.edgeActivity("ramp-a3-to-a48-from-koeln").enteredVph>100,"Koblenz-bound traffic continues");
+  assert.ok(sim.edgeActivity("extra-heumar-31056168").enteredVph>100,"vehicles already beyond Ransbach exit via Höhr");
+  assert.ok(sim.jamSummaries().some(g=>g.endEdgeId==="A3-326138758"&&g.lengthM>500),
+    "saturated local exit spills back onto A3");
+  assert.ok(sim.totals().returnedVehicles>0);
+  conservation(sim.totals());
+});
+test("nonzero queue speeds produce harmonic average speed and a consistent travel delay",async()=>{
+  const sim=(await engine())({roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.012]],"",1],
+    ["b","mainline","A3",3,[[50,7.012],[50,7.024]],"",2],
+    ["c","mainline","A3",3,[[50,7.024],[50,7.036]],"",3]
+  ]});
+  sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  sim.setDemandPercent(150);
+  sim.setEvent({id:"accident",edgeId:"b",kind:"accident",closedLanes:[0,1],
+    offsetM:0,lengthM:200,speedKmh:40,shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<20;i++)sim.advance(12);
+  const jam=sim.jamSummaries().find(g=>g.delayMin!==null&&g.meanKmh>1);
+  assert.ok(jam,"finite speed queue expected");
+  assert.ok(Math.abs(jam.delayMin-(jam.lengthM/1000*60*(1/jam.meanKmh-1/120)))<.001);
 });

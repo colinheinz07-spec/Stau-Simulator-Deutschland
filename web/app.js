@@ -73,8 +73,8 @@ function styling(edge){
   const zoom=map.getZoom(),ramp=edge.kind==="ramp";
   const base=Math.max(.85,Math.min(1.3,1+(zoom-12)*.06));
   return {
-    casing:(ramp?5.6:8)*base,
-    line:(ramp?3.5:5.3)*base,
+    casing:(ramp?4.3:6)*base,
+    line:(ramp?2.6:4)*base,
     hit:(ramp?14:17)
   };
 }
@@ -157,12 +157,14 @@ function drawJamCallouts(rendered,byId,showMap=true){
       const metres=band.toM-band.fromM;
       const delay=Math.max(0,(metres/1000)*60*
         (1/Math.max(5,band.speedKmh)-1/edge.freeSpeedKmh));
+      const travelMin=band.speedKmh>1?metres/1000*60/band.speedKmh:Infinity;
+      const freeMin=metres/1000*60/edge.freeSpeedKmh;
       const last=row.at(-1);
       if(last&&Math.abs(last.toM-band.fromM)<.1){
-        last.toM=band.toM;last.lengthM+=metres;last.delayMin+=delay;last.worstKmh=Math.min(last.worstKmh,band.speedKmh);
+        last.toM=band.toM;last.lengthM+=metres;last.delayMin+=delay;last.travelMin+=travelMin;last.freeMin+=freeMin;last.worstKmh=Math.min(last.worstKmh,band.speedKmh);
       }else{
         const part={index:pieces.length,edgeId:edge.id,
-          fromM:band.fromM,toM:band.toM,lengthM:metres,delayMin:delay,worstKmh:band.speedKmh};
+          fromM:band.fromM,toM:band.toM,lengthM:metres,delayMin:delay,travelMin,freeMin,worstKmh:band.speedKmh};
         pieces.push(part);row.push(part);
       }
     }
@@ -203,14 +205,16 @@ function drawJamCallouts(rendered,byId,showMap=true){
   const groups=new Map();
   for(const part of pieces){
     const id=root(part.index);
-    const g=groups.get(id)??{lengthM:0,delayMin:0,worstKmh:Infinity,longestM:0,anchor:null};
-    g.lengthM+=part.lengthM;g.delayMin+=part.delayMin;g.worstKmh=Math.min(g.worstKmh,part.worstKmh);
+    const g=groups.get(id)??{lengthM:0,delayMin:0,travelMin:0,freeMin:0,worstKmh:Infinity,longestM:0,anchor:null};
+    g.lengthM+=part.lengthM;g.delayMin+=part.delayMin;g.travelMin+=part.travelMin;g.freeMin+=part.freeMin;g.worstKmh=Math.min(g.worstKmh,part.worstKmh);
     if(part.lengthM>g.longestM){g.longestM=part.lengthM;g.anchor=part;}
     groups.set(id,g);
   }
   const qualified=[...groups.values()].filter(g=>g.lengthM>=400&&g.delayMin>=.5&&g.anchor)
     .sort((a,b)=>b.delayMin-a.delayMin).map(g=>({...g,edgeId:g.anchor.edgeId,
-      offsetM:(g.anchor.fromM+g.anchor.toM)/2}));
+      offsetM:(g.anchor.fromM+g.anchor.toM)/2,
+      meanKmh:Number.isFinite(g.travelMin)&&g.travelMin>0?g.lengthM/1000*60/g.travelMin:0,
+      delayMin:Number.isFinite(g.travelMin)&&g.travelMin-g.freeMin<=240?Math.max(0,g.travelMin-g.freeMin):null}));
   const roadInfo=id=>{
     const edge=byId.get(id);if(!edge)return {};
     return {ref:edge.motorwayRef,kind:edge.kind,name:edge.name,
@@ -242,7 +246,7 @@ function drawJamCallouts(rendered,byId,showMap=true){
       (view?.severity==="slow"?"Stockend":view?.severity==="standstill"?"Stillstand":"Stau");
     const metrics=document.createElement("span");
     metrics.textContent=(view?.length||((g.lengthM/1000).toFixed(1)+" km"))+" · "+
-      (view?.delay||("+"+Math.max(1,Math.round(g.delayMin))+" min"));
+      (view?.shortDelay||(Number.isFinite(g.delayMin)?"+"+Math.max(1,Math.round(g.delayMin))+" min":"Zeit offen"));
     label.append(title,metrics);
     L.marker(position,{icon:L.divIcon({className:"map-jam-pin",html:label,iconSize:[0,0]})})
       .addTo(incidentLayer);

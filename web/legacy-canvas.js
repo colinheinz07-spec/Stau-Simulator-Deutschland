@@ -276,7 +276,7 @@ async function startLegacyCanvas(existingMap=null){
     if(phase==="base"){
       context.beginPath();
       for(const road of view)appendRoad(road,scale);
-      context.lineWidth=line+2;
+      context.lineWidth=line+1.5;
       context.strokeStyle="#132c3a";context.stroke();
       context.lineWidth=line;
       context.strokeStyle=trafficColors.free;context.stroke();
@@ -325,7 +325,7 @@ async function startLegacyCanvas(existingMap=null){
       // red carriageway all the way back to the first blocked ramp vertex.
       // The old alternation drew only red/white dashes over green gaps,
       // visually suggesting the first half of a connector was still open.
-      const closureWidth=Math.max(line+2,3.5);
+      const closureWidth=Math.max(line+1.4,2.8);
       context.lineWidth=closureWidth;
       context.strokeStyle="#d52b3e";context.stroke();
       if(typeof context.setLineDash==="function"){
@@ -369,9 +369,9 @@ async function startLegacyCanvas(existingMap=null){
       const info=window.StauDashboard?.describeJam(group,jamRoadInfo(group.edgeId))??{
         ref:road.ref||"Autobahn",state:"Stau",color:"#e34f56",
         length:(group.lengthM/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1})+" km",
-        delay:"+"+Math.max(1,Math.round(group.delayMin))+" min"};
+        delay:Number.isFinite(group.delayMin)?"+"+Math.max(1,Math.round(group.delayMin))+" min":"Zeit offen"};
       const title=info.ref+" · "+(info.severity==="slow"?"Stockend":info.severity==="standstill"?"Stillstand":"Stau");
-      const metrics=info.length+"  ·  "+info.delay;
+      const metrics=info.length+"  ·  "+(info.shortDelay??info.delay);
       context.font="700 12px system-ui,Arial,sans-serif";
       const w=Math.min(width-18,Math.max(114,context.measureText(metrics).width+19,
         context.measureText(title).width+19)),h=41;
@@ -541,10 +541,10 @@ async function startLegacyCanvas(existingMap=null){
       context.lineJoin="round";context.lineCap="round";
       const layers=[{roads:mainlines,
         visible:mainlines.filter(road=>inView(road,scale)),
-        line:clamp(3.5+(zoom-10)*.65,2.2,7)}];
+        line:clamp(2.7+(zoom-10)*.47,1.7,5.2)}];
       if(zoom>=7.6)layers.push({roads:ramps,
         visible:ramps.filter(road=>inView(road,scale)),
-        line:clamp(1.5+(zoom-10)*.25,1,3.8)});
+        line:clamp(1.15+(zoom-10)*.20,.8,2.9)});
       // Two cheap batched background strokes per layer, followed by real
       // queue overlays and closures; never hide red beneath later green.
       for(const phase of ["base","speeds","closed"])
