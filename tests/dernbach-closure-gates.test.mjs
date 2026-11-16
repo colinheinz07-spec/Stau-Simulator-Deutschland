@@ -99,9 +99,16 @@ test("full closure: through traffic continues past earlier off-ramps to LAST law
   for(let i=0;i<40;i++)model.advance(12);
   const firstFlow=model.edgeActivity("early").enteredVph;
   const lastFlow=model.edgeActivity("last").enteredVph;
-  assert.ok(lastFlow>firstFlow*3,
-    "farther-away exit must not absorb the forced diversion if a later exit "+
-      "exists; earlier="+firstFlow+" vph, last="+lastFlow+" vph");
+  // Finite local-road capacity now limits the mandatory exit to ~700 vph;
+  // compare tagged diversion assignments, not an impossible 3x flow ratio.
+  assert.ok(lastFlow>firstFlow,
+    "the later exit carries more traffic than the ordinary upstream exit");
+  assert.equal(model.edgeActivity("early").divertedVehiclesOnEdge,0,
+    "earlier exit only carries its normal destinations");
+  assert.ok(model.edgeActivity("last").departedVph>650&&model.edgeActivity("last").departedVph<=705,
+    "the mandatory exit is saturated at the new finite local-road capacity");
+  assert.ok(model.edgeActivity("closed").enteredVph<1,
+    "no vehicles continue into the closed section");
   assert.ok(lastFlow>300,"last open exit carries the diverted vehicles");
   assert.ok(Math.abs(model.totals().conservationResidual)<1e-6);
 });

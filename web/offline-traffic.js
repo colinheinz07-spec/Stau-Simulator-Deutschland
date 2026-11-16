@@ -1193,7 +1193,14 @@ function createLegacyTrafficScenario(data){
         g.offsetM=(piece.fromM+piece.toM)/2;
       }
     }
-    return [...groups.values()].filter(g=>g.lengthM>=(byId.get(g.edgeId)?.kind==="ramp"?100:350)&&g.delayMin>=.5)
+    return [...groups.values()].filter(g=>g.delayMin>=.5&&(g.lengthM>=350||
+      // Very short queues deserve a label only if the ramp is actually
+      // handling substantial traffic. Tiny isolated OSM ramp fragments
+      // with negligible flow must not become phantom congestion alerts.
+      g.lengthM>=100&&byId.get(g.edgeId)?.kind==="ramp"&&g.segments.some(p=>{
+        const edge=byId.get(p.edgeId);
+        return Math.max(edge.enteredVph,edge.departedVph)>=300;
+      })))
       .sort((a,b)=>b.delayMin-a.delayMin)
       .map(g=>{
         // The queue label sits at its longest cell; the downstream HEAD of
@@ -2332,6 +2339,7 @@ function createLegacyTrafficScenario(data){
     const count=edge.stock.reduce((sum,x)=>sum+x,0);
     const at=Math.max(0,Math.min(edge.n-1,Math.floor((Number(offsetM)||0)/edge.cellLength)));
     return {reachable:reachable.has(id),vehicles:count,
+      divertedVehiclesOnEdge:edge.divertStock.reduce((sum,x)=>sum+x,0),
       sectionVph:edge.cellThroughVph[at],boundaryExit:boundaryExit[edge.index],
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
       capacityVph:edge.lanes*edge.capacityPerLane,
