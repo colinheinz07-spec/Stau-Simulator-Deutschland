@@ -8,6 +8,7 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   const renderer=await readFile("web/legacy-canvas.js","utf8");
   const scheduleModule=await readFile("web/event-schedule.js","utf8");
   const flow=await readFile("web/offline-traffic.js","utf8");
+  const dashboard=await readFile("web/mobile-controls.js","utf8");
   const profile=await readFile("web/traffic-reference.js","utf8");
   const frames=[],listeners=new Map(),elements=new Map();
   const window={devicePixelRatio:2,addEventListener(){}};
@@ -26,7 +27,7 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
     if(!elements.has(id)){
       const classes=new Set();
       elements.set(id,{
-        id,checked:true,hidden:false,textContent:"",dataset:{},
+        id,checked:true,hidden:false,textContent:"",dataset:{},style:{setProperty(){}},children:[],
         classList:{
           add(name){classes.add(name)},
           remove(name){classes.delete(name)},
@@ -34,7 +35,7 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
           toggle(name,present){if(present===undefined)present=!classes.has(name);
             if(present)classes.add(name);else classes.delete(name)}
         },
-        append(){},replaceChildren(){},setAttribute(){},setPointerCapture(){},
+        append(...items){this.children.push(...items)},replaceChildren(){this.children=[]},setAttribute(){},setPointerCapture(){},
         addEventListener(name,callback){listeners.set(id+":"+name,callback)},
         querySelector(){return element("child-"+id)},
         getBoundingClientRect(){return {left:0,top:0,width:390,height:680}}
@@ -65,11 +66,14 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
     window,document,Image:ImageWithoutNetwork,ResizeObserver:ResizeObserverStub,
     requestAnimationFrame:schedule,setTimeout(){},setInterval(){return 1},clearInterval(){},console,
   });
+  runInNewContext(dashboard,{window,document});
   await window.startLegacyCanvas();
   while(frames.length)frames.shift()();
   assert.equal(element("chip-roads").textContent,"1.931 Fahrwege");
   assert.equal(element("chip-ramps").textContent,"945 Rampen");
   assert.match(element("map-status").textContent,/Modell 0 min/);
+  assert.match(element("sim-local-time").textContent,/^\d{2}:\d{2}$/);
+  assert.equal(element("jam-count").textContent,"0");
   assert.deepEqual([element("create-canvas").width,element("create-canvas").height],[780,1360]);
   assert.ok(draw.lines>10000,"Real road geometry must draw even when map tiles fail");
   assert.ok(draw.strokes>=4&&draw.strokes<=6,
@@ -84,6 +88,7 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   assert.equal(element("sim-clock").textContent,"1:00");
   assert.ok(Number(element("sim-vehicles").textContent.replaceAll(".",""))>0);
   assert.match(element("sim-toggle").textContent,/anhalten/);
+  assert.equal(element("sim-run-state").textContent,"Läuft");
 
   // Tap a real A3 point and set a full closure through the actual mobile UI.
   // The closure has its own red-white overlay, not fake traffic-speed coloring.
