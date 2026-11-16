@@ -145,8 +145,7 @@ function drawIncidentPins(rendered,byId){
 }
 // An estimate from directed simulated edge speeds. No generic live-traffic
 // claim: every queue has to contain actual simulated slowdown samples.
-function drawJamCallouts(rendered,byId){
-  if(map.getZoom()<8.5)return;
+function drawJamCallouts(rendered,byId,showMap=true){
   const pieces=[],perEdge=new Map();
   for(const item of rendered){
     const edge=byId.get(item.edgeId);
@@ -160,16 +159,16 @@ function drawJamCallouts(rendered,byId){
         (1/Math.max(5,band.speedKmh)-1/edge.freeSpeedKmh));
       const last=row.at(-1);
       if(last&&Math.abs(last.toM-band.fromM)<.1){
-        last.toM=band.toM;last.lengthM+=metres;last.delayMin+=delay;
+        last.toM=band.toM;last.lengthM+=metres;last.delayMin+=delay;last.worstKmh=Math.min(last.worstKmh,band.speedKmh);
       }else{
         const part={index:pieces.length,edgeId:edge.id,
-          fromM:band.fromM,toM:band.toM,lengthM:metres,delayMin:delay};
+          fromM:band.fromM,toM:band.toM,lengthM:metres,delayMin:delay,worstKmh:band.speedKmh};
         pieces.push(part);row.push(part);
       }
     }
     if(row.length)perEdge.set(edge.id,row);
   }
-  if(!pieces.length)return;
+  if(!pieces.length){window.StauDashboard?.renderJams([],()=>({}),()=>{});return;}
   const roots=pieces.map((_,i)=>i);
   const root=i=>{while(roots[i]!==i){roots[i]=roots[roots[i]];i=roots[i];}return i;};
   const out=new Map(),incoming=new Map();
@@ -204,32 +203,49 @@ function drawJamCallouts(rendered,byId){
   const groups=new Map();
   for(const part of pieces){
     const id=root(part.index);
-    const g=groups.get(id)??{lengthM:0,delayMin:0,longestM:0,anchor:null};
-    g.lengthM+=part.lengthM;g.delayMin+=part.delayMin;
+    const g=groups.get(id)??{lengthM:0,delayMin:0,worstKmh:Infinity,longestM:0,anchor:null};
+    g.lengthM+=part.lengthM;g.delayMin+=part.delayMin;g.worstKmh=Math.min(g.worstKmh,part.worstKmh);
     if(part.lengthM>g.longestM){g.longestM=part.lengthM;g.anchor=part;}
     groups.set(id,g);
   }
+  const qualified=[...groups.values()].filter(g=>g.lengthM>=400&&g.delayMin>=.5&&g.anchor)
+    .sort((a,b)=>b.delayMin-a.delayMin).map(g=>({...g,edgeId:g.anchor.edgeId,
+      offsetM:(g.anchor.fromM+g.anchor.toM)/2}));
+  const roadInfo=id=>{
+    const edge=byId.get(id);if(!edge)return {};
+    return {ref:edge.motorwayRef,kind:edge.kind,name:edge.name,
+      direction:window.StauTrafficReference?.motorwayDirection(edge.motorwayRef,edge.geometry,edge.name||"")};
+  };
+  window.StauDashboard?.renderJams(qualified,roadInfo,(id,offset)=>{
+    const edge=byId.get(id);if(!edge)return;
+    map.setView(pointOnEdge(edge,offset),Math.max(11,map.getZoom()));
+    $("map").scrollIntoView?.({block:"center",behavior:"smooth"});
+  });
+  if(!showMap||map.getZoom()<8.5)return;
   const boxes=[];
-  for(const g of [...groups.values()].sort((a,b)=>b.delayMin-a.delayMin)){
+  for(const g of qualified){
     if(boxes.length>=4)break;
-    if(g.lengthM<400||g.delayMin<.5||!g.anchor)continue;
-    const edge=byId.get(g.anchor.edgeId);
-    if(!edge)continue;
-    const position=pointOnEdge(edge,(g.anchor.fromM+g.anchor.toM)/2);
+    const edge=byId.get(g.edgeId);if(!edge)continue;
+    const position=pointOnEdge(edge,g.offsetM);
     const pixel=map.latLngToContainerPoint(position);
-    const rect={x:pixel.x-78,y:pixel.y-45,w:156,h:30};
-    if(rect.x<6||rect.x+rect.w>map.getSize().x-6||rect.y<110||
-       rect.y+rect.h>map.getSize().y-45)continue;
+    const rect={x:pixel.x-69,y:pixel.y-54,w:138,h:44};
+    if(rect.x<6||rect.x+rect.w>map.getSize().x-6||rect.y<43||
+       rect.y+rect.h>map.getSize().y-65)continue;
     if(boxes.some(b=>rect.x<b.x+b.w+6&&rect.x+rect.w>b.x-6&&
       rect.y<b.y+b.h+6&&rect.y+rect.h>b.y-6))continue;
     boxes.push(rect);
-    const km=(g.lengthM/1000).toLocaleString("de-DE",{
-      minimumFractionDigits:1,maximumFractionDigits:1});
-    const extra=Math.max(1,Math.round(g.delayMin));
-    const html='<span class="map-jam-label">≈ '+km+' km · +'+extra+' min</span>';
-    L.marker(position,{
-      icon:L.divIcon({className:"map-jam-pin",html,iconSize:[0,0]})
-    }).addTo(incidentLayer);
+    const view=window.StauDashboard?.describeJam(g,roadInfo(g.edgeId));
+    const label=document.createElement("span");label.className="map-jam-label";
+    label.style.setProperty("--severity",view?.color||"#e34f56");
+    const title=document.createElement("strong");
+    title.textContent=(view?.ref||edge.motorwayRef||"Autobahn")+" · "+
+      (view?.severity==="slow"?"Stockend":view?.severity==="standstill"?"Stillstand":"Stau");
+    const metrics=document.createElement("span");
+    metrics.textContent=(view?.length||((g.lengthM/1000).toFixed(1)+" km"))+" · "+
+      (view?.delay||("+"+Math.max(1,Math.round(g.delayMin))+" min"));
+    label.append(title,metrics);
+    L.marker(position,{icon:L.divIcon({className:"map-jam-pin",html:label,iconSize:[0,0]})})
+      .addTo(incidentLayer);
   }
 }
 function drawNetwork(){
@@ -237,7 +253,7 @@ function drawNetwork(){
   closedLayer.clearLayers();
   junctionLayer.clearLayers();
   incidentLayer.clearLayers();
-  if(!state.visible||!state.network||map.getZoom()<7)return;
+  if(!state.network)return;
   // No fixed "red on incident" values: speeds are generated by cell occupancy.
   const samples=state.scenario?.speeds()??[];
   const events=state.scenario?.events()??[];
@@ -245,6 +261,7 @@ function drawNetwork(){
   const cells=state.scenario?.speedBands?.()??[];
   const rendered=motorwayMapEdges(state.network,samples,events,minute,[],cells);
   const byId=new Map(state.network.edges.map(e=>[e.id,e]));
+  if(!state.visible||map.getZoom()<7){drawJamCallouts(rendered,byId,false);return;}
   // Sort mainline below ramps: each OSM segment is rendered exactly once.
   rendered.sort((a,b)=>(a.kind==="ramp")-(b.kind==="ramp"));
   const slowOverlays=[],closureOverlays=[];
@@ -405,9 +422,13 @@ function updateSimStats(){
   $("sim-outside").textContent=Math.round(p.waitingOutsideSources).toLocaleString("de-DE");
   const calendar=window.StauEventSchedule;
   const time=state.scenario?.clockMs?.();
-  if(calendar&&Number.isFinite(time))
-    $("sim-model-date").textContent="Modell-Datum: "+
-      calendar.localDateTime(time).replace("T"," ")+" Uhr";
+  if(calendar&&Number.isFinite(time)){
+    const local=calendar.localDateTime(time);
+    if(window.StauDashboard)window.StauDashboard.setClock(local);
+    else $("sim-model-date").textContent="Modell-Datum: "+local.replace("T"," ")+" Uhr";
+  }
+  $("sim-detours").textContent=Math.round(p.vehiclesOnDetours||0).toLocaleString("de-DE");
+  window.StauDashboard?.setRunning(state.simRunning);
 }
 function stopSimulation(){
   if(state.simTimer!==null)clearInterval(state.simTimer);
@@ -415,6 +436,7 @@ function stopSimulation(){
   state.simRunning=false;
   $("sim-toggle").textContent="▶ Simulation starten";
   $("sim-toggle").classList.remove("running");
+  window.StauDashboard?.setRunning(false);
 }
 function runStep(){
   if(!state.scenario)return;
@@ -440,6 +462,7 @@ function startSimulation(){
   state.simRunning=true;
   $("sim-toggle").textContent="Ⅱ Simulation anhalten";
   $("sim-toggle").classList.add("running");
+  window.StauDashboard?.setRunning(true);
   state.simTimer=setInterval(runStep,1000);
   runStep();
 }

@@ -90,12 +90,29 @@ async function startLegacyCanvas(existingMap=null){
     "Zellfluss über echte OSM-Rampen. Umleitungen auf nicht dargestellten Ortsstraßen haben angenommene Fahrtzeiten; Wiederauffahrt nur an vorhandenen Rampen.";
   const demoNote=document.querySelector(".demo-box p");
   if(demoNote)demoNote.textContent=
-    "Autobahnabschnitt antippen und Unfall, Baustelle oder Vollsperrung setzen. Fahrzeuge stauen sich nur dort, wo die berechnete Kapazität nicht reicht.";
+    "Fahrbahn auf der Karte antippen – dann Baustelle, Unfall, Panne oder Vollsperrung anlegen.";
   const junctionToggle=$("toggle-junctions");
   const selection=$("detail-drawer");
   const backdrop=$("drawer-backdrop");
   const segments=prepareGeometry(data);
   const segmentById=new Map(segments.map(road=>[road.id,road]));
+  const roadRows=new Map(data.roads.map(row=>[row[0],row]));
+  function jamRoadInfo(id){
+    const row=roadRows.get(id);
+    if(!row)return {};
+    const ref=row[2],direction=window.StauTrafficReference?.referenceForRoad(row)?.key;
+    const p=row[4][Math.floor(row[4].length/2)];
+    const nearby=data.junctions.filter(j=>j[0]===ref)
+      .map(j=>({name:j[2],metres:distance(p,j[3])})).sort((a,b)=>a.metres-b.metres)[0];
+    return {ref,kind:row[1],direction,name:row[5],
+      location:row[5]||(nearby&&nearby.metres<14000?"bei "+nearby.name:"Autobahnabschnitt")};
+  }
+  function focusJam(id,offset){
+    const road=segmentById.get(id);if(!road)return;
+    center=pointAlong(road,offset);zoom=Math.max(zoom,11);
+    root.scrollIntoView?.({block:"center",behavior:"smooth"});
+    requestDraw();
+  }
   let eventTargets=[];
   let eventEditor=null;
   let timer=null,simRunning=false;
@@ -324,58 +341,59 @@ async function startLegacyCanvas(existingMap=null){
   // actual jam cell instead of piling unreadable boxes on motorway lines.
   function placeJamLabel(x,y,w,h,boxes){
     const obstacles=[
-      [0,0,width-65,110],
-      [width-78,0,78,155],
-      [0,height-70,width,70],
-      [width-81,height-190,81,190],
-      ...boxes
+      [0,0,Math.min(width,185),42],
+      [0,height-62,width,62],[width-66,height-130,66,130],
+      ...eventTargets.map(e=>[e.x-20,e.y-20,40,40]),...boxes
     ];
     const candidates=[
-      [x+17,y-h-22],[x-w-17,y-h-22],
-      [x+17,y+27],[x-w-17,y+27],
-      [x-w/2,y-h-45],[x-w/2,y+43]
+      [x+16,y-h-14],[x-w-16,y-h-14],
+      [x+16,y+19],[x-w-16,y+19],
+      [x-w/2,y-h-32],[x-w/2,y+32]
     ];
-    const intersects=(a,b)=>a[0]<b[0]+b[2]+7&&a[0]+a[2]>b[0]-7&&
-      a[1]<b[1]+b[3]+7&&a[1]+a[3]>b[1]-7;
-    for(const [left,top] of candidates){
-      if(left<7||top<7||left+w>width-7||top+h>height-7)continue;
-      const area=[left,top,w,h];
-      if(!obstacles.some(other=>intersects(area,other)))return area;
-    }
-    return null;
+    const intersects=(a,b)=>a[0]<b[0]+b[2]+6&&a[0]+a[2]>b[0]-6&&
+      a[1]<b[1]+b[3]+6&&a[1]+a[3]>b[1]-6;
+    return candidates.map(([left,top])=>[left,top,w,h]).find(a=>
+      a[0]>=6&&a[1]>=6&&a[0]+w<=width-6&&a[1]+h<=height-6&&
+      !obstacles.some(b=>intersects(a,b)))??null;
   }
   function drawJamLabels(){
-    if(zoom<8.1||typeof scenario.jamSummaries!=="function")return;
-    const groups=scenario.jamSummaries();
     const boxes=[];
-    const scale=2**zoom;
-    context.textAlign="center";
-    context.font="600 12px system-ui,Arial,sans-serif";
+    if(zoom<8.1||typeof scenario.jamSummaries!=="function")return boxes;
+    const groups=scenario.jamSummaries(),scale=2**zoom;
     for(const group of groups){
-      if(boxes.length>=(width<480?3:5))break;
+      if(boxes.length>=(width<480?3:6))break;
       const road=segmentById.get(group.edgeId);
       if(!road||!inView(road,scale))continue;
       const [x,y]=pointAt(pointAlong(road,group.offsetM));
-      if(x<65||x>width-65||y<115||y>height-62)continue;
-      const km=(group.lengthM/1000).toLocaleString("de-DE",{
-        minimumFractionDigits:1,maximumFractionDigits:1
-      });
-      const minutes=Math.max(1,Math.round(group.delayMin));
-      const label="Stau "+km+" km · +"+minutes+" min";
-      const w=Math.min(width-25,Math.max(115,context.measureText(label).width+20));
-      const pos=placeJamLabel(x,y,w,27,boxes);
+      if(x<8||x>width-8||y<10||y>height-30)continue;
+      const info=window.StauDashboard?.describeJam(group,jamRoadInfo(group.edgeId))??{
+        ref:road.ref||"Autobahn",state:"Stau",color:"#e34f56",
+        length:(group.lengthM/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1})+" km",
+        delay:"+"+Math.max(1,Math.round(group.delayMin))+" min"};
+      const title=info.ref+" · "+(info.severity==="slow"?"Stockend":info.severity==="standstill"?"Stillstand":"Stau");
+      const metrics=info.length+"  ·  "+info.delay;
+      context.font="700 12px system-ui,Arial,sans-serif";
+      const w=Math.min(width-18,Math.max(114,context.measureText(metrics).width+19,
+        context.measureText(title).width+19)),h=41;
+      const pos=placeJamLabel(x,y,w,h,boxes);
       if(!pos)continue;
       const [left,top]=pos;boxes.push(pos);
-      // Anchor visually to the actual measured jam, not a nearby clear road.
-      context.fillStyle="#f65d67";
-      context.fillRect(x-3,y-3,6,6);
-      context.fillStyle="#13283beF";
-      context.fillRect(left,top,w,27);
-      context.fillStyle="#ee5964";
-      context.fillRect(left,top,4,27);
-      context.fillStyle="#fff";
-      context.fillText(label,left+w/2,top+18,w-12);
+      // Fine leader line makes the callout belong to the actual queue.
+      context.beginPath();context.moveTo(x,y);
+      context.lineTo(Math.max(left,Math.min(left+w,x)),Math.max(top,Math.min(top+h,y)));
+      context.lineWidth=1.5;context.strokeStyle="#173248";context.stroke();
+      context.fillStyle=info.color;context.fillRect(x-2,y-2,4,4);
+      context.fillStyle="#10283bf5";
+      if(typeof context.roundRect==="function"&&typeof context.fill==="function"){
+        context.beginPath();context.roundRect(left,top,w,h,7);context.fill();
+      }else context.fillRect(left,top,w,h);
+      context.fillStyle=info.color;context.fillRect(left+2,top+5,3,h-10);
+      context.textAlign="left";context.font="600 11px system-ui,Arial,sans-serif";
+      context.fillStyle="#d4e5f1";context.fillText(title,left+10,top+15,w-17);
+      context.font="800 12px system-ui,Arial,sans-serif";
+      context.fillStyle="#fff";context.fillText(metrics,left+10,top+32,w-17);
     }
+    return boxes;
   }
   function drawEventMarkers(){
     eventTargets=[];
@@ -391,14 +409,14 @@ async function startLegacyCanvas(existingMap=null){
       const road=segmentById.get(event.edgeId);
       if(!road||!inView(road,scale))continue;
       let [x,y]=pointAt(pointAlong(road,event.offsetM));
-      if(x<18||y<105||x>width-18||y>height-56)continue;
+      if(x<18||y<39||x>width-18||y>height-56)continue;
       // Stagger coincident icons; each still targets the original OSM offset.
       let tries=0;
       while(placed.some(p=>Math.hypot(p[0]-x,p[1]-y)<30)&&tries<5){
         y+=tries%2===0?23:-46;
         tries++;
       }
-      if(y<105||y>height-56)continue;
+      if(y<39||y>height-56)continue;
       placed.push([x,y]);
       const active=status==="active";
       const tone={roadworks:"#956118",accident:"#a52d40",
@@ -425,7 +443,7 @@ async function startLegacyCanvas(existingMap=null){
         const road=segmentById.get(pin.edgeId);
         if(!road||!inView(road,scale))continue;
         const [x,y]=pointAt(pointAlong(road,pin.offsetM));
-        if(x<18||x>width-18||y<109||y>height-59||
+        if(x<18||x>width-18||y<39||y>height-59||
           placed.some(p=>Math.hypot(p[0]-x,p[1]-y)<25))continue;
         placed.push([x,y]);
         const begin=pin.type==="start";
@@ -458,7 +476,7 @@ async function startLegacyCanvas(existingMap=null){
         const road=segmentById.get(pin.edgeId);
         if(!event||!road||!inView(road,scale))continue;
         const [x,y]=pointAt(pointAlong(road,pin.offsetM));
-        if(x<17||y<110||x>width-17||y>height-59||
+        if(x<17||y<39||x>width-17||y>height-59||
           placed.some(point=>Math.hypot(point[0]-x,point[1]-y)<28))
           continue;
         placed.push([x,y]);count++;
@@ -479,15 +497,16 @@ async function startLegacyCanvas(existingMap=null){
       }
     }
   }
-  function drawLabels(){
+  function drawLabels(jamBoxes=[]){
     if(!labels||zoom<11.4)return;
     context.font="600 11px -apple-system,Arial,sans-serif";
     context.textAlign="center";
-    const boxes=[],max=60;
+    const boxes=[...jamBoxes.map(b=>[b[0],b[1],b[0]+b[2],b[1]+b[3]]),
+      ...eventTargets.map(e=>[e.x-20,e.y-20,e.x+20,e.y+20])],max=60;
     for(const j of data.junctions){
       if(boxes.length>=max)break;
       const xy=pointAt(merc(j[3]));
-      if(xy[0]<15||xy[1]<120||xy[0]>width-15||xy[1]>height-20)continue;
+      if(xy[0]<15||xy[1]<49||xy[0]>width-15||xy[1]>height-68)continue;
       const name=j[0]+" "+j[2];
       const textWidth=Math.min(context.measureText(name).width+12,205);
       const rect=[xy[0]-textWidth/2,xy[1]-20,xy[0]+textWidth/2,xy[1]-3];
@@ -501,6 +520,7 @@ async function startLegacyCanvas(existingMap=null){
   }
   function draw(){
     if(!width||!height)return;
+    window.StauDashboard?.renderJams(scenario.jamSummaries(),jamRoadInfo,focusJam);
     // Show how many distinct saved closures are ACTIVE. Otherwise several
     // old locally stored incidents can look like one ghost closure spreading
     // into distant roads when the user creates another SPCK test event.
@@ -531,9 +551,9 @@ async function startLegacyCanvas(existingMap=null){
         for(const layer of layers)
           strokeGroup(layer.visible,layer.line,scale,phase);
       // Never redraw a selected Way over a full red/white closure.
-      drawLabels();
-      drawJamLabels();
       drawEventMarkers();
+      const jamBoxes=drawJamLabels();
+      drawLabels(jamBoxes);
     }else eventTargets=[];
     context.fillStyle="#ffffffee";
     context.fillRect(7,height-24,185,18);
@@ -687,15 +707,14 @@ async function startLegacyCanvas(existingMap=null){
     $("sim-outside").textContent=format(Math.round(stats.waitingOutsideSources));
     $("sim-detours").textContent=format(Math.round(stats.vehiclesOnDetours||0));
     $("map-status").textContent="Modell "+Math.floor(sec/60)+" min · "+
-      format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz · "+
-      format(Math.round(stats.waitingOutsideSources))+" vor Netzeinfahrten · "+
-      format(Math.round(stats.vehiclesOnDetours||0))+" auf Ausweichwegen · "
-      format(scenario.reachableCount())+"/"+format(scenario.edgeCount())+" Abschnitte mit Modellzufluss";
+      format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz";
     if(eventEditor)eventEditor.updateStatus();
-    const timeMarker=$("sim-model-date");
-    if(timeMarker&&window.StauEventSchedule)
-      timeMarker.textContent="Modell-Datum: "+
-        window.StauEventSchedule.localDateTime(scenario.clockMs()).replace("T"," ")+" Uhr";
+    if(window.StauEventSchedule){
+      const local=window.StauEventSchedule.localDateTime(scenario.clockMs());
+      if(window.StauDashboard)window.StauDashboard.setClock(local);
+      else $("sim-model-date").textContent="Modell-Datum: "+local.replace("T"," ")+" Uhr";
+    }
+    window.StauDashboard?.setRunning(simRunning);
     if(selected){
       const flow=scenario.edgeActivity?.(selected.id,selectedOffsetM);
       if(flow&&$("detail-flow"))$("detail-flow").textContent=flow.reachable?
@@ -711,6 +730,7 @@ async function startLegacyCanvas(existingMap=null){
     timer=null;simRunning=false;
     $("sim-toggle").textContent="▶ Simulation starten";
     $("sim-toggle").classList.remove("running");
+    window.StauDashboard?.setRunning(false);
   }
   function tick(){
     if(!simRunning)return;
@@ -733,6 +753,7 @@ async function startLegacyCanvas(existingMap=null){
     simRunning=true;
     $("sim-toggle").textContent="Ⅱ Simulation anhalten";
     $("sim-toggle").classList.add("running");
+    window.StauDashboard?.setRunning(true);
     tick();
     timer=setInterval(tick,1000);
   }
@@ -762,7 +783,7 @@ async function startLegacyCanvas(existingMap=null){
     eventEditor=window.createOfflineEventEditor({
       scenario,redraw:requestDraw,pause:pauseSimulation,start:startSimulation,closeDrawer:close,
       notify:text=>{ $("map-status").textContent=text; },
-      focusRoad
+      focusRoad,roadLabel:id=>{const road=jamRoadInfo(id);return [road.ref,road.name||road.location].filter(Boolean).join(" · ");}
     });
   }else{
     // Compatibility when opening a partial outdated preview without editor.

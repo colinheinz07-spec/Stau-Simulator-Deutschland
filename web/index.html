@@ -14,52 +14,74 @@
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">A</span>
-        <div><strong>STAU SIMULATOR <span>DEUTSCHLAND</span></strong><small>Digitale Verkehrsmodellierung · Kartenprototyp</small></div>
+        <div><strong>STAU SIMULATOR <span>DEUTSCHLAND</span></strong><small>Verkehrsmodell · Deutschland</small></div>
       </div>
-      <span class="version">PROTOTYP <b>0.9.9</b></span>
+      <span class="version">VERSION <b>0.10.0</b></span>
     </header>
     <main class="workspace">
-      <aside class="sidebar" aria-label="Kartensteuerung">
-        <div class="mobile-panel-header">
-          <button id="mobile-panel-toggle" class="mobile-panel-toggle" type="button" aria-expanded="true" aria-label="Steuerung einklappen">
-            <span><strong>Simulationssteuerung</strong><small id="mobile-panel-hint">Nach oben wischen für weitere Einstellungen</small></span>
-            <span class="mobile-panel-chevron" id="mobile-panel-chevron" aria-hidden="true">⌄</span>
-          </button>
+      <section class="map-command" aria-label="Simulation steuern">
+        <div class="map-timebar">
+          <div class="time-icon" aria-hidden="true">◷</div>
+          <div class="time-meta"><span class="eyebrow">SIMULATIONSZEIT</span><span id="sim-model-date">Modell-Datum: –</span></div>
+          <div class="time-reading"><time id="sim-local-time">–:–</time><span id="sim-run-state">Bereit</span></div>
         </div>
-        <section class="intro">
-          <span class="eyebrow">INTERAKTIVE KARTE</span>
-          <h1>Deutschlands<br>Autobahnen.</h1>
-          <p>Eine Karte für das ganze Bundesgebiet. Die farbigen Simulationsstrecken stammen nur aus dem tatsächlich importierten Autobahnnetz.</p>
-        </section>
-        <section class="controls" aria-label="Kartenausschnitt">
-          <h2>Ansicht</h2>
-          <div class="control-grid">
-            <button id="btn-germany" type="button" class="option-btn"><span aria-hidden="true">▦</span> Deutschland</button>
-            <button id="btn-test-region" type="button" class="option-btn selected"><span aria-hidden="true">◎</span> A3 / A48</button>
-          </div>
-          <label class="switch-row"><span>Simulationsstrecken</span><input id="toggle-network" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
-          <label class="switch-row"><span>AS-Bezeichnungen</span><input id="toggle-junctions" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
-        </section>
-        <section class="controls simulation-controls" aria-label="Verkehrssimulation">
-          <div class="rowline"><h2>Verkehrssimulation</h2><span class="tag">MODELL</span></div>
+        <div class="playbar">
+          <button type="button" class="sim-start" id="sim-toggle" aria-pressed="false">▶ Simulation starten</button>
+          <button type="button" class="subtle-btn" id="sim-reset">Zurücksetzen</button>
+          <span class="elapsed">Laufzeit <b id="sim-clock">0:00</b></span>
+        </div>
+        <div class="map-toolbar" aria-label="Kartenausschnitt">
+          <button id="btn-test-region" type="button" class="option-btn selected">A3 / A48 · Netz</button>
+          <button id="btn-germany" type="button" class="option-btn">Deutschland</button>
+          <a href="#traffic-overview">Verkehrslage ↓</a>
+        </div>
+      </section>
+      <section class="map-pane" aria-label="Interaktive Deutschlandkarte">
+        <div id="map" role="application" aria-label="Zoombare Karte mit Autobahnen und importierten Simulationsstrecken"></div>
+        <div class="map-top"><span id="chip-closures" class="closure-chip" hidden></span></div>
+        <div class="map-center-message" id="map-message" role="status" aria-live="polite" hidden></div>
+        <div class="map-bottom-info" id="map-bottom-info">
+          <strong>Fahrbahn oder Rampe antippen</strong>
+          <span>Streckendetails und Ereignisse</span>
+        </div>
+        <div class="map-status" id="map-status" role="status" aria-live="polite">Karte wird vorbereitet …</div>
+      </section>
+      <div class="map-legend-strip" aria-label="Verkehrsfarben">
+        <span><i class="legend-swatch free"></i> Frei</span><span><i class="legend-swatch slow"></i> Stockend</span><span><i class="legend-swatch jam"></i> Stau</span><span><i class="legend-swatch standstill"></i> Stillstand</span><span><i class="legend-stripes"></i> Gesperrt</span>
+      </div>
+      <section id="traffic-overview" class="panel traffic-overview" aria-labelledby="traffic-overview-title">
+        <div class="rowline"><div><span class="eyebrow">VERKEHRSLAGE · MODELL</span><h2 id="traffic-overview-title">Aktuelle Staus</h2></div><span class="count-badge" id="jam-count" aria-label="Anzahl Rückstaus">0</span></div>
+        <div class="jam-list" id="jam-list"><p class="empty-state">Keine Rückstaus im Modell. Starte die Simulation, um die aktuelle Verkehrslage zu berechnen.</p></div>
+        <p class="small-note">Staulänge und Zeitverlust aus zusammenhängenden Fahrbahnzellen. Antippen, um den Stau auf der Karte zu finden.</p>
+      </section>
+      <aside class="sidebar" aria-label="Weitere Einstellungen">
+        <div class="mobile-panel-header"><button id="mobile-panel-toggle" class="mobile-panel-toggle" type="button" aria-expanded="true" aria-label="Steuerung einklappen"><span><strong>Simulation &amp; Einstellungen</strong><small id="mobile-panel-hint">Nach unten scrollen für weitere Einstellungen</small></span><span id="mobile-panel-chevron" aria-hidden="true">⌄</span></button></div>
+        <div class="settings-nav"><a href="#traffic-settings">Verkehr</a><a href="#event-settings">Ereignisse</a><a href="#map-settings">Karte</a></div>
+        <section id="traffic-settings" class="controls simulation-controls panel" aria-label="Verkehrssimulation">
+          <div class="rowline"><h2>Verkehrseinstellungen</h2><span class="tag">MODELL</span></div>
           <p class="disclaimer">Experimenteller Netzfluss auf OSM-Fahrwegen. Nach Wochentag/Uhrzeit wechselnde Zuflüsse sind Modellannahmen, keine Live-Daten.</p>
           <label class="field-label" for="sim-start">Simulationsbeginn · deutsche Ortszeit
             <input id="sim-start" type="datetime-local" step="60">
           </label>
-          <button type="button" class="sim-start" id="sim-toggle">▶ Simulation starten</button>
           <label class="demand-input" for="sim-demand">Verkehrsbelastung <strong id="sim-demand-value">100 %</strong></label>
           <input type="range" id="sim-demand" min="0" max="200" step="10" value="100">
           <div class="simulation-stats" aria-live="polite">
-            <span>Simulationszeit <b id="sim-clock">0:00</b></span>
-            <span id="sim-model-date">Modell-Datum: –</span>
             <span>Fahrzeuge im Netz <b id="sim-vehicles">0</b></span>
             <span>Externe Warteschlange <b id="sim-outside">0</b></span>
              <span>Auf Ausweichwegen <b id="sim-detours">0</b></span>
           </div>
-          <button type="button" class="subtle-btn" id="sim-reset">Simulation neu starten</button>
+          </section>
+        <section id="event-settings" class="controls demo-box panel">
+          <div class="rowline"><h2>Ereignisse</h2><span class="tag">PLANUNG</span></div>
+          <p>Wähle einen Fahrbahnabschnitt auf der Karte, um ein Ereignis anzulegen.</p>
+          <div id="planned-events" class="planned-events" aria-live="polite"></div>
+          <button id="reset-events" class="subtle-btn" type="button">Alle Ereignisse und Simulation zurücksetzen</button>
         </section>
-        <section class="controls">
-          <h2>Darstellung</h2>
+        <section id="map-settings" class="controls panel">
+          <h2>Kartenansicht</h2>
+          <div class="network-meta" id="coverage"><span class="coverage-dot"></span><span><b>Autobahnnetz</b><small>OSM-Kartendaten</small></span></div><div class="map-chips"><span id="chip-roads">— Fahrwege</span><span id="chip-ramps">— Rampen</span></div>
+                    <label class="switch-row"><span>Simulationsstrecken</span><input id="toggle-network" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
+          <label class="switch-row"><span>AS-Bezeichnungen</span><input id="toggle-junctions" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
           <div class="legend">
             <div><span class="legend-swatch free"></span> <span>Freie Fahrt</span><small>&gt; 65 km/h</small></div>
             <div><span class="legend-swatch slow"></span> <span>Stockend</span><small>31–65 km/h</small></div>
@@ -69,32 +91,10 @@
             <div><span aria-hidden="true">🚧</span> <span>Ereignissymbole</span><small>antippen zum Bearbeiten</small></div>
             <div><span aria-hidden="true">🚗</span> <span>Stauanzeige</span><small>Länge / Zeitverlust (Modell)</small></div>
           </div>
-          <p class="disclaimer">Die lokale Simulation berechnet Fahrzeugbestände und Geschwindigkeiten. Keine Live-Daten; ein vollständiges Routing und lokale AS-Nachfragen folgen.</p>
+          <p class="disclaimer">Modellgeschwindigkeiten, keine Live-Verkehrsdaten.</p>
         </section>
-        <section class="controls demo-box">
-          <div class="rowline"><h2>Darstellung testen</h2><span class="tag">DEMO</span></div>
-          <p>Tippe eine Strecke an und setze einen Unfall, eine Baustelle oder eine Sperrung. Die Simulationsfarben folgen danach berechneten Fahrzeugbeständen.</p>
-          <div id="planned-events" class="planned-events" aria-live="polite"></div>
-          <button id="reset-events" class="subtle-btn" type="button">Ereignisse und Simulation zurücksetzen</button>
-        </section>
-        <div class="sidebar-footer">© OpenStreetMap-Mitwirkende · ODbL<br>Netz und Sperrregeln werden deutschlandweit identisch verarbeitet.</div>
+        <div class="sidebar-footer">© OpenStreetMap-Mitwirkende · ODbL · Verkehrsmodell, keine Live-Daten</div>
       </aside>
-      <section class="map-pane" aria-label="Interaktive Deutschlandkarte">
-        <div id="map" role="application" aria-label="Zoombare Karte mit Autobahnen und importierten Simulationsstrecken"></div>
-        <div class="map-top">
-          <div class="coverage" id="coverage">
-            <span class="coverage-dot"></span>
-            <span><b>A3 Limburg-Nord – Siegburg · A48 Vulkaneifel – Dernbach</b><small>Originale OSM-Hauptfahrbahnen und Rampen · Kartenvorschau</small></span>
-          </div>
-          <div class="map-chips"><span id="chip-roads">— Fahrwege</span><span id="chip-ramps">— Rampen</span><span id="chip-closures" hidden></span></div>
-        </div>
-        <div class="map-center-message" id="map-message" role="status" aria-live="polite" hidden></div>
-        <div class="map-bottom-info" id="map-bottom-info">
-          <strong>Tippe auf einen grünen Straßenabschnitt</strong>
-          <span>Details, Fahrstreifen und Test-Ereignisse anzeigen.</span>
-        </div>
-        <div class="map-status" id="map-status" role="status" aria-live="polite">Karte wird vorbereitet …</div>
-      </section>
     </main>
   </div>
   <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
@@ -111,8 +111,8 @@
       <div><dt>OSM-Way</dt><dd id="detail-osm">—</dd></div>
     </dl>
     <div class="event-actions">
-      <h3>Ereignis für die Simulation</h3>
-      <p>Reduziert die tatsächliche Modellkapazität. Die Rückstauentstehung wird berechnet, nicht einfach rot eingefärbt.</p>
+      <h3>Ereignis hinzufügen</h3>
+      <p>Wähle den Ereignistyp und anschließend die betroffenen Fahrstreifen.</p>
       <div class="events-grid">
         <button type="button" data-event="none">Ereignisse entfernen</button>
         <button type="button" data-event="roadworks">🚧 Baustelle</button>

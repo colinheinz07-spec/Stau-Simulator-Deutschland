@@ -10,7 +10,7 @@ const SYMBOLS={roadworks:"🚧",accident:"💥",breakdown:"🚛",closure:"⛔"};
 const STORAGE="stau-simulator-local-events-v3";
 const OLD_STORAGE="stau-simulator-local-events-v2";
 function createOfflineEventEditor(options){
-  const {scenario,redraw,pause,start,closeDrawer,notify,focusRoad}=options;
+  const {scenario,redraw,pause,start,closeDrawer,notify,focusRoad,roadLabel}=options;
   const calendar=global.StauEventSchedule;
   if(!calendar)throw Error("Kalender für Ereignisse fehlt");
   const form=$("event-form"),kind=$("ev-kind"),lanes=$("ev-lanes");
@@ -224,7 +224,7 @@ function createOfflineEventEditor(options){
       const box=document.createElement("div");box.className="planned-event";
       const name=document.createElement("strong");
       name.textContent=SYMBOLS[ev.kind]+" "+NAMES[ev.kind]+" · "+
-        (ev.edgeId.startsWith("A")?ev.edgeId.split("-")[0]:"OSM-Rampe");
+        (roadLabel?.(ev.edgeId)|| (ev.edgeId.startsWith("A")?ev.edgeId.split("-")[0]:"OSM-Rampe"));
       const info=document.createElement("small");
       const closure=ev.closedLanes.length?
         ev.closedLanes.map(x=>"F"+(x+1)).join(", "):"keine Fahrstreifen";
@@ -239,6 +239,7 @@ function createOfflineEventEditor(options){
         " · Achtung: Netzübergang ungeklärt, nur "+Math.round(ev.coveredLengthM)+" m wirksam":"");
       const status=document.createElement("span");
       status.className="planned-state";
+      status.dataset.status=scenario.eventStatus(ev.id);
       status.textContent={active:"Aktiv",planned:"Geplant",between:"Derzeit außerhalb Zeitfenster",
         finished:"Abgeschlossen",inactive:"Inaktiv"}[scenario.eventStatus(ev.id)]||"Unbekannt";
       if(ev.kind==="closure"&&scenario.eventStatus(ev.id)==="active"&&scenario.detourDestinations){
