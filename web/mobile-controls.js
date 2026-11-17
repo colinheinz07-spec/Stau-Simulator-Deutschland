@@ -11,18 +11,22 @@
     "extra-a559-gremberg":"Gremberg","extra-a559-porz":"Porz",
     "extra-a560-bonn":"Bonn","extra-a560-hennef":"Hennef",
     "extra-a562-bonn":"Bonn","extra-a562-bonn-ost":"Bonn-Ost",
-    "extra-a555-koeln":"Köln","extra-a555-bonn":"Bonn"
+    "extra-a555-koeln":"Köln","extra-a555-bonn":"Bonn",
+    "extra-a1-dortmund":"Dortmund","extra-a1-koblenz":"Koblenz",
+    "extra-a61-nord":"Norden","extra-a61-sued":"Süden",
+    "extra-a565-nord":"Norden","extra-a565-sued":"Süden"
   };
   function describeJam(group,road={}){
     const worst=Number(group.worstKmh),speed=Number(group.meanKmh??group.worstKmh),known=Number.isFinite(speed);
     const severity=!known?"jam":worst<=10?"standstill":worst<=30?"jam":"slow";
     const states={slow:["Stockender Verkehr","#efae47"],jam:["Stau / Stop-and-Go","#e34f56"],standstill:["Stillstand / Kriechverkehr","#a85169"]};
     const [state,color]=states[severity];
-    const destination=directionNames[road.direction];
-    const title=(road.ref||"Autobahn")+(destination&&road.kind!=="ramp"?" Richtung "+destination:"");
+    const signedDestination=road.kind==="ramp"&&road.name?.includes("→")?road.name.split("→").at(-1).trim():null;
+    const destination=signedDestination||directionNames[road.direction];
+    const title=(road.ref||"Autobahn")+(destination?" Richtung "+destination:"");
     const km=(Math.max(0,Number(group.lengthM)||0)/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1});
     const delay=Number.isFinite(group.delayMin)?Math.max(1,Math.round(group.delayMin)):null;
-    return {title,location:road.location||road.name||(road.kind==="ramp"?"Auf-/Abfahrt oder Überleitung":"Autobahnabschnitt"),
+    return {title,destination,bottleneck:road.bottleneck,location:road.location||road.name||(road.kind==="ramp"?"Auf-/Abfahrt oder Überleitung":"Autobahnabschnitt"),
       ref:road.ref||"Autobahn",severity,state,color,length:km+" km",
       delay:delay===null?"Nicht berechenbar":"+"+delay+" min",shortDelay:delay===null?"Zeit offen":"+"+delay+" min",speed:known?Math.round(speed)+" km/h":"–"};
   }
@@ -31,7 +35,7 @@
     if(!list||!count)return;
     const sorted=[...groups].sort((a,b)=>b.delayMin-a.delayMin);
     count.textContent=String(sorted.length);
-    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2]));
+    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),g.startEdgeId,g.endEdgeId,g.startOffsetM,g.endOffsetM,Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2]));
     if(list.dataset.signature===key)return;
     list.dataset.signature=key;
     list.replaceChildren();
@@ -41,13 +45,14 @@
       return;
     }
     for(const g of sorted){
-      const view=describeJam(g,roadFor(g.edgeId,g.offsetM)||{});
+      const view=describeJam(g,roadFor(g.edgeId,g.offsetM,g)||{});
       const card=el("button","jam-card");
       card.type="button";card.style.setProperty("--severity",view.color);
       card.dataset.trafficState=view.severity;
       card.setAttribute("aria-label",view.title+", "+view.location+", "+view.length+", "+view.delay+", auf Karte anzeigen");
       const header=el("div","jam-card-header"),heading=el("div","jam-card-heading");
       heading.append(el("strong","",view.title),el("span","",view.location));
+      if(view.bottleneck)heading.append(el("span","jam-bottleneck",view.bottleneck));
       header.append(el("span","jam-card-icon","▰"),heading,el("strong","jam-card-delay"+(g.delayMin===null?" is-unknown":""),view.delay));
       const metrics=el("div","jam-card-metrics");
       metrics.append(el("span","jam-card-state",view.state),el("span","",view.length),el("span","","Ø Geschwindigkeit: "+view.speed));

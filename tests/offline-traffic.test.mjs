@@ -508,6 +508,10 @@ test("full closure sends ALL approaching demand to a legal exit, with ramp conge
   assert.ok(scenario.edgeActivity("exit").enteredVph>500,
     "open ramp remains a usable capacity-constrained escape");
   assert.ok(scenario.edgeActivity("exit").enteredVph<=1550);
+  assert.ok(scenario.edgeActivity("exit").departedVph>650&&scenario.edgeActivity("exit").departedVph<=705,
+    "saturated exit discharges at its local junction capacity, not motorway capacity");
+  assert.ok(scenario.edgeActivity("exit").vehicles<=scenario.edgeActivity("exit").storageVehicles,
+    "physical exit storage never overfills");
   assert.ok(scenario.edgeActivity("blocked").enteredVph<20,
     "none of the newer arrivals can drive into the fully closed road");
   assert.ok(scenario.jamSummaries().some(x=>x.edgeId==="up"),
@@ -960,7 +964,7 @@ test("previously failing five-metre AS fragments now resolve full motorway secti
   }
 });
 
-test("Dernbach Frankfurt: normal A48 transfer stays open, Ransbach is primary and Höhr fallback, both return at Montabaur",async()=>{
+test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after primary exit, Montabaur reentry",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
     runInNewContext(await readFile(path,"utf8"),{window:w});
@@ -972,17 +976,28 @@ test("Dernbach Frankfurt: normal A48 transfer stays open, Ransbach is primary an
     speedKmh:0,hasShoulder:false,shoulder:"normal"});
   sim.advance(1);
   const plans=sim.detourPlans();
-  for(const terminal of ["extra-heumar-8298586","extra-heumar-31056168"])
+  for(const terminal of ["extra-heumar-8298586","extra-heumar-4452557","extra-heumar-31056168"])
     assert.ok(plans.some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-243834109"),
       "physical exit "+terminal+" must return at the first open Montabaur AS");
-  for(let i=0;i<16;i++)sim.advance(12);
+  assert.ok(sim.designatedDetourRoutes("full-montabaur").some(s=>/A48.*Ransbach-Baumbach.*Montabaur/.test(s)));
+  for(let i=0;i<22;i++)sim.advance(12);
   const ransbach=sim.edgeActivity("extra-heumar-8298586");
   assert.equal(ransbach.localDischargeVph,700);
   assert.ok(ransbach.departedVph>550&&ransbach.departedVph<=705,"finite local junction discharge");
   assert.ok(sim.edgeActivity("ramp-a3-to-a48-from-koeln").enteredVph>100,"Koblenz-bound traffic continues");
+  const transfer=sim.edgeActivity("ramp-a48-to-koeln"),northExit=sim.edgeActivity("extra-heumar-4452557");
+  assert.ok(transfer.divertedVehiclesOnEdge>1&&transfer.divertedVehiclesOnEdge<transfer.vehicles*.9,
+    "only Frankfurt-bound portion of A48 is diverted; Köln-bound traffic remains normally routed");
+  assert.ok(northExit.divertedVehiclesOnEdge>1&&northExit.departedVph<=705&&northExit.departedVph>550,
+    "A48 diversions actually exit at northbound Ransbach under finite capacity");
+  assert.ok(northExit.storageVehicles>ransbach.storageVehicles,"longer physical ramp stores more cars");
   assert.ok(sim.edgeActivity("extra-heumar-31056168").enteredVph>100,"vehicles already beyond Ransbach exit via Höhr");
   assert.ok(sim.jamSummaries().some(g=>g.endEdgeId==="A3-326138758"&&g.lengthM>500),
     "saturated local exit spills back onto A3");
+  const queue=sim.jamSummaries().find(g=>g.endEdgeId==="A3-326138758");
+  assert.equal(sim.queueRoadInfo(queue).direction,"A3-frankfurt");
+  assert.match(sim.queueRoadInfo(queue).location,/Dierdorf.*Ransbach-Baumbach/);
+  assert.match(sim.queueRoadInfo(queue).bottleneck,/Ransbach-Baumbach/);
   assert.ok(sim.totals().returnedVehicles>0);
   conservation(sim.totals());
 });

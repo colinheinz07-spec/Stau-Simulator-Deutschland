@@ -97,15 +97,24 @@ async function startLegacyCanvas(existingMap=null){
   const segments=prepareGeometry(data);
   const segmentById=new Map(segments.map(road=>[road.id,road]));
   const roadRows=new Map(data.roads.map(row=>[row[0],row]));
-  function jamRoadInfo(id){
+  function jamRoadInfo(id,offset,group){
     const row=roadRows.get(id);
     if(!row)return {};
     const ref=row[2],direction=window.StauTrafficReference?.referenceForRoad(row)?.key;
-    const p=row[4][Math.floor(row[4].length/2)];
+    const segment=segmentById.get(id);
+    let p=row[4][Math.floor(row[4].length/2)];
+    if(Number.isFinite(offset)&&segment){
+      const at=clamp(offset,0,segment.meters);
+      const i=Math.max(1,segment.cumulative.findIndex(x=>x>=at));
+      const a=row[4][i-1],b=row[4][i];
+      const t=(at-segment.cumulative[i-1])/Math.max(.001,segment.cumulative[i]-segment.cumulative[i-1]);
+      p=[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+    }
     const nearby=data.junctions.filter(j=>j[0]===ref)
       .map(j=>({name:j[2],metres:distance(p,j[3])})).sort((a,b)=>a.metres-b.metres)[0];
     return {ref,kind:row[1],direction,name:row[5],
-      location:row[5]||(nearby&&nearby.metres<14000?"bei "+nearby.name:"Autobahnabschnitt")};
+      location:row[5]||(nearby&&nearby.metres<14000?"bei "+nearby.name:"Autobahnabschnitt"),
+      ...(group?scenario.queueRoadInfo?.(group):{})};
   }
   function focusJam(id,offset){
     const road=segmentById.get(id);if(!road)return;
@@ -366,11 +375,11 @@ async function startLegacyCanvas(existingMap=null){
       if(!road||!inView(road,scale))continue;
       const [x,y]=pointAt(pointAlong(road,group.offsetM));
       if(x<8||x>width-8||y<10||y>height-30)continue;
-      const info=window.StauDashboard?.describeJam(group,jamRoadInfo(group.edgeId))??{
+      const info=window.StauDashboard?.describeJam(group,jamRoadInfo(group.edgeId,group.offsetM,group))??{
         ref:road.ref||"Autobahn",state:"Stau",color:"#e34f56",
         length:(group.lengthM/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1})+" km",
         delay:Number.isFinite(group.delayMin)?"+"+Math.max(1,Math.round(group.delayMin))+" min":"Zeit offen"};
-      const title=info.ref+" · "+(info.severity==="slow"?"Stockend":info.severity==="standstill"?"Stillstand":"Stau");
+      const title=info.ref+(info.destination?" → "+info.destination:"")+" · "+(info.severity==="slow"?"Stockend":info.severity==="standstill"?"Stillstand":"Stau");
       const metrics=info.length+"  ·  "+(info.shortDelay??info.delay);
       context.font="700 12px system-ui,Arial,sans-serif";
       const w=Math.min(width-18,Math.max(114,context.measureText(metrics).width+19,
@@ -592,6 +601,7 @@ async function startLegacyCanvas(existingMap=null){
       Math.round(s.meters)+" m";
     const modelSpeed=scenario.speed(s.id);
     const activity=scenario.edgeActivity?.(s.id,offsetM);
+    updateCapacityDetails(activity);
     const flowInfo=$("detail-flow");
     if(flowInfo)flowInfo.textContent=!activity?.reachable?
       "Nicht mit Modellquellen verbunden":
@@ -610,6 +620,13 @@ async function startLegacyCanvas(existingMap=null){
     selection.setAttribute("aria-hidden","false");
     backdrop.hidden=false;
     requestDraw();
+  }
+  function updateCapacityDetails(activity){
+    const capacity=$("detail-capacity"),storage=$("detail-storage");
+    if(capacity)capacity.textContent=activity?
+      format(Math.round(activity.localDischargeVph??activity.capacityVph))+" Kfz/h · Modell":"—";
+    if(storage)storage.textContent=activity&&Number.isFinite(activity.storageVehicles)?
+      format(Math.round(activity.vehicles))+" / "+format(Math.ceil(activity.storageVehicles))+" Kfz":"—";
   }
   function nearest(x,y){
     if(!visible)return null;
@@ -717,6 +734,7 @@ async function startLegacyCanvas(existingMap=null){
     window.StauDashboard?.setRunning(simRunning);
     if(selected){
       const flow=scenario.edgeActivity?.(selected.id,selectedOffsetM);
+      updateCapacityDetails(flow);
       if(flow&&$("detail-flow"))$("detail-flow").textContent=flow.reachable?
         "~"+Math.round(flow.sectionVph).toLocaleString("de-DE")+" Kfz/h · hier (2-Min.-Mittel, Modell)":
         "Nicht mit Modellquellen verbunden";

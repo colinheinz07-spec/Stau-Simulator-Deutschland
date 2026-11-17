@@ -205,20 +205,50 @@ function drawJamCallouts(rendered,byId,showMap=true){
   const groups=new Map();
   for(const part of pieces){
     const id=root(part.index);
-    const g=groups.get(id)??{lengthM:0,delayMin:0,travelMin:0,freeMin:0,worstKmh:Infinity,longestM:0,anchor:null};
+    const g=groups.get(id)??{lengthM:0,delayMin:0,travelMin:0,freeMin:0,worstKmh:Infinity,longestM:0,anchor:null,parts:[]};
     g.lengthM+=part.lengthM;g.delayMin+=part.delayMin;g.travelMin+=part.travelMin;g.freeMin+=part.freeMin;g.worstKmh=Math.min(g.worstKmh,part.worstKmh);
+    g.parts.push(part);
     if(part.lengthM>g.longestM){g.longestM=part.lengthM;g.anchor=part;}
     groups.set(id,g);
   }
   const qualified=[...groups.values()].filter(g=>g.lengthM>=400&&g.delayMin>=.5&&g.anchor)
-    .sort((a,b)=>b.delayMin-a.delayMin).map(g=>({...g,edgeId:g.anchor.edgeId,
-      offsetM:(g.anchor.fromM+g.anchor.toM)/2,
-      meanKmh:Number.isFinite(g.travelMin)&&g.travelMin>0?g.lengthM/1000*60/g.travelMin:0,
-      delayMin:Number.isFinite(g.travelMin)&&g.travelMin-g.freeMin<=240?Math.max(0,g.travelMin-g.freeMin):null}));
-  const roadInfo=id=>{
+    .sort((a,b)=>b.delayMin-a.delayMin).map(g=>{
+      const tails=g.parts.filter(p=>p.fromM>.1||!g.parts.some(q=>
+        q.toM>=byId.get(q.edgeId).lengthM-.1&&incoming.get(p.edgeId)?.has(q.edgeId)));
+      const heads=g.parts.filter(p=>p.toM<byId.get(p.edgeId).lengthM-.1||!g.parts.some(q=>
+        q.fromM<.1&&out.get(p.edgeId)?.has(q.edgeId)));
+      const tail=tails.length===1?tails[0]:g.anchor,head=heads.length===1?heads[0]:g.anchor;
+      return {...g,edgeId:g.anchor.edgeId,offsetM:(g.anchor.fromM+g.anchor.toM)/2,
+        startEdgeId:tail.edgeId,startOffsetM:tail.fromM,endEdgeId:head.edgeId,endOffsetM:head.toM,
+        meanKmh:Number.isFinite(g.travelMin)&&g.travelMin>0?g.lengthM/1000*60/g.travelMin:0,
+        delayMin:Number.isFinite(g.travelMin)&&g.travelMin-g.freeMin<=240?Math.max(0,g.travelMin-g.freeMin):null};
+    });
+  const nodeRefs=new Map();
+  for(const edge of byId.values())for(const node of [edge.fromNodeId,edge.toNodeId]){
+    const refs=nodeRefs.get(node)||new Set();
+    for(const ref of [edge.motorwayRef,...(edge.motorwayRefs||[])].filter(Boolean))refs.add(ref);
+    nodeRefs.set(node,refs);
+  }
+  const landmarks=state.network.nodes.filter(n=>n.junctionName||n.junctionRef);
+  const nearestJunction=(point,ref)=>{
+    let best=null,metres=14000;
+    for(const node of landmarks){
+      if(!nodeRefs.get(node.id)?.has(ref))continue;
+      const d=map.distance(point,node.point);
+      if(d<metres){metres=d;best=node.junctionName||"AS "+node.junctionRef;}
+    }
+    return best;
+  };
+  const roadInfo=(id,offset,group)=>{
     const edge=byId.get(id);if(!edge)return {};
-    return {ref:edge.motorwayRef,kind:edge.kind,name:edge.name,
-      direction:window.StauTrafficReference?.motorwayDirection(edge.motorwayRef,edge.geometry,edge.name||"")};
+    const ref=edge.motorwayRef;
+    const start=group&&byId.get(group.startEdgeId),end=group&&byId.get(group.endEdgeId);
+    const a=start?pointOnEdge(start,group.startOffsetM):edge.geometry[0];
+    const b=end?pointOnEdge(end,group.endOffsetM):edge.geometry.at(-1);
+    const left=nearestJunction(a,ref),right=nearestJunction(b,ref);
+    return {ref,kind:edge.kind,name:edge.name,
+      location:left&&right&&left!==right?"zwischen "+left+" und "+right:left||right?"bei "+(left||right):undefined,
+      direction:window.StauTrafficReference?.motorwayDirection(ref,[a,b],edge.name||"")};
   };
   window.StauDashboard?.renderJams(qualified,roadInfo,(id,offset)=>{
     const edge=byId.get(id);if(!edge)return;
@@ -232,17 +262,17 @@ function drawJamCallouts(rendered,byId,showMap=true){
     const edge=byId.get(g.edgeId);if(!edge)continue;
     const position=pointOnEdge(edge,g.offsetM);
     const pixel=map.latLngToContainerPoint(position);
-    const rect={x:pixel.x-69,y:pixel.y-54,w:138,h:44};
+    const rect={x:pixel.x-90,y:pixel.y-54,w:180,h:44};
     if(rect.x<6||rect.x+rect.w>map.getSize().x-6||rect.y<43||
        rect.y+rect.h>map.getSize().y-65)continue;
     if(boxes.some(b=>rect.x<b.x+b.w+6&&rect.x+rect.w>b.x-6&&
       rect.y<b.y+b.h+6&&rect.y+rect.h>b.y-6))continue;
     boxes.push(rect);
-    const view=window.StauDashboard?.describeJam(g,roadInfo(g.edgeId));
+    const view=window.StauDashboard?.describeJam(g,roadInfo(g.edgeId,g.offsetM,g));
     const label=document.createElement("span");label.className="map-jam-label";
     label.style.setProperty("--severity",view?.color||"#e34f56");
     const title=document.createElement("strong");
-    title.textContent=(view?.ref||edge.motorwayRef||"Autobahn")+" · "+
+    title.textContent=(view?.ref||edge.motorwayRef||"Autobahn")+(view?.destination?" → "+view.destination:"")+" · "+
       (view?.severity==="slow"?"Stockend":view?.severity==="standstill"?"Stillstand":"Stau");
     const metrics=document.createElement("span");
     metrics.textContent=(view?.length||((g.lengthM/1000).toFixed(1)+" km"))+" · "+
@@ -345,6 +375,8 @@ function openDetails(edge,item){
   $("detail-length").textContent=edge.lengthM<1000?Math.round(edge.lengthM)+" m":
     (edge.lengthM/1000).toLocaleString("de-DE",{maximumFractionDigits:2})+" km";
   $("detail-speed").textContent=Math.round(item.speedKmh)+" km/h · "+(item.source==="model"?"Testwert":"Modellannahme");
+  $("detail-capacity").textContent=(edge.lanes*edge.capacityPerLaneVph).toLocaleString("de-DE")+" Kfz/h · Modell";
+  $("detail-storage").textContent="—";
   $("detail-osm").textContent=edge.osmWayIds.map(String).join(", ");
   const selectedMode=state.scenario?.mode(edge.id)??"none";
   for(const button of document.querySelectorAll("[data-event]"))

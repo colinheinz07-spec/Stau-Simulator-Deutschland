@@ -249,6 +249,9 @@ function createOfflineEventEditor(options){
           "Wiedereinfahrt (Modell): "+destinations.join(" / "):
           "Keine lokale Wiedereinfahrt im vorhandenen Netz nachgewiesen.";
         box.append(name,info,detour);
+        for(const route of scenario.designatedDetourRoutes?.(ev.id)||[]){
+          const via=document.createElement("small");via.textContent="Vorgegebene Modellumleitung: "+route;box.append(via);
+        }
       }else box.append(name,info);
       const buttons=document.createElement("div");buttons.className="event-list-actions";
       const edit=document.createElement("button"),del=document.createElement("button");
