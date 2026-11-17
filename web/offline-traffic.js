@@ -1108,6 +1108,11 @@ function createLegacyTrafficScenario(data){
         const blocked=turn=>bands(edges[turn.to].id).find(s=>
           turn.toM>=s.fromM-.05&&turn.toM<s.toM-.05)?.event||
           closures.find(c=>(byTurn.get(turn)||[]).includes(c.spec.id))?.spec;
+        const blockedIds=turn=>[
+          ...bands(edges[turn.to].id).filter(s=>turn.toM>=s.fromM-.05&&turn.toM<s.toM-.05)
+            .flatMap(s=>s.contributingClosureIds||[s.event.id]),
+          ...(byTurn.get(turn)||[])
+        ];
         let changed=true;
         while(changed){
           changed=false;
@@ -1123,7 +1128,9 @@ function createLegacyTrafficScenario(data){
               t.fromM<=gate+.05&&!blocked(t)).map(t=>t.fromM));
             if(lastEscape>=gate-.05)continue;
             const span={edgeId:edge.id,fromM:lastEscape,toM:gate,gate:true,
-              derivedRampClosure:edge.kind==="ramp",derivedFeederClosure:true,event};
+              derivedRampClosure:edge.kind==="ramp",derivedFeederClosure:true,event,
+              contributingClosureIds:[...new Set(existing?
+                existing.contributingClosureIds||[existing.event.id]:terminal.flatMap(blockedIds))]};
             const list=byEdge.get(edge.id)||[];
             list.push(span);byEdge.set(edge.id,list);jointClosureSpans.push(span);
             changed=true;
@@ -1325,7 +1332,16 @@ function createLegacyTrafficScenario(data){
         // The queue itself has a measured snapshot travel time independent
         // of a downstream closure. Below 1 km/h report a lower bound, not
         // an invented opening time or unlimited numerical extrapolation.
-        publicGroup.delayMin=Number.isFinite(travelDelay)?Math.max(0,travelDelay):null;
+        const headRoad=head&&byId.get(head.edgeId);
+        const headCell=headRoad?Math.max(0,Math.min(headRoad.n-1,
+          Math.ceil(head.toM/headRoad.cellLength)-1)):0;
+        // A multihour projection from virtually stationary traffic has no
+        // reliable arrival time if the closure offers no observed discharge.
+        // Keep its severity for routing, even when the public ETA is unknown.
+        const noDischarge=travelDelay>=240&&headRoad&&
+          headRoad.cellThroughVph[headCell]<30&&
+          Number.isFinite(closureDistanceAhead(headRoad,head.toM,Infinity));
+        publicGroup.delayMin=Number.isFinite(travelDelay)&&!noDischarge?Math.max(0,travelDelay):null;
         if(head){
           publicGroup.endEdgeId=head.edgeId;
           publicGroup.endOffsetM=head.toM;
@@ -1481,20 +1497,24 @@ function createLegacyTrafficScenario(data){
     const scale=through>0?Math.max(.15,Math.min(1,local/through)):1;
     localTurnScaleCache.set(edge.id,scale);return scale;
   }
-  function closureDistanceAhead(edge,offsetM,maxDistance=16000){
+  function closureMatches(effect,eventId){
+    return !eventId||effect.event.id===eventId||effect.contributingClosureIds?.includes(eventId);
+  }
+  function closureDistanceAhead(edge,offsetM,maxDistance=16000,eventId=null){
     let current=edge,from=Math.max(0,offsetM),travelled=0;
     const visited=new Set();
     for(let hops=0;hops<1200&&travelled<=maxDistance;hops++){
       if(visited.has(current.id))return Infinity;
       visited.add(current.id);
       const effects=activeEffects.get(current.id)||NO_EFFECTS;
-      let nearest=Infinity;
+      let nearest=Infinity,matched=false;
       for(const item of effects){
         if(item.event.kind!=="closure"||item.fromM<from-.01)continue;
         const distance=travelled+item.fromM-from;
-        if(distance<=maxDistance)nearest=Math.min(nearest,distance);
+        if(distance<=maxDistance&&distance<nearest-.001){nearest=distance;matched=closureMatches(item,eventId);}
+        else if(Math.abs(distance-nearest)<.001)matched ||= closureMatches(item,eventId);
       }
-      if(Number.isFinite(nearest))return nearest;
+      if(Number.isFinite(nearest))return matched?nearest:Infinity;
       // Keep the same motorway where it continues. But when a route ends
       // directly into exactly one OTHER motorway (e.g. A59→A3 at Heumar),
       // look ahead across that true directed OSM connection as well. Without
@@ -1516,20 +1536,24 @@ function createLegacyTrafficScenario(data){
   // risk 0.5 lets AS traffic divert BEFORE the final A48 fork, not pile up on
   // the 1-lane Köln connector. This computes no fictional OSM movements.
   const exposureCache=new Map();let exposureStamp=null;
-  function closureExposureAhead(edge,offsetM=0,maxDistance=25000){
+  function closureExposureAhead(edge,offsetM=0,maxDistance=25000,eventId=null){
     // Traffic exposure only changes when the closure catalog or active
     // schedule changes, NOT on every 5-second CTM tick. Keep this graph
     // analysis cached across timesteps for iPhone/SPCK performance.
     const stamp=exposureEpoch;
     if(exposureStamp!==stamp){exposureCache.clear();exposureStamp=stamp;}
-    const cacheKey=edge.id+":"+Math.floor(offsetM/100)+":"+maxDistance;
+    const cacheKey=edge.id+":"+Math.floor(offsetM/100)+":"+maxDistance+":"+(eventId||"*");
     if(exposureCache.has(cacheKey))return exposureCache.get(cacheKey);
     const examine=(current,from,remaining,seen,depth)=>{
       if(depth>=160||remaining<=0||seen.has(current.id))return 0;
+      let gate=null,matched=false;
       for(const effect of activeEffects.get(current.id)||NO_EFFECTS){
         if(effect.event.kind!=="closure"||effect.toM<from+.01)continue;
-        if(effect.fromM-from<=remaining)return 1;
+        if(effect.fromM-from<=remaining&&(!gate||effect.fromM<gate.fromM-.001)){
+          gate=effect;matched=closureMatches(effect,eventId);
+        }else if(gate&&Math.abs(effect.fromM-gate.fromM)<.001)matched ||= closureMatches(effect,eventId);
       }
+      if(gate)return matched?1:0;
       const distance=Math.max(0,current.lengthM-from);
       if(distance>=remaining)return 0;
       const candidates=current.next.filter(link=>{
@@ -1739,7 +1763,7 @@ function createLegacyTrafficScenario(data){
     localTerminalMemo.set(first.index,end);return end;
   }
   function localDischargeVph(edge){
-    return edge.kind==="ramp"&&localTerminal(edge)===edge?700*Math.min(2,edge.lanes):null;
+    return edge?.kind==="ramp"&&localTerminal(edge)===edge?700*Math.min(2,edge.lanes):null;
   }
   // Actual exit-ramp storage, not a nominal motorway-sized cell for every
   // tiny OSM Way. Retain a two-tick numerical minimum on micro-connectors;
@@ -1820,7 +1844,12 @@ function createLegacyTrafficScenario(data){
     const eventEdges=new Set(events.flatMap(event=>event.spans.map(span=>span.edgeId)));
     const queues=jamGroups.filter(group=>group.routingDelayMin>=45&&group.lengthM>=500&&
       group.endEdgeId&&!eventEdges.has(group.endEdgeId)&&
-      byId.get(group.endEdgeId)?.kind==="mainline")
+      byId.get(group.endEdgeId)?.kind==="mainline"&&
+      // A closure queue already has a destination-specific bypass. Do not
+      // replace it with a short detour that rejoins BEFORE the closure.
+      !Number.isFinite(closureDistanceAhead(byId.get(group.endEdgeId),group.endOffsetM,Infinity))&&
+      closureExposureAhead(byId.get(group.endEdgeId),group.endOffsetM,Infinity)===0&&
+      !designatedApproach.has(byId.get(group.endEdgeId).index))
       .map(group=>({spec:{id:"queue:"+group.endEdgeId+":"+
         Math.round(group.endOffsetM/100),kind:"congestion"},spans:[{
           edgeId:group.endEdgeId,fromM:group.endOffsetM,
@@ -1932,7 +1961,9 @@ function createLegacyTrafficScenario(data){
         const transfer=byId.get("ramp-a48-to-koeln");
         const blocked=byId.get("ramp-a48-to-frankfurt");
         const reentry=candidates[0];
-        if(transfer&&blocked&&/Montabaur/.test(reentry.ramp.name)){
+        // Montabaur is the ordinary return. If a second closure also blocks
+        // that entrance, retain Ransbach and use the next lawful candidate.
+        if(transfer&&blocked&&reentry){
           const exit=rampMainlineArrivals(transfer,(a,b)=>!blockedMovement(a,b))
             .map(a=>firstLocalExit(a.road,a.metre))
             .find(x=>x&&/Ransbach-Baumbach/.test(x.terminal.name));
@@ -1964,7 +1995,7 @@ function createLegacyTrafficScenario(data){
           if(from.kind!=="mainline"||from.ref!==endEdge.ref||!approach.has(from.id))continue;
           for(const turn of from.links){
             if((approach.get(from.id)??-1)<turn.fromM-.05||
-              !Number.isFinite(closureDistanceAhead(from,turn.fromM,500))||
+              !Number.isFinite(closureDistanceAhead(from,turn.fromM,500,obstacle.spec.id))||
               blockedMovement(from,turn))continue;
             const target=edges[turn.to];
             const arrivals=target.kind==="mainline"?[{road:target,metre:turn.toM}]:
@@ -2001,8 +2032,8 @@ function createLegacyTrafficScenario(data){
           const fullClosure=obstacle.spec.kind==="closure";
           const affected=fullClosure?
             (approach.get(main.id)??-1)>=turn.fromM-.05&&
-              (closureDistanceAhead(main,turn.fromM,Infinity)!==Infinity||
-              closureExposureAhead(main,turn.fromM,Infinity)>0):
+              (closureDistanceAhead(main,turn.fromM,Infinity,obstacle.spec.id)!==Infinity||
+              closureExposureAhead(main,turn.fromM,Infinity,obstacle.spec.id)>0):
             (approach.get(main.id)??-1)>=turn.fromM-.05;
           if(first.kind!=="ramp"||!affected||
             fullClosure&&designatedApproach.has(main.index)&&/AD Dernbach/.test(obstacle.spec.closureFrom||"")&&/Montabaur/.test(obstacle.spec.closureTo||""))continue;
@@ -2027,7 +2058,8 @@ function createLegacyTrafficScenario(data){
                 closureId:obstacle.spec.id,kind:obstacle.spec.kind};
               const routes=routePlans.get(first.index)||new Map();
               const previous=routes.get(routeKey);
-              if(!previous||plan.durationS<previous.durationS)
+              if(!previous||plan.kind==="closure"&&previous.kind!=="closure"||
+                plan.kind===previous.kind&&plan.durationS<previous.durationS)
                 routes.set(routeKey,plan);
               routePlans.set(first.index,routes);
             }else if(successors.length&&successors.every(x=>x.kind==="ramp")){
@@ -2038,6 +2070,10 @@ function createLegacyTrafficScenario(data){
       }
     }
     for(const [first,routes] of routePlans){
+      // The explicitly signed destination must not be overwritten by a
+      // congestion plan on the open connector during a long closure.
+      if(fallbackExits.get(first)?.designated||[...fallbackExits.values()].some(p=>
+        p.designated&&[...routes.values()].some(r=>r.terminal===p.terminal)))continue;
       const plans=[...routes.values()].sort((a,b)=>a.durationS-b.durationS);
       const plan=plans[0];
       // No individual destination matrix yet: keep separate legal target
@@ -2225,10 +2261,21 @@ function createLegacyTrafficScenario(data){
             Math.max(...localTurns.map(link=>mandatoryLocalShare(edge,link.fromM)))*closureShare:0;
           const hasLaterExit=closureShare>0&&currentAlternatives.some(link=>
             laterUsableExitBeforeClosure(edge,link.fromM));
-          const share=signedApproach?0:localShare>0?localShare:hasLaterExit?0:Math.max(closureShare,
+          // Keep the primary signed exit until congestion makes an EARLIER
+          // local bypass worthwhile. Distribute only an amount consistent
+          // with the earlier exit's finite discharge; never force all drivers
+          // to the first ramp and thus move the whole bottleneck upstream.
+          const earlyTurns=hasLaterExit&&!signedApproach?localTurns:[];
+          const earlyDelay=earlyTurns.length?measuredDelayAhead(edge,k*edge.cellLength):0;
+          const earlyShare=earlyTurns.length?Math.min(
+            Math.max(...earlyTurns.map(link=>diversionShare(Math.max(0,earlyDelay-
+              exitDetours.get(link.to).durationS/60)))),
+            .75,earlyTurns.reduce((n,link)=>n+(localDischargeVph(localTerminal(edges[link.to]))||700),0)/
+              Math.max(700,edge.cellThroughVph[k],edge.referencePeakVph*.60))*closureShare:0;
+          const share=signedApproach?0:localShare>0?localShare:hasLaterExit?earlyShare:Math.max(closureShare,
             jamTurns.length?diversionShare(measuredDelayAhead(edge,k*edge.cellLength)):0);
           if(share>0){
-            const alternatives=localShare>0?localTurns:closureShare<=0?jamTurns:legalTurns.filter(link=>{
+            const alternatives=localShare>0||earlyShare>0?localTurns:closureShare<=0?jamTurns:legalTurns.filter(link=>{
               const target=edges[link.to];
               return (target.kind==="ramp"||
                 target.kind==="mainline"&&target.ref!==edge.ref)&&
@@ -2239,7 +2286,7 @@ function createLegacyTrafficScenario(data){
             diversionIntent=share;
             // A mandatory exit retains its assigned traffic when saturated.
             // Do not redistribute its cars onto the open mainline.
-            strictSplit=localShare>0||closureShare<=0;
+            strictSplit=localShare>0||earlyShare>0||closureShare<=0;
             const alternateKey=new Set(alternatives.map(link=>
               link.to+":"+link.toCell));
             const rawExitWeight=alternatives.reduce((n,link)=>n+link.weight,0);
@@ -2434,7 +2481,9 @@ function createLegacyTrafficScenario(data){
     // subject to exactly the same physical receiving capacity as local cars.
     // An overloaded re-entry queues OFF the motorway, rather than teleporting
     // vehicles into full cells or multiplying the model inventory.
-    for(let i=detourTrips.length-1;i>=0;i--){
+    // Serve the oldest ready trip at each return ramp first. Iterating in
+    // reverse previously let new batches jump a long off-network queue.
+    for(let i=0;i<detourTrips.length;i++){
       const trip=detourTrips[i];
       if(trip.readyAt>elapsed+dt)continue;
       const road=edges[trip.reentry];
@@ -2450,7 +2499,7 @@ function createLegacyTrafficScenario(data){
       outsideVehicles-=admitted;returnedVehicles+=admitted;
       trip.vehicles-=admitted;
       if(trip.vehicles<1e-7){
-        detourTrips.splice(i,1);detourBatchIndex.delete(trip.key);
+        detourTrips.splice(i--,1);detourBatchIndex.delete(trip.key);
       }
     }
     // Network boundaries were discharged as explicit movements above.

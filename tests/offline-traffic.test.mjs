@@ -518,6 +518,35 @@ test("growing accident queue reaches four-hour delay: all new through traffic ta
   conservation(s.totals());
 });
 
+test("prolonged full closure activates earlier real exits without abandoning the primary signed exit",async()=>{
+  const s=(await engine())({roads:[
+    ["approach","mainline","A3",3,[[50,7],[50,7.03],[50,7.08],[50,7.14],[50,7.145]],"",1],
+    ["blocked","mainline","A3",3,[[50,7.145],[50,7.18]],"",2],
+    ["after","mainline","A3",3,[[50,7.18],[50,7.19],[50,7.22]],"",3],
+    ["early","ramp","A3",1,[[50,7.03],[50.006,7.03]],"AS 1 · Abfahrt",4],
+    ["middle","ramp","A3",1,[[50,7.08],[50.006,7.08]],"AS 2 · Abfahrt",5],
+    ["last","ramp","A3",1,[[50,7.14],[50.006,7.14]],"AS 3 · Abfahrt",6],
+    ["return","ramp","A3",1,[[50.006,7.19],[50,7.19]],"AS 4 · Auffahrt",7]
+  ]});
+  s.setSimulationStart(Date.parse("2026-11-13T15:00:00Z"));
+  s.setDemandPercent(160);s.warmStart();
+  s.setEvent({id:"full",edgeId:"blocked",kind:"closure",offsetM:0,lengthM:100,
+    closedLanes:[0,1,2],speedKmh:0,shoulder:"normal",hasShoulder:false});
+  s.advance(12);
+  assert.equal(s.edgeActivity("early").divertedVehiclesOnEdge,0);
+  for(let i=0;i<40;i++)s.advance(12);
+  for(const id of ["early","middle","last"]){
+    const a=s.edgeActivity(id);
+    assert.ok(a.divertedVehiclesOnEdge>5,id+" must receive actual bypass traffic");
+    assert.ok(a.departedVph>600&&a.departedVph<=705,id+" retains finite ramp capacity");
+    assert.ok(s.detourPlans().some(p=>p.terminalEdgeId===id&&p.reentryEdgeId==="return"&&p.closureId==="full"),
+      "a long queue must not override the closure route with a return before the gate");
+  }
+  assert.ok(s.edgeActivity("blocked").enteredVph<1);
+  assert.ok(s.totals().returnedVehicles>100);
+  conservation(s.totals());
+});
+
 test("full closure sends ALL approaching demand to a legal exit, with ramp congestion instead of illegal driving",async()=>{
   const scenario=(await engine())({roads:[
     ["up","mainline","A3",3,[[50,7],[50,7.012],[50,7.02]],"",11],
@@ -1027,6 +1056,32 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
   assert.match(sim.queueRoadInfo(queue).location,/Dierdorf.*Ransbach-Baumbach/);
   assert.match(sim.queueRoadInfo(queue).bottleneck,/Ransbach-Baumbach/);
   assert.ok(sim.totals().returnedVehicles>0);
+  conservation(sim.totals());
+});
+
+test("simultaneous Diez and Dernbach closures never assign A48 Frankfurt traffic to the opposite Diez detour",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-18T07:00:00Z"));
+  sim.setDemandPercent(110);sim.warmStart();
+  for(const [id,edgeId,offsetM] of [["diez","A3-326086102",10],["montabaur","A3-232272183",50]])
+    sim.setEvent({id,edgeId,offsetM,kind:"closure",lengthM:100,closedLanes:[0,1,2],
+      speedKmh:0,shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<40;i++)sim.advance(12);
+  const plans=sim.detourPlans();
+  assert.ok(sim.designatedDetourRoutes("montabaur").some(s=>/A48.*Ransbach-Baumbach.*Montabaur/.test(s)));
+  assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-4452557"&&
+    p.reentryEdgeId==="extra-heumar-243834109"&&p.closureId==="montabaur"));
+  assert.ok(!plans.some(p=>p.closureId==="diez"&&
+    ["extra-heumar-26923440","extra-heumar-25149856","extra-heumar-4452557"].includes(p.terminalEdgeId)),
+    "unrelated opposite-direction closure must never claim these exits");
+  assert.ok(sim.edgeActivity("extra-heumar-4452557").departedVph>600);
+  assert.ok(sim.edgeActivity("extra-heumar-4452557").divertedVehiclesOnEdge>5);
+  assert.ok(sim.edgeActivity("extra-heumar-4007900").divertedVehiclesOnEdge>0,
+    "Limburg-Süd must already be used for the congested Diez approach");
+  assert.ok(sim.totals().returnedVehicles>100);
   conservation(sim.totals());
 });
 test("nonzero queue speeds produce harmonic average speed and a consistent travel delay",async()=>{
