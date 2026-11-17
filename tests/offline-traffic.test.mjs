@@ -1102,9 +1102,34 @@ test("simultaneous Diez and Dernbach closures never assign A48 Frankfurt traffic
     "unrelated opposite-direction closure must never claim these exits");
   assert.ok(sim.edgeActivity("extra-heumar-4452557").departedVph>600);
   assert.ok(sim.edgeActivity("extra-heumar-4452557").divertedVehiclesOnEdge>5);
-  assert.ok(sim.edgeActivity("extra-heumar-4007900").divertedVehiclesOnEdge>0,
-    "Limburg-Süd must already be used for the congested Diez approach");
+  assert.ok(sim.edgeActivity("extra-heumar-4007900").divertedVehiclesOnEdge<1,
+    "Limburg-Süd stays a normal exit until the queue physically approaches it");
   assert.ok(sim.totals().returnedVehicles>100);
+  conservation(sim.totals());
+});
+test("Wednesday 06:30 Montabaur to Diez: no remote diversion, finite exit and motorway spillback",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-18T04:45:00Z"));
+  sim.warmStart();
+  const evt=sim.setEvent({id:"full",edgeId:"A3-326086108",kind:"closure",closedLanes:[0,1,2],
+    offsetM:5,lengthM:100,speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  assert.match(evt.closureFrom,/Montabaur/);assert.match(evt.closureTo,/Diez/);
+  for(let i=0;i<45;i++)sim.advance(12);
+  assert.equal(sim.totals().simSeconds,2700);
+  for(const id of ["extra-heumar-24492798","extra-heumar-25149856","extra-heumar-8298586"])
+    assert.ok(sim.edgeActivity(id).divertedVehiclesOnEdge<1,id+" must not be used as a remote bypass");
+  assert.ok(sim.edgeActivity("ramp-a48-to-frankfurt").departedVph>500,"A48 remains connected to Montabaur");
+  assert.ok(sim.jamSummaries().some(g=>g.lengthM>=3000&&sim.queueRoadInfo(g).direction==="A3-frankfurt"&&
+    /Dernbach.*Montabaur/.test(sim.queueRoadInfo(g).location)));
+  const route=sim.detourRouteAccounting().find(r=>r.terminalEdgeId==="extra-heumar-30449934");
+  assert.ok(route&&route.arrived>300&&Math.abs(route.residual)<1e-6);
+  const terminal=route.terminalEdgeId,rates=new Set();
+  for(let i=0;i<12;i++){sim.advance(1);rates.add(sim.edgeActivity(terminal).localDischargeRateVph);}
+  assert.ok(rates.size>1&&Math.max(...rates)<=700,"variable junction discharge, not unlimited parallel ramp capacity");
+  assert.ok(sim.edgeActivity("extra-heumar-259584301").departedVph>500,"Diez reentry remains open");
   conservation(sim.totals());
 });
 test("nonzero queue speeds produce harmonic average speed and a consistent travel delay",async()=>{

@@ -1633,7 +1633,7 @@ function createLegacyTrafficScenario(data){
   function measuredDelayAhead(edge,offsetM,maxDistance=50000){
     const minute=Math.floor(elapsed/60);
     if(minute!==delayCacheMinute){delayCache.clear();delayCacheMinute=minute;}
-    const key=edge.id+":"+Math.floor(offsetM/100);
+    const key=edge.id+":"+Math.floor(offsetM/100)+":"+maxDistance;
     if(delayCache.has(key))return delayCache.get(key);
     let current=edge,from=Math.max(0,offsetM),distance=0,delay=0;
     const seen=new Set();
@@ -1772,6 +1772,17 @@ function createLegacyTrafficScenario(data){
   function localDischargeVph(edge){
     return edge?.kind==="ramp"&&localTerminal(edge)===edge?700*Math.min(2,edge.lanes):null;
   }
+  // Nominal capacity is an upper bound, not a constant discharge. At an
+  // overloaded local junction, conflicting traffic produces alternating
+  // gaps and short blocked periods. This is a deterministic model estimate,
+  // not measured signal timing or a surveyed priority-control plan.
+  function localDischargeRate(edge){
+    const nominal=localDischargeVph(edge);
+    if(nominal===null)return Infinity;
+    if(!terminalDetours.has(edge.index))return nominal;
+    const phase=(Math.floor(clockMs()/15000)+edge.index)%8;
+    return nominal*[1,.96,.84,.96,1,.88,.92,1][phase];
+  }
   // The public-road junction meters demand into an actual entrance. A
   // queue for that junction belongs outside the motorway model, not on a
   // freely draining on-ramp. Detoured and ordinary traffic share this limit.
@@ -1816,6 +1827,27 @@ function createLegacyTrafficScenario(data){
       if(end&&isUsableEscape(from,turn)){found={first:turn.to,terminal:end};return false;}
     });
     return found;
+  }
+  const downstreamExitMemo=new Map();
+  let downstreamExitEpoch=-1;
+  // An open transfer leading to a usable exit on the affected motorway is
+  // not a reason to leave the feeder motorway prematurely.
+  function hasOpenTransferToExit(road,offset){
+    if(downstreamExitEpoch!==exposureEpoch){downstreamExitMemo.clear();downstreamExitEpoch=exposureEpoch;}
+    const key=road.id+":"+Math.round(offset*100);
+    if(downstreamExitMemo.has(key))return downstreamExitMemo.get(key);
+    let found=false;
+    routeForks(road,offset,(from,turn)=>{
+      if(blockedMovement(from,turn))return;
+      const target=edges[turn.to];
+      const arrivals=target.kind==="mainline"?[{road:target,metre:turn.toM}]:
+        localTerminal(target)?[]:rampMainlineArrivals(target,(a,b)=>!blockedMovement(a,b));
+      for(const a of arrivals){
+        if(a.road.ref===road.ref||!Number.isFinite(closureDistanceAhead(a.road,a.metre,Infinity)))continue;
+        if(firstLocalExit(a.road,a.metre)){found=true;return false;}
+      }
+    });
+    downstreamExitMemo.set(key,found);return found;
   }
   const mandatoryMemo=new Map();
   let mandatoryEpoch=-1;
@@ -2353,7 +2385,7 @@ function createLegacyTrafficScenario(data){
           const signedApproach=designatedApproach.has(j)&&!Number.isFinite(distance)&&
             !legalTurns.some(t=>designatedTransfers.has(j+":"+t.to));
           const closureShare=signedApproach?0:Number.isFinite(distance)?1:
-            anyClosureActive?closureExposureAhead(edge,k*edge.cellLength,Infinity):0;
+            anyClosureActive&&!hasOpenTransferToExit(edge,k*edge.cellLength)?closureExposureAhead(edge,k*edge.cellLength,Infinity):0;
           // If motorists can still leave at a later OPEN AS/AK fork before
           // the closure, they must not all be forced off here kilometres
           // upstream. Ordinary local AS traffic retains its usual split.
@@ -2379,7 +2411,11 @@ function createLegacyTrafficScenario(data){
           // with the earlier exit's finite discharge; never force all drivers
           // to the first ramp and thus move the whole bottleneck upstream.
           const earlyTurns=hasLaterExit&&!signedApproach?localTurns:[];
-          const earlyDelay=earlyTurns.length?measuredDelayAhead(edge,k*edge.cellLength):0;
+          // Only a queue actually approaching this exit may activate a
+          // voluntary earlier bypass. A huge delay many junctions away is
+          // not sufficient to divert traffic in otherwise free flow.
+          const nearbyDelay=earlyTurns.length?measuredDelayAhead(edge,k*edge.cellLength,1500):0;
+          const earlyDelay=nearbyDelay>=3?measuredDelayAhead(edge,k*edge.cellLength):0;
           const earlyShare=earlyTurns.length?Math.min(
             Math.max(...earlyTurns.map(link=>diversionShare(Math.max(0,earlyDelay-
               exitDetours.get(link.to).durationS/60)))),
@@ -2470,8 +2506,13 @@ function createLegacyTrafficScenario(data){
         // connected to a verified downstream on-ramp return. Ordinary exits
         // are counted as trips ending outside this motorway extract.
         for(const opt of options)
-          if(opt.to!==j&&diversionIntent>0&&exitDetours.has(opt.to))
+          if(opt.to!==j&&diversionIntent>0&&exitDetours.has(opt.to)){
             opt.mark=true;
+            // Multiple ramp fragments or branches at one AS must not split
+            // the assigned traffic away from its actual public-road exit.
+            opt.newRouteTerminal=exitDetours.get(opt.to).terminal;
+            strictSplit=true;
+          }
         if(edge.kind==="mainline"&&!strictSplit&&diversionIntent===0&&
           options.some(opt=>opt.to!==j&&edges[opt.to].kind==="ramp")){
           const scale=localTurnScale(edge);
@@ -2492,7 +2533,7 @@ function createLegacyTrafficScenario(data){
           // A local public-road junction has a finite discharge rate. A
           // single lane with conflicting traffic is modelled at 700 veh/h
           // (calibration assumption), not at freeway ramp capacity.
-          const localCapacity=(localDischargeVph(edge)??Infinity)*dt/3600;
+          const localCapacity=localDischargeRate(edge)*dt/3600;
           const leaving=Math.min(available*outsideWeight/sum,localCapacity);
           delta[j][k]-=leaving;
           departedStep[j]+=leaving;
@@ -2538,9 +2579,10 @@ function createLegacyTrafficScenario(data){
           changeRoute(req.from,req.fromCell,req.routeTerminal,-amount);
           changeRoute(to,toCell,req.routeTerminal,amount);
         }
-        if(req.newRouteTerminal!==null&&newlyTagged>0){
-          changeRoute(to,toCell,req.newRouteTerminal,newlyTagged);
-          accountRoute(req.newRouteTerminal).assigned+=newlyTagged;
+        const assigned=req.mark?amount:newlyTagged;
+        if(req.newRouteTerminal!==null&&assigned>0){
+          changeRoute(to,toCell,req.newRouteTerminal,assigned);
+          accountRoute(req.newRouteTerminal).assigned+=assigned;
         }
         delta[req.from][req.fromCell]-=amount;
         delta[to][toCell]+=amount;
@@ -2781,6 +2823,7 @@ function createLegacyTrafficScenario(data){
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
       capacityVph:edge.lanes*edge.capacityPerLane,
       localDischargeVph:localDischargeVph(edge),
+      localDischargeRateVph:finite(localDischargeRate(edge))?localDischargeRate(edge):null,
       localAdmissionVph:finite(localAdmissionVph(edge))?localAdmissionVph(edge):null,
       localSourceDetourFraction:localSourceDetours.get(edge.index)?.fraction??0,
       lengthM:edge.lengthM,storageVehicles:edge.n*edge.jamPerCell,

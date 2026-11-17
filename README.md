@@ -224,3 +224,9 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Umgeleitete Verkehrsgruppen aus Autobahnüberleitungen behalten ihre tatsächliche Zielabfahrt über alle folgenden Verzweigungen. Die kürzeste legale Verbindung im gerichteten Autobahnnetz wird nach Streckenlänge bestimmt. Für jede Zielabfahrt lassen sich zugewiesene, abgefahrene und noch im Netz befindliche Fahrzeuge separat bilanzieren. Die reguläre Durchfahrt in die offene Richtung bleibt erhalten (OD-Anteile sind Modellannahmen).
 - Bei AD Dernbach → Montabaur gelangen A48-Fahrzeuge mit Frankfurt-Ziel über die offene Köln-Überleitung nach Ransbach-Baumbach. Bei Überlastung warten sie vor der Abfahrt, statt unterwegs auf andere Rampen verteilt zu werden. Lokale Frankfurt-Fahrten ab dem Abfahrtsknoten beginnen ihre Umfahrung direkt im nachgeordneten Netz.
 - Normale Zufahrt und wiederkehrender Umleitungsverkehr teilen sich an jeder echten lokalen Auffahrt einen gemeinsamen Zulauf von modellierten 700 Kfz/h je Spur (max. zwei Spuren). Überschüssige Nachfrage wartet im lokalen Netz. Rückstau auf Auffahrten bleibt bei überlasteter Einfädelung auf die Autobahn möglich, aber nicht durch unbegrenzten Zustrom bei freier Strecke.
+
+## SPCK 0.10.9 – Keine verfrühten Vollsperrungsumleitungen
+
+- Bei einer Vollsperrung bleibt die letzte geeignete Abfahrt vor der Sperre das primäre Ziel. Frühere Abfahrten werden nur bei tatsächlich nahem Rückstau und einem sinnvollen Zeitgewinn zur freiwilligen Umfahrung genutzt.
+- Ist die Weiterfahrt über eine offene Überleitung zur regulären Abfahrt noch möglich, wird die zuführende Autobahn nicht pauschal umgeleitet. Beispielsweise fährt die A48 bei Montabaur–Diez weiterhin zur AS Montabaur.
+- Auch bei direkten Abfahrten bleibt das zugewiesene Ende der Rampe über alle Rampenzweige erhalten. Die lokale Abflussrate schwankt modelliert unterhalb der nominalen Kapazität; sie ist keine gemessene Ampelsteuerung oder Vorfahrtsregelung.
