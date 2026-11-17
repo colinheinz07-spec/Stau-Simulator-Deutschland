@@ -59,8 +59,11 @@ test("planned event changes traffic only during the actual scenario clock",async
   assert.equal(saved.truncated,false);
   assert.equal(scenario.mode("b"),"none");
   assert.equal(scenario.mode("c"),"none");
+  const control=w.createLegacyTrafficScenario(fixture());
+  control.setSimulationStart(s.localInstant("2026-11-10","18:00"));
+  control.advance(12);
   scenario.advance(12);
-  assert.equal(scenario.speed("b"),120,"future roadworks never slow early traffic");
+  assert.equal(scenario.speed("b"),control.speed("b"),"future roadworks never slow early traffic relative to ordinary density");
   scenario.setSimulationStart(at);
   assert.equal(scenario.mode("b"),"roadworks");
   assert.equal(scenario.mode("c"),"roadworks",

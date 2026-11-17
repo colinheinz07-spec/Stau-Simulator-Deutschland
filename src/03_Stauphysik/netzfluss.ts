@@ -10,7 +10,7 @@ import type {RoadEdge,RoadNetwork,SpeedSample,TrafficCellBand} from '../model.js
 import {activeEvent,activeNetworkClosures,type SimEvent,type CorridorClosure}
   from '../04_Ereignisse.js';
 
-type CellEdge={edge:RoadEdge;lengthM:number;vehicles:Float64Array;jamCellVehicles:number};
+type CellEdge={edge:RoadEdge;lengthM:number;vehicles:Float64Array;jamCellVehicles:number;operatingVph:Float64Array};
 export interface FlowSettings {
   /** Spatial granularity; every original directed OSM edge remains separate. */
   targetCellLengthM?:number;
@@ -29,6 +29,15 @@ export interface FlowStatistics {
 interface Move {toId:string;capacityVph?:number;weight:number}
 const approximately=(x:number)=>Math.abs(x)<1e-9?0:x;
 const safeNonnegative=(v:number)=>Number.isFinite(v)&&v>=0;
+const clamp01=(x:number)=>Math.max(0,Math.min(1,x));
+// Same aggregate traffic-interaction coefficients as the offline SPCK
+// solver. Nominal lane capacity is an upper bound, not a free-flow test.
+function operatingState(density:number,merge:number,mainline:boolean){
+  if(!mainline)return {speedFactor:1,capacityFactor:1};
+  const interactions=clamp01((density-.055)/.19),pressure=clamp01((density-.10)/.23);
+  return {speedFactor:1-.24*interactions,
+    capacityFactor:1-.10*interactions-.08*pressure-.20*merge*interactions};
+}
 
 export class NetworkFlowEngine {
   readonly network:RoadNetwork;
@@ -36,6 +45,8 @@ export class NetworkFlowEngine {
   private readonly waveKmh:number;
   private readonly cells=new Map<string,CellEdge>();
   private readonly moves=new Map<string,Move[]>();
+  private readonly incomingMoves=new Map<string,string[]>();
+  private readonly movementFlow=new Map<string,number>();
   private readonly openBoundarySinks=new Set<string>();
   private readonly sourceIds:string[]=[];
   private readonly sourceBacklog=new Map<string,number>();
@@ -60,6 +71,7 @@ export class NetworkFlowEngine {
       const cellLength=edge.lengthM/count;
       this.cells.set(edge.id,{
         edge,lengthM:cellLength,vehicles:new Float64Array(count),
+        operatingVph:new Float64Array(count).fill(edge.lanes*edge.capacityPerLaneVph),
         jamCellVehicles:130*edge.lanes*cellLength/1000
       });
     }
@@ -76,6 +88,8 @@ export class NetworkFlowEngine {
       const arr=this.moves.get(from.edge.id)??[];
       arr.push({toId:to.edge.id,capacityVph:movement.capacityVph,weight});
       this.moves.set(from.edge.id,arr);
+      const parents=this.incomingMoves.get(to.edge.id)??[];
+      parents.push(from.edge.id);this.incomingMoves.set(to.edge.id,parents);
     }
     // The OSM extract is a WINDOW into the motorway network, not a
     // motorway termination. If only an off-ramp remains at its downstream
@@ -111,6 +125,11 @@ export class NetworkFlowEngine {
     if(!state)throw Error('Unbekannter OSM-Fahrweg: '+edgeId);
     return [...state.vehicles].reduce((total,n)=>total+n,0);
   }
+  operatingCapacityVph(edgeId:string,metre=0):number{
+    const state=this.cells.get(edgeId);
+    if(!state)throw Error('Unbekannter OSM-Fahrweg: '+edgeId);
+    return state.operatingVph[Math.max(0,Math.min(state.operatingVph.length-1,Math.floor(metre/state.lengthM)))]!;
+  }
   snapshot():FlowStatistics{
     let vehicles=0,waiting=0;
     for(const x of this.cells.values())
@@ -134,7 +153,7 @@ export class NetworkFlowEngine {
       for(const count of state.vehicles){
         const fraction=state.jamCellVehicles>0?
           Math.min(1,count/state.jamCellVehicles):0;
-        const speed=state.edge.freeSpeedKmh*
+        const speed=state.edge.freeSpeedKmh*operatingState(fraction,0,state.edge.kind==='mainline').speedFactor*
           (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
         inverseSpeedSum+=1/Math.max(1,speed);
       }
@@ -152,7 +171,7 @@ export class NetworkFlowEngine {
         const count=state.vehicles[i]!;
         const fraction=state.jamCellVehicles>0?
           Math.min(1,count/state.jamCellVehicles):0;
-        const speedKmh=state.edge.freeSpeedKmh*
+        const speedKmh=state.edge.freeSpeedKmh*operatingState(fraction,0,state.edge.kind==='mainline').speedFactor*
           (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
         if(count<Math.max(2,state.edge.lanes*1.2) ||
            fraction<=.23 || speedKmh>65)continue;
@@ -193,9 +212,11 @@ export class NetworkFlowEngine {
       const {edge,vehicles,lengthM,jamCellVehicles}=state;
       const outs=new Float64Array(vehicles.length),ins=new Float64Array(vehicles.length);
       const changes=new Float64Array(vehicles.length);
-      const freeTravelFraction=Math.min(1,(edge.freeSpeedKmh/3.6)*dt/lengthM);
       const waveFraction=Math.min(1,(this.waveKmh/3.6)*dt/lengthM);
       const affecting=activeById.get(id)??[];
+      const approaches=(this.incomingMoves.get(id)??[]).map(parent=>this.movementFlow.get(parent+'=>'+id)??0);
+      const total=approaches.reduce((a,b)=>a+b,0);
+      const merge=total>0?clamp01(2*(total-Math.max(...approaches))/total):0;
       for(let i=0;i<vehicles.length;i++){
         const a=i*lengthM,b=(i+1)*lengthM;
         let capacity=edge.capacityPerLaneVph*edge.lanes;
@@ -217,6 +238,12 @@ export class NetworkFlowEngine {
         }
         if(closed.size)
           capacity=Math.max(0,edge.lanes-closed.size)*edge.capacityPerLaneVph;
+        const density=vehicles[i]!/Math.max(.001,jamCellVehicles);
+        const dynamic=operatingState(density,i===0?merge:0,edge.kind==='mainline');
+        const restart=density>.60?.90:density>.42?.95:1;
+        capacity*=dynamic.capacityFactor*restart;
+        state.operatingVph[i]=forbiddenEntry||corridor.blockedEdgeIds.has(id)||closedByEvent.has(id)?0:capacity;
+        const freeTravelFraction=Math.min(1,(edge.freeSpeedKmh*dynamic.speedFactor/3.6)*dt/lengthM);
         const cap=capacity*dt/3600;
         outs[i]=Math.min(vehicles[i]!,cap,vehicles[i]!*freeTravelFraction);
         const room=Math.max(0,jamCellVehicles-vehicles[i]!);
@@ -248,8 +275,7 @@ export class NetworkFlowEngine {
         (!corridor.blockedEdgeIds.has(m.toId)||
           corridor.blockedEdgeIds.has(id))&&
         (!closedByEvent.has(m.toId)||closedByEvent.has(id))&&
-        !corridor.blockedMovementKeys.has(id+'=>'+m.toId)&&
-        (receive.get(m.toId)?.[0]??0)>0
+        !corridor.blockedMovementKeys.has(id+'=>'+m.toId)
       );
       // A real motorway may continue outside the mapped network even when
       // the extract retains its last one-lane off-ramp. Give the external
@@ -272,6 +298,7 @@ export class NetworkFlowEngine {
         proposals.set(choice.toId,list);
       }
     }
+    this.movementFlow.clear();
     for(const [toId,list] of proposals){
       const accepting=receive.get(toId)![0]!;
       const demand=list.reduce((a,p)=>a+p.amount,0);
@@ -279,6 +306,7 @@ export class NetworkFlowEngine {
       let total=0;
       for(const p of list){
         const amount=p.amount*scale;
+        this.movementFlow.set(p.fromId+'=>'+toId,amount*3600/dt);
         const fromChanges=delta.get(p.fromId)!;
         fromChanges[fromChanges.length-1]=fromChanges[fromChanges.length-1]!-amount;
         total+=amount;
