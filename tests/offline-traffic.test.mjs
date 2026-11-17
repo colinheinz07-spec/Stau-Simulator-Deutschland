@@ -544,6 +544,12 @@ test("prolonged full closure activates earlier real exits without abandoning the
   }
   assert.ok(s.edgeActivity("blocked").enteredVph<1);
   assert.ok(s.totals().returnedVehicles>100);
+  assert.equal(s.edgeActivity("return").localAdmissionVph,700);
+  assert.ok(s.edgeActivity("return").enteredVph<=705,
+    "normal and returning traffic must share the limited local entry service");
+  assert.equal(s.visualBands("return").length,0,
+    "a free motorway must not acquire a ramp jam from unlimited local-road demand");
+  assert.ok(s.totals().vehiclesOnDetours>100,"excess demand waits outside the ramp");
   conservation(s.totals());
 });
 
@@ -1034,7 +1040,12 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
     assert.ok(plans.some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-243834109"),
       "physical exit "+terminal+" must return at the first open Montabaur AS");
   assert.ok(sim.designatedDetourRoutes("full-montabaur").some(s=>/A48.*Ransbach-Baumbach.*Montabaur/.test(s)));
-  for(let i=0;i<22;i++)sim.advance(12);
+  let initialFallbackAssigned=0;
+  for(let i=0;i<22;i++){
+    sim.advance(12);
+    if(i===14)initialFallbackAssigned=sim.detourRouteAccounting().find(x=>
+      x.terminalEdgeId==="extra-heumar-25149856")?.assigned??0;
+  }
   const ransbach=sim.edgeActivity("extra-heumar-8298586");
   assert.equal(ransbach.localDischargeVph,700);
   assert.ok(ransbach.departedVph>550&&ransbach.departedVph<=705,"finite local junction discharge");
@@ -1056,6 +1067,18 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
   assert.match(sim.queueRoadInfo(queue).location,/Dierdorf.*Ransbach-Baumbach/);
   assert.match(sim.queueRoadInfo(queue).bottleneck,/Ransbach-Baumbach/);
   assert.ok(sim.totals().returnedVehicles>0);
+  const accounting=sim.detourRouteAccounting();
+  const signed=accounting.find(x=>x.terminalEdgeId==="extra-heumar-4452557");
+  assert.ok(signed&&signed.assigned>100&&signed.arrived>50,
+    "Frankfurt transfer vehicles must reach their assigned physical Ransbach exit");
+  assert.ok(signed.arrived+signed.remaining>100);
+  for(const route of accounting)assert.ok(Math.abs(route.residual)<1e-6,
+    "assigned vehicles must reach their own exit or remain visibly in the corridor");
+  const fallback=accounting.find(x=>x.terminalEdgeId==="extra-heumar-25149856");
+  assert.ok(initialFallbackAssigned>0&&fallback&&Math.abs(fallback.assigned-initialFallbackAssigned)<1e-6,
+    "once traffic already beyond Ransbach has evacuated, no new Frankfurt traffic may be sent to Höhr");
+  assert.ok(sim.edgeActivity("extra-heumar-807709863").localSourceDetourFraction>0,
+    "Frankfurt-bound origins at the signed exit start their bypass locally, not via Höhr");
   conservation(sim.totals());
 });
 
