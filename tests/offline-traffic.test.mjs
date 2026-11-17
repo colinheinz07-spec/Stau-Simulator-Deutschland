@@ -494,6 +494,30 @@ test("diversion grows from 45 minutes to full willingness at 240 minutes",async(
   assert.equal(scenario.diversionShare(360),1);
 });
 
+test("growing accident queue reaches four-hour delay: all new through traffic takes real exit and returns behind it",async()=>{
+  const s=(await engine())({roads:[
+    ["up","mainline","A3",3,[[50,7],[50,7.012],[50,7.022]],"",11],
+    ["jam","mainline","A3",3,[[50,7.022],[50,7.22]],"",12],
+    ["after","mainline","A3",3,[[50,7.22],[50,7.226],[50,7.25]],"",13],
+    ["out","ramp","A3",1,[[50,7.012],[50.006,7.014]],"AS 1 · Abfahrt von A3",14],
+    ["in","ramp","A3",1,[[50.005,7.226],[50,7.226]],"AS 2 · Auffahrt auf A3",15]
+  ]});
+  s.setSimulationStart(Date.parse("2026-11-13T12:00:00Z"));
+  s.setDemandPercent(145);s.warmStart();
+  s.setEvent({id:"acc",kind:"accident",edgeId:"jam",offsetM:13600,lengthM:100,
+    closedLanes:[0,1,2],speedKmh:0,shoulder:"normal",hasShoulder:false});
+  s.advance(12);
+  assert.ok(s.routingDelayAhead("up",850)<45,"initially not a long queue");
+  assert.equal(s.totals().detouredVehicles,0);
+  for(let i=0;i<65;i++)s.advance(12);
+  assert.ok(s.routingDelayAhead("up",850)>=240);
+  assert.ok(s.edgeActivity("jam").enteredVph<1,"no new vehicles enter the severe queue past the exit");
+  assert.ok(s.edgeActivity("out").departedVph>650&&s.edgeActivity("out").departedVph<=705);
+  assert.ok(s.detourPlans().some(p=>p.terminalEdgeId==="out"&&p.reentryEdgeId==="in"));
+  assert.ok(s.totals().returnedVehicles>100,"diverted vehicles reenter the correct direction");
+  conservation(s.totals());
+});
+
 test("full closure sends ALL approaching demand to a legal exit, with ramp congestion instead of illegal driving",async()=>{
   const scenario=(await engine())({roads:[
     ["up","mainline","A3",3,[[50,7],[50,7.012],[50,7.02]],"",11],
@@ -1068,7 +1092,8 @@ test("legacy service areas are removed even with misleading AS labels; genuine e
     runInNewContext(await readFile(path,"utf8"),{window:w});
   const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
   for(const id of [407503235,407503237,546687699,546687703,407502471,407502472,
-    31056168,1512535542,384059762,407505963]){
+    31056168,1512535542,384059762,407505963,38028821,38050873,
+    372478868,372478869,536172766]){
     const rows=w.STAU_LEGACY_GEOMETRY.roads.filter(r=>r[6]===id);
     assert.ok(rows.length);
     for(const row of rows)assert.equal(sim.hasEdge(row[0]),false,row[0]);
@@ -1076,7 +1101,7 @@ test("legacy service areas are removed even with misleading AS labels; genuine e
   for(const id of ["extra-heumar-5201206","extra-heumar-25149763",
     "extra-heumar-26923440","extra-heumar-8298586","extra-heumar-5217076"])
     assert.equal(sim.hasEdge(id),true,id);
-  assert.ok(sim.totals().excludedRest>=40);
+  assert.ok(sim.totals().excludedRest>=52);
   assert.equal(sim.hasEdge("extra-turn-A3-frankfurt-to-A3-koeln-5217076"),false);
   assert.equal(sim.edgeActivity("extra-heumar-26923440").localDischargeVph,700);
 });
@@ -1101,6 +1126,19 @@ test("Montabaur upstream one-lane incident does not block ordinary exit; Dernbac
   assert.ok(sim.speed("extra-heumar-5201206")>30,"upstream accident must not create false exit gridlock");
   assert.ok(sim.edgeActivity("extra-heumar-310778679").enteredVph<1,
     "ordinary exit traffic must not be routed back onto the motorway");
+  conservation(sim.totals());
+});
+
+test("Friday peak near Montabaur reaches over 4000 vehicles per hour on actual motorway cells",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-13T12:00:00Z"));
+  sim.warmStart();
+  for(let i=0;i<48;i++)sim.advance(12);
+  assert.ok(sim.edgeActivity("A3-310863190").sectionVph>4000);
+  assert.ok(sim.edgeActivity("A48-108889855").sectionVph>3000);
   conservation(sim.totals());
 });
 

@@ -200,3 +200,10 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Ein doppelt importierter, unvollständiger Wendefahrweg bei Rösrath wurde ebenso ausgeschlossen; die tatsächliche Abfahrt bleibt erhalten.
 - Reguläre Abfahrten enden am öffentlichen Straßennetz. Ein anschließender Auffahrtszweig zieht nicht automatisch abfahrende Fahrzeuge zurück auf die Autobahn; Umleitungsverkehr kehrt über die dafür vorgesehenen Auffahrten zurück.
 - Am AD Dernbach gelten vorläufig unterschiedliche Zielanteile für A3 Richtung Köln → A48 (40 %) und A3 Richtung Frankfurt → A48 (15 %). Die Werte sind Modellkalibrierungen, keine erhobenen Fahrbeziehungen. Die tatsächlich ankommenden Mengen können abweichen. Ausgelastete Überleitungen behalten ihre zugeordneten Fahrzeuge und erzeugen kapazitätsabhängigen Rückstau.
+
+## SPCK 0.10.5 – Sperrgrenzen und Stauumleitungen
+
+- Lokale Anschlussstellen verwenden den nachgewiesenen Abfahrtspunkt auch bei einem Klick zwischen Abfahrt und Kartenbeschriftung. Diez → Montabaur beginnt deshalb nicht mehr versehentlich in Limburg-Nord.
+- Weitere fünf Rastanlagen-Wege werden unabhängig vom Import-ID-Präfix ausgeschlossen. Durchgehende Fahrbahnen und echte Anschlussstellen bleiben im Modell.
+- Höhere Werktags-Referenzspitzen für A3 (5.000 Kfz/h je Richtung) und A48 (3.200 Richtung Dernbach, 2.500 Richtung Koblenz) sind Modellannahmen; an den Wochenenden bleiben die bisherigen Profile erhalten.
+- Stauanzeige und Umleitungsentscheidung nutzen dieselbe Untergrenze von 1 km/h. Fahrbare Umleitungen mit tatsächlicher Ab- und Auffahrt werden bereits bei Ereignisbeginn vorbereitet und abhängig vom Zeitverlust aktiviert (ab 45 min zunehmend, ab 240 min vollständig). Die Rampenkapazität bleibt beschränkt; die Fahrzeuge können deshalb vor der Abfahrt warten müssen.

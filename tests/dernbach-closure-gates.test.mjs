@@ -72,6 +72,18 @@ test("Ransbach to Dierdorf Köln must not close remote A48/AD Dernbach access",a
     "Dierdorf on-ramp for return stays open");
 });
 
+test("Diez exit fork, before AS centre: closure starts at Diez not Limburg-Nord",async()=>{
+  const sim=await realNet();
+  for(const [id,m] of [["A3-326086102",10],["A3-326086096",30],["A3-25341152",100]]){
+    const e=full(sim,"diez",id,m);
+    assert.match(e.closureFrom,/A3 41 Diez/);
+    assert.match(e.closureTo,/A3 40 Montabaur/);
+    assert.equal(sim.closureGatePoints().find(p=>p.type==="start"&&p.eventId==="diez").edgeId,"A3-326086102");
+    assert.equal(closed(sim,"A3-35484162"),false,"Limburg-Nord approach stays open");
+    assert.equal(closed(sim,"A3-326086101"),false,"mainline before Diez exit stays open");
+  }
+});
+
 test("full closure: through traffic continues past earlier off-ramps to LAST lawful exit",async()=>{
   const window={};
   for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])

@@ -30,7 +30,8 @@ const sunday = [[0, .14], [4, .13], [8, .18], [10, .40], [12, .63], [15, .79], [
 const exponent = { transit: 1.4, koblenz: 1.25, ring: 1.15, airport: 1.2, urban: 1.3, siegtal: 1.3 };
 const REFERENCE_PEAKS = {
     'extra-a1-dortmund': 2900, 'extra-a1-koblenz': 2850,
-    'A3-koeln': 4200, 'A3-frankfurt': 4100, 'A48-dernbach': 2400, 'A48-koblenz': 1700,
+    // Regional scenario calibration, not official traffic-counter data.
+    'A3-koeln': 5000, 'A3-frankfurt': 5000, 'A48-dernbach': 3200, 'A48-koblenz': 2500,
     'extra-a59-koeln': 3600, 'extra-a59-bonn': 3600,
     'extra-a4-aachen': 4200, 'extra-a4-olpe': 4300,
     // These retained A555 corridors include one-lane AK Köln-Süd turning arms.
@@ -209,7 +210,7 @@ function regionFor(key,ref,points){
 function profileFactor(key,ref,ms,points=[]){
   const clock=localClock(ms),day=clock.day,hour=clock.hour;
   const family=regionFor(key,ref,points),base=weekday[family]||weekday.transit;
-  let raw;
+  let raw,directionWeekend=1;
   if(day===0||day===6){
     const weekend=day===0?sunday:saturday;
     const curve=weekend.map(([h,v])=>[h,h===0||h===24?base[0][1]:v]);
@@ -218,12 +219,17 @@ function profileFactor(key,ref,ms,points=[]){
     if(family==="urban"||family==="siegtal")raw*=1-.18*s;
     if(family==="koblenz")raw*=1-.24*s;
     if(family==="airport")raw+=.08*s;
+    // New peak calibration is for workday traffic. Preserve the independently
+    // calibrated weekend loads instead of scaling those up indiscriminately.
+    const weekendPeak={"A3-koeln":4200,"A3-frankfurt":4100,
+      "A48-dernbach":2400,"A48-koblenz":1700}[key];
+    if(weekendPeak)directionWeekend=weekendPeak/REFERENCE_PEAKS[key];
   }else{
     raw=smoothInterpolate(day===5?friday[family]:base,hour);
     const scale=day===2?.98:day===4?1.02:day===5?(family==="transit"?1.06:.94):1;
     raw*=1+(scale-1)*Math.sin(Math.PI*hour/24)**2;
   }
-  let direction=1;
+  let direction=directionWeekend;
   if(day!==0&&day!==6){
     const morning=Math.max(0,1-Math.abs(hour-(family==="transit"?7.75:7.4))/2.5);
     const evening=Math.max(0,1-Math.abs(hour-(day===5?14.5:16.75))/2.5);
