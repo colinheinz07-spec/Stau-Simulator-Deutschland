@@ -1142,6 +1142,41 @@ test("Friday peak near Montabaur reaches over 4000 vehicles per hour on actual m
   conservation(sim.totals());
 });
 
+test("weekday overnight freeway profile retains through traffic without inflating local ramps",async()=>{
+  const window={};
+  runInNewContext(await readFile("web/traffic-reference.js","utf8"),{window});
+  const t=window.StauTrafficReference;
+  const point=[[50.446,7.83],[50.445,7.82]];
+  const wed=Date.parse("2026-11-18T03:15:00Z"),sun=Date.parse("2026-11-15T03:15:00Z");
+  for(const [ref,key] of [["A3","A3-koeln"],["A61","extra-a61-nord"],
+    ["A1","extra-a1-dortmund"],["A4","extra-a4-aachen"],["A48","A48-dernbach"]]){
+    const main=t.profileFactor(key,ref,wed,point,"mainline");
+    const local=t.profileFactor(key,ref,wed,point,"ramp");
+    assert.ok(main>local*1.5,ref+" preserves through traffic overnight");
+    assert.ok(main>t.profileFactor(key,ref,sun,point,"mainline"),ref+" Sunday is quieter");
+  }
+  const key="A3-koeln",factor=t.profileFactor(key,"A3",wed,point);
+  assert.ok(factor*t.REFERENCE_PEAKS[key]>=1000);
+  assert.ok(t.profileFactor(key,"A3",Date.parse("2026-11-18T11:00:00Z"),point)>=.75,
+    "A3 has substantial daytime demand even outside rush hour");
+});
+
+test("Wednesday 04:15 Montabaur mainline flows retain substantial traffic in both directions",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-18T02:15:00Z"));
+  sim.warmStart();
+  for(let i=0;i<60;i++)sim.advance(12);
+  for(const id of ["A3-310863190","A3-310863191"]){
+    const flow=sim.edgeActivity(id).sectionVph;
+    assert.ok(flow>=600&&flow<=1800,id+" actual flow: "+flow);
+  }
+  assert.equal(sim.jamSummaries().length,0);
+  conservation(sim.totals());
+});
+
 test("A48 receiving bottleneck backs up both Dernbach transfer ramps",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])

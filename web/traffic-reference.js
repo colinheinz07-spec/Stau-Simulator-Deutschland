@@ -1,7 +1,7 @@
 /* Traffic demand reference, ported from Traffic-Sinulator/02_Verkehr.js
  * and 02_Verkehr/anschlussstellen-nachfrage.js (13 Nov 2026).
  * Directional PEAK-HOUR scenario references; never interpreted as DTV.
- * Original weekday/friday/weekend curve tables retained exactly.
+ * Commuter curves plus separately calibrated through-traffic component.
  * No network source may be created merely because a road Way is disconnected.
  */
 (function(root){
@@ -28,6 +28,29 @@ const friday = {
 const saturday = [[0, .14], [3, .15], [6, .14], [8, .28], [10, .54], [12, .78], [15, .85], [17, .76], [20, .61], [23, .25], [24, .14]];
 const sunday = [[0, .14], [4, .13], [8, .18], [10, .40], [12, .63], [15, .79], [17, .92], [19, .76], [21, .46], [23, .23], [24, .14]];
 const exponent = { transit: 1.4, koblenz: 1.25, ring: 1.15, airport: 1.2, urban: 1.3, siegtal: 1.3 };
+// Minimum combined long-distance passenger and freight demand, as a fraction
+// of the directional peak: not measured hourly values. Calibration anchor:
+// BASt 2019 AD Dernbach VQ Süd, as published in FIRU GfI report P20-081/B5
+// (Aug 2025), pp. 10–11: DTV 106366, night mean 1489 Kfz/h (both directions),
+// night goods-vehicle groups 10.5% and 26.3%. Workday night demand is higher
+// than the weekly night average. Never apply this to a local ramp source.
+const THROUGH_PROFILE_SCALE={A3:1,A61:1,A1:.90,A4:.85,A48:.70};
+const THROUGH_WEEKDAY=[[0,.22],[1,.20],[2,.19],[3,.22],[4,.26],[4.5,.31],
+  [5,.36],[6,.52],[7,.75],[8,.76],[9,.76],[12,.76],[15,.76],[18,.70],
+  [20,.48],[22,.29],[23,.24],[24,.22]];
+const THROUGH_SATURDAY=[[0,.20],[2,.14],[4,.13],[6,.15],[8,.18],[12,.20],
+  [18,.20],[22,.15],[24,.095]];
+const THROUGH_SUNDAY=[[0,.095],[2,.07],[4,.07],[6,.08],[8,.12],[16,.14],
+  [21,.14],[22,.15],[23,.19],[24,.20]];
+function throughTrafficFloor(ref,clock,holiday){
+  const scale=THROUGH_PROFILE_SCALE[ref];
+  if(!scale)return 0;
+  const curve=holiday||clock.day===0?THROUGH_SUNDAY:
+    clock.day===6?THROUGH_SATURDAY:THROUGH_WEEKDAY;
+  // Floor is already expressed on the final demand scale. Applying the
+  // commuter exponent again would erase most overnight through traffic.
+  return scale*smoothInterpolate(curve,clock.hour);
+}
 const REFERENCE_PEAKS = {
     'extra-a1-dortmund': 2900, 'extra-a1-koblenz': 2850,
     // Regional scenario calibration, not official traffic-counter data.
@@ -207,7 +230,7 @@ function regionFor(key,ref,points){
   if(ref==="A3"&&points?.some(p=>p[0]>50.84&&p[1]<7.17))return "ring";
   return familyByRef[ref]||"transit";
 }
-function profileFactor(key,ref,ms,points=[]){
+function profileFactor(key,ref,ms,points=[],kind="mainline"){
   const clock=localClock(ms),day=clock.day,hour=clock.hour;
   const family=regionFor(key,ref,points),base=weekday[family]||weekday.transit;
   let raw,directionWeekend=1;
@@ -244,7 +267,9 @@ function profileFactor(key,ref,ms,points=[]){
   }
   const exp=exponent[family]||1.3;
   const context=calendarStatus(ref,points,ms);
-  return Math.max(0,(raw<1?raw**exp:raw)*direction*context.factor);
+  const commuter=(raw<1?raw**exp:raw)*direction;
+  const through=kind==="mainline"?throughTrafficFloor(ref,clock,context.holiday):0;
+  return Math.max(0,commuter,through)*context.factor;
 }
 function referenceForRoad(row){
   const ref=row[2]||"",points=row[4],name=row[5]||"";

@@ -171,7 +171,7 @@ export function createTrafficScenario(network){
       hour:moment.getUTCHours()+moment.getUTCMinutes()/60};
     for(const entry of sources){
       const factor=traffic?traffic.profileFactor(entry.key,entry.ref,clockMs,
-        entry.edge.geometry):demandFactor(common,'transit');
+        entry.edge.geometry,entry.edge.kind):demandFactor(common,'transit');
       demand[entry.id]=entry.base*(demandPercent/100)*factor;
     }
     let info;

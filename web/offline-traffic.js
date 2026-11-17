@@ -1454,16 +1454,32 @@ function createLegacyTrafficScenario(data){
     if(!finite(Number(pct))||Number(pct)>200)throw Error("Verkehrslast muss 0–200 % sein");
     demandPercent=Number(pct);
   }
-  // Exact weekday/friday/weekend curves and directional 1-hour peak inputs
-  // ported from the old Traffic-Sinulator, shared with the full-map adapter.
+  // Weekday/friday/weekend profiles with motorway-specific through demand,
+  // shared with the full-map adapter. Local ramp demand remains separate.
   function sourceFactor(edge,time){
     const minute=Math.floor(time/60000);
     if(edge.lastProfileMinute!==minute){
       edge.profileFactor=traffic.profileFactor(edge.directionKey,edge.ref,time,
-        rowById.get(edge.id)[4]);
+        rowById.get(edge.id)[4],edge.kind);
       edge.lastProfileMinute=minute;
     }
     return edge.profileFactor;
+  }
+  const localTurnScaleCache=new Map();
+  let localTurnScaleMinute=-1;
+  // When long-distance demand grows, the regular local destinations cannot
+  // consume the same fraction as at rush hour. Scale only the ordinary
+  // local off-ramp weights, never motorway-to-motorway transfer weights or
+  // forced diversions. The vehicles remaining on the mainline are conserved.
+  function localTurnScale(edge){
+    const now=clockMs(),minute=Math.floor(now/60000);
+    if(minute!==localTurnScaleMinute){localTurnScaleCache.clear();localTurnScaleMinute=minute;}
+    if(localTurnScaleCache.has(edge.id))return localTurnScaleCache.get(edge.id);
+    const row=rowById.get(edge.id),profile=traffic.referenceForRoad(row);
+    const through=traffic.profileFactor(profile.key,edge.ref,now,row[4],"mainline");
+    const local=traffic.profileFactor(profile.key,edge.ref,now,row[4],"ramp");
+    const scale=through>0?Math.max(.15,Math.min(1,local/through)):1;
+    localTurnScaleCache.set(edge.id,scale);return scale;
   }
   function closureDistanceAhead(edge,offsetM,maxDistance=16000){
     let current=edge,from=Math.max(0,offsetM),travelled=0;
@@ -2295,6 +2311,16 @@ function createLegacyTrafficScenario(data){
         for(const opt of options)
           if(opt.to!==j&&diversionIntent>0&&exitDetours.has(opt.to))
             opt.mark=true;
+        if(edge.kind==="mainline"&&!strictSplit&&diversionIntent===0&&
+          options.some(opt=>opt.to!==j&&edges[opt.to].kind==="ramp")){
+          const scale=localTurnScale(edge);
+          if(scale<.999)for(const opt of options){
+            const target=edges[opt.to];
+            if(target.kind!=="ramp")continue;
+            const terminal=localTerminal(target);
+            if(terminal&&/\bAS\b|Abfahrt/i.test(terminal.name))opt.weight*=scale;
+          }
+        }
         if(!options.length&&!outsideWeight)continue;
         if(options.length>1&&hasLegalClosureDetour&&!strictSplit)
           splitSources.push({from:j,cell:k,available,options});
