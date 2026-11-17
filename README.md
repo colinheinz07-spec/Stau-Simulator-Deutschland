@@ -230,3 +230,9 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Bei einer Vollsperrung bleibt die letzte geeignete Abfahrt vor der Sperre das primäre Ziel. Frühere Abfahrten werden nur bei tatsächlich nahem Rückstau und einem sinnvollen Zeitgewinn zur freiwilligen Umfahrung genutzt.
 - Ist die Weiterfahrt über eine offene Überleitung zur regulären Abfahrt noch möglich, wird die zuführende Autobahn nicht pauschal umgeleitet. Beispielsweise fährt die A48 bei Montabaur–Diez weiterhin zur AS Montabaur.
 - Auch bei direkten Abfahrten bleibt das zugewiesene Ende der Rampe über alle Rampenzweige erhalten. Die lokale Abflussrate schwankt modelliert unterhalb der nominalen Kapazität; sie ist keine gemessene Ampelsteuerung oder Vorfahrtsregelung.
+
+## SPCK 0.10.10 – Anschlussstellen mit Kreisverkehr
+
+- Geschlossene lokale Rampenzyklen im Autobahnextrakt werden graphbasiert erkannt. Wenn eine echte Abfahrt ausschließlich in einen solchen Kreisverkehr ohne importierten öffentlichen Straßenabfluss führt, endet der modellierte Autobahnverkehr am realen Kreisverkehrszulauf. Es werden keine neuen Straßen und keine künstlichen Abfahrten erzeugt; Autobahnkreuze und -dreiecke bleiben davon unberührt.
+- Damit bleibt auch eine Abfahrt mit ausgelassenem untergeordneten Straßennetz als letzte zulässige Umleitungsabfahrt nutzbar. Der Abfluss ist begrenzt und umgeleitete Fahrzeuge kehren erst hinter der Sperrung zurück. Regressionsfälle: Neustadt/Wied → Bad Honnef sowie ein unabhängiges A4-Testnetz.
+- Fehlt ein eigenständiger Ortsstraßenausgang und führen sämtliche Rampenzweige ausschließlich zurück zu einer lokalen Auffahrt derselben Anschlussstelle, wird die Grenze zum untergeordneten Netz am realen Übergang erkannt. Prüfung aller 73 bezeichneten Abfahrten im mitgelieferten Netz sowie ein eigener A59-Wahn-Sperrungsfall.

@@ -584,6 +584,36 @@ test("full closure sends ALL approaching demand to a legal exit, with ramp conge
     "the physical queue dissolves after the motorway reopens");
 });
 
+test("generic local roundabout with omitted public road is a usable exit, not an infinite ramp cycle",async()=>{
+  const roads=[
+    ["up","mainline","A4",3,[[50,7],[50,7.01],[50,7.03],[50,7.035]],"",1],
+    ["blocked","mainline","A4",3,[[50,7.035],[50,7.06]],"",2],
+    ["after","mainline","A4",3,[[50,7.06],[50,7.065],[50,7.09]],"",3],
+    ["early","ramp","A4",1,[[50,7.01],[50.003,7.01]],"AS 1 · Abfahrt",4],
+    ["exit","ramp","A4",1,[[50,7.03],[50.002,7.03]],"AS 2 · Abfahrt",5],
+    ["entry","ramp","A4",2,[[50.002,7.03],[50.003,7.03]],"AS 2 · Rampenzweig",6],
+    ["circle-a","ramp","A4",1,[[50.003,7.03],[50.0035,7.031],[50.004,7.03]],"AS 2 · Rampenzweig",7],
+    ["circle-b","ramp","A4",1,[[50.004,7.03],[50.0035,7.029],[50.003,7.03]],"AS 2 · Rampenzweig",8],
+    ["return","ramp","A4",1,[[50.003,7.065],[50,7.065]],"AS 3 · Auffahrt",9]
+  ];
+  const s=(await engine())({roads});
+  assert.equal(s.edgeActivity("entry").boundaryExit,true);
+  assert.equal(s.edgeActivity("entry").localDischargeVph,700);
+  assert.equal(s.reachable("circle-a"),false,"no trapped circulation on the omitted public-road junction");
+  s.setSimulationStart(Date.parse("2026-11-13T15:00:00Z"));s.warmStart();
+  s.setEvent({id:"full",edgeId:"blocked",kind:"closure",offsetM:0,lengthM:100,
+    closedLanes:[0,1,2],speedKmh:0,shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<5;i++)s.advance(12);
+  assert.ok(s.detourPlans().some(p=>p.terminalEdgeId==="entry"&&p.reentryEdgeId==="return"));
+  assert.ok(s.edgeActivity("entry").departedVph>100,JSON.stringify(s.edgeActivity("entry")));
+  assert.equal(s.detourRouteAccounting().some(r=>r.terminalEdgeId==="early"&&r.assigned>0),false);
+  conservation(s.totals());
+  // The same geometry at an AK is not a public-road sink: its loops must
+  // never become invented local exits merely because they are cyclic.
+  const motorway=(await engine())({roads:roads.map(r=>[...r.slice(0,5),r[5].replace("AS 2","AK 2"),...r.slice(6)])});
+  assert.equal(motorway.edgeActivity("entry").boundaryExit,false);
+});
+
 test("A3 Heumar–Köln-Ost closes the A59 exactly from AD Porz, including the whole trapped feeder",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
@@ -1130,6 +1160,50 @@ test("Wednesday 06:30 Montabaur to Diez: no remote diversion, finite exit and mo
   for(let i=0;i<12;i++){sim.advance(1);rates.add(sim.edgeActivity(terminal).localDischargeRateVph);}
   assert.ok(rates.size>1&&Math.max(...rates)<=700,"variable junction discharge, not unlimited parallel ramp capacity");
   assert.ok(sim.edgeActivity("extra-heumar-259584301").departedVph>500,"Diez reentry remains open");
+  conservation(sim.totals());
+});
+test("Neustadt/Wied to Bad Honnef: the last local roundabout exit works, Neuwied stays normal",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-18T05:00:00Z"));sim.warmStart();
+  const evt=sim.setEvent({id:"full",edgeId:"A3-326138752",kind:"closure",closedLanes:[0,1,2],
+    offsetM:5,lengthM:100,speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  assert.match(evt.closureFrom,/Neustadt/);assert.match(evt.closureTo,/Bad Honnef/);
+  const actualExit="extra-heumar-556849668",priorExit="extra-heumar-24492231";
+  assert.equal(sim.edgeActivity(actualExit).boundaryExit,true);
+  assert.equal(sim.closureBands("extra-heumar-4927299").length,0);
+  assert.equal(sim.closureBands("extra-heumar-556852241").length,0);
+  for(let i=0;i<30;i++)sim.advance(12);
+  const accounts=sim.detourRouteAccounting(),route=accounts.find(a=>a.terminalEdgeId===actualExit);
+  assert.ok(route&&route.arrived>250&&Math.abs(route.residual)<1e-6);
+  assert.ok(!accounts.some(a=>a.terminalEdgeId===priorExit&&a.assigned>1));
+  assert.ok(sim.detourPlans().some(p=>p.terminalEdgeId===actualExit&&p.reentryEdgeId==="extra-heumar-556852241"));
+  assert.ok(sim.edgeActivity(actualExit).departedVph>550);
+  assert.ok(sim.jamSummaries().some(g=>/Neustadt\/Wied/.test(sim.queueRoadInfo(g).bottleneck||"")));
+  conservation(sim.totals());
+});
+test("all named local exits in the imported network have a public-road boundary, including A59 Wahn",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  const exits=w.STAU_LEGACY_GEOMETRY.roads.filter(r=>r[1]==="ramp"&&/\bAS\b.*· Abfahrt/.test(r[5])&&sim.hasEdge(r[0]));
+  assert.ok(exits.length>=73);
+  for(const r of exits){
+    const terminal=sim.edgeActivity(r[0]).localExitTerminalId;
+    assert.ok(terminal,r[5]+" has no actual external exit");
+    assert.equal(sim.edgeActivity(terminal).boundaryExit,true,r[5]);
+  }
+  sim.setSimulationStart(Date.parse("2026-11-18T05:00:00Z"));sim.warmStart();
+  const evt=sim.setEvent({id:"full",edgeId:"extra-a59-bonn",kind:"closure",closedLanes:[0,1,2],
+    offsetM:8500,lengthM:100,speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  assert.match(evt.closureFrom,/Wahn/);assert.match(evt.closureTo,/Lind/);
+  for(let i=0;i<15;i++)sim.advance(12);
+  const terminals=["extra-heumar-315516300","extra-heumar-10526454"];
+  assert.ok(sim.detourRouteAccounting().some(a=>terminals.includes(a.terminalEdgeId)&&a.arrived>50));
+  assert.ok(sim.detourPlans().some(p=>terminals.includes(p.terminalEdgeId)&&p.closureId==="full"));
   conservation(sim.totals());
 });
 test("nonzero queue speeds produce harmonic average speed and a consistent travel delay",async()=>{

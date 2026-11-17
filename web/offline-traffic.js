@@ -311,6 +311,84 @@ function createLegacyTrafficScenario(data){
       }
     }
   }
+  // A motorway-only extract may retain a local roundabout as motorway_link
+  // fragments but omit the public road leaving it. Such a closed ramp cycle
+  // is a public-road boundary, not a motorway destination. Cut the incoming
+  // approach at the actual roundabout entry, without inventing any geometry.
+  // Detect this structurally for all named AS, never at motorway AK/AD loops.
+  const localRoundaboutBoundaries=new Set();
+  const rampJunction=e=>e.name.split(" · ")[0].trim();
+  const localRoundaboutRamp=e=>e.kind==="ramp"&&/\bAS\b/i.test(rampJunction(e))&&
+    !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(rampJunction(e));
+  const closedRampCycles=new Set(),cycleIndex=new Map(),cycleLow=new Map();
+  const cycleStack=[],cycleOnStack=new Set();let cycleSerial=0;
+  function findLocalCycle(e){
+    const index=cycleSerial++;cycleIndex.set(e.index,index);cycleLow.set(e.index,index);
+    cycleStack.push(e);cycleOnStack.add(e.index);
+    for(const t of e.links){
+      const next=edges[t.to];
+      if(!localRoundaboutRamp(next)||rampJunction(e)!==rampJunction(next))continue;
+      if(!cycleIndex.has(next.index)){
+        findLocalCycle(next);cycleLow.set(e.index,Math.min(cycleLow.get(e.index),cycleLow.get(next.index)));
+      }else if(cycleOnStack.has(next.index))
+        cycleLow.set(e.index,Math.min(cycleLow.get(e.index),cycleIndex.get(next.index)));
+    }
+    if(cycleLow.get(e.index)!==index)return;
+    const component=[];let member;
+    do{member=cycleStack.pop();cycleOnStack.delete(member.index);component.push(member);}while(member!==e);
+    const members=new Set(component.map(x=>x.index));
+    if(component.length>=2&&component.every(x=>x.links.length&&x.links.every(t=>members.has(t.to))))
+      for(const x of component)closedRampCycles.add(x.index);
+  }
+  for(const e of edges)if(localRoundaboutRamp(e)&&!cycleIndex.has(e.index))findLocalCycle(e);
+  // Only sever an exclusive ingress reachable from a genuine motorway exit.
+  // The roundabout and approach remain visible on the original OSM map.
+  const exitReachable=new Set(),exitWork=edges.filter(e=>localRoundaboutRamp(e)&&/· Abfahrt\b/i.test(e.name));
+  for(let i=0;i<exitWork.length;i++){
+    const e=exitWork[i];if(exitReachable.has(e.index))continue;
+    exitReachable.add(e.index);
+    for(const t of e.links){const target=edges[t.to];
+      if(localRoundaboutRamp(target)&&rampJunction(target)===rampJunction(e)&&
+        !/· Auffahrt\b/i.test(target.name))exitWork.push(target);
+    }
+  }
+  function terminateLocalApproach(e){
+    for(const t of e.links){const target=edges[t.to];target.incoming--;
+      if(t.toM<.01)target.incomingAtStart--;
+    }
+    e.links.length=0;e.next.length=0;for(const links of e.linksFrom)links.length=0;
+  }
+  for(const e of edges){
+    if(!exitReachable.has(e.index)||closedRampCycles.has(e.index)||!e.links.length||
+      !e.links.every(t=>closedRampCycles.has(t.to)&&t.fromM>=e.lengthM-.1&&
+        rampJunction(edges[t.to])===rampJunction(e)))continue;
+    localRoundaboutBoundaries.add(e.index);terminateLocalApproach(e);
+  }
+  // Another incomplete local extract can join the exit to its own on-ramp
+  // through unnamed ramp fragments, omitting the public-road intersection.
+  // Apply the same existing exit/entrance boundary rule across those
+  // fragments, ONLY when the signed off-ramp has no other real local sink
+  // and every remaining path leads to a named entrance at the same AS.
+  for(const exit of exitWork){
+    if(!/· Abfahrt\b/i.test(exit.name))continue;
+    const pending=[exit],seen=new Set(),boundaries=new Set();let invalid=false;
+    for(let i=0;i<pending.length&&!invalid;i++){
+      const e=pending[i];if(seen.has(e.index))continue;seen.add(e.index);
+      if(!e.links.length){invalid=true;break;} // existing real local exit
+      const allEntrance=e.links.every(t=>{
+        const target=edges[t.to];return localRoundaboutRamp(target)&&rampJunction(target)===rampJunction(exit)&&
+          /· Auffahrt\b/i.test(target.name)&&t.fromM>=e.lengthM-.1&&t.toM<.01;
+      });
+      if(allEntrance){boundaries.add(e);continue;}
+      for(const t of e.links){const target=edges[t.to];
+        if(!localRoundaboutRamp(target)||rampJunction(target)!==rampJunction(exit)||/· Auffahrt\b/i.test(target.name)){
+          invalid=true;break;
+        }
+        pending.push(target);
+      }
+    }
+    if(!invalid&&boundaries.size)for(const e of boundaries)terminateLocalApproach(e);
+  }
   // Source provenance matters: an orphaned OSM ramp Way is NOT a
   // residential on-ramp. Select a single upstream boundary per directional
   // motorway corridor, and only distinctly named on-ramp heads for AS traffic.
@@ -1770,7 +1848,8 @@ function createLegacyTrafficScenario(data){
     localTerminalMemo.set(first.index,end);return end;
   }
   function localDischargeVph(edge){
-    return edge?.kind==="ramp"&&localTerminal(edge)===edge?700*Math.min(2,edge.lanes):null;
+    return edge?.kind==="ramp"&&localTerminal(edge)===edge?
+      700*(localRoundaboutBoundaries.has(edge.index)?1:Math.min(2,edge.lanes)):null;
   }
   // Nominal capacity is an upper bound, not a constant discharge. At an
   // overloaded local junction, conflicting traffic produces alternating
@@ -2823,6 +2902,7 @@ function createLegacyTrafficScenario(data){
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
       capacityVph:edge.lanes*edge.capacityPerLane,
       localDischargeVph:localDischargeVph(edge),
+      localExitTerminalId:localTerminal(edge)?.id??null,
       localDischargeRateVph:finite(localDischargeRate(edge))?localDischargeRate(edge):null,
       localAdmissionVph:finite(localAdmissionVph(edge))?localAdmissionVph(edge):null,
       localSourceDetourFraction:localSourceDetours.get(edge.index)?.fraction??0,
