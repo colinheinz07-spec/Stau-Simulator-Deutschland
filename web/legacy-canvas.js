@@ -21,10 +21,9 @@ function distance(a,b){
 }
 function clamp(n,a,b){return Math.min(b,Math.max(a,n));}
 function format(n){return n.toLocaleString("de-DE");}
-function prepareGeometry(data){
-  const service=/\b(?:rastst[aä]tte|rastplatz|rastanlage|autohof|p\s*\+?\s*wc|pwc|service\s*area|rest\s*area)\b/i;
+function prepareGeometry(data,scenario){
   return data.roads.filter(row=>Array.isArray(row[4])&&row[4].length>1&&
-    !(row[1]==="ramp"&&service.test(row[5]||""))).map(row=>{
+    scenario.hasEdge(String(row[0]))).map(row=>{
     const path=row[4].map(merc);
     let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity,meters=0;
     const cumulative=[0];
@@ -94,7 +93,7 @@ async function startLegacyCanvas(existingMap=null){
   const junctionToggle=$("toggle-junctions");
   const selection=$("detail-drawer");
   const backdrop=$("drawer-backdrop");
-  const segments=prepareGeometry(data);
+  const segments=prepareGeometry(data,scenario);
   const segmentById=new Map(segments.map(road=>[road.id,road]));
   const roadRows=new Map(data.roads.map(row=>[row[0],row]));
   function jamRoadInfo(id,offset,group){

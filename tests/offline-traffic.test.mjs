@@ -977,7 +977,7 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
     speedKmh:0,hasShoulder:false,shoulder:"normal"});
   sim.advance(1);
   const plans=sim.detourPlans();
-  for(const terminal of ["extra-heumar-8298586","extra-heumar-4452557","extra-heumar-31056168"])
+  for(const terminal of ["extra-heumar-8298586","extra-heumar-4452557","extra-heumar-25149856"])
     assert.ok(plans.some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-243834109"),
       "physical exit "+terminal+" must return at the first open Montabaur AS");
   assert.ok(sim.designatedDetourRoutes("full-montabaur").some(s=>/A48.*Ransbach-Baumbach.*Montabaur/.test(s)));
@@ -995,7 +995,7 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
   for(const id of ["extra-heumar-8298586","extra-heumar-4452557"])
     assert.ok(sim.visualBands(id).some(b=>b.color==="jam"||b.color==="standstill"),
       "overloaded exit ramp must be rendered red, not green: "+id);
-  assert.ok(sim.edgeActivity("extra-heumar-31056168").enteredVph>100,"vehicles already beyond Ransbach exit via Höhr");
+  assert.ok(sim.edgeActivity("extra-heumar-25149856").enteredVph>100,"vehicles already beyond Ransbach exit via the actual Höhr AS");
   assert.ok(sim.jamSummaries().some(g=>g.endEdgeId==="A3-326138758"&&g.lengthM>500),
     "saturated local exit spills back onto A3");
   const queue=sim.jamSummaries().find(g=>g.endEdgeId==="A3-326138758");
@@ -1050,7 +1050,7 @@ test("Dernbach Köln closure: A48 exits at Höhr and returns at Ransbach",async(
     offsetM:50,lengthM:100,closedLanes:[0,1,2],speedKmh:0,shoulder:"normal",hasShoulder:false});
   assert.match(e.closureFrom,/AD Dernbach/);assert.match(e.closureTo,/Ransbach/);
   for(let i=0;i<25;i++)sim.advance(12);
-  const terminal="extra-heumar-1512535542";
+  const terminal="extra-heumar-26923440";
   assert.ok(sim.detourPlans().some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-807709861"));
   assert.ok(sim.edgeActivity(terminal).divertedVehiclesOnEdge>0);
   assert.ok(sim.edgeActivity(terminal).departedVph<=705);
@@ -1059,5 +1059,66 @@ test("Dernbach Köln closure: A48 exits at Höhr and returns at Ransbach",async(
     "Höhr exit backlog must be visible when overloaded");
   assert.ok(sim.edgeActivity("ramp-a48-to-frankfurt").enteredVph>100);
   assert.ok(sim.jamSummaries().every(g=>Number.isFinite(g.delayMin)));
+  conservation(sim.totals());
+});
+
+test("legacy service areas are removed even with misleading AS labels; genuine exits remain",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  for(const id of [407503235,407503237,546687699,546687703,407502471,407502472,
+    31056168,1512535542,384059762,407505963]){
+    const rows=w.STAU_LEGACY_GEOMETRY.roads.filter(r=>r[6]===id);
+    assert.ok(rows.length);
+    for(const row of rows)assert.equal(sim.hasEdge(row[0]),false,row[0]);
+  }
+  for(const id of ["extra-heumar-5201206","extra-heumar-25149763",
+    "extra-heumar-26923440","extra-heumar-8298586","extra-heumar-5217076"])
+    assert.equal(sim.hasEdge(id),true,id);
+  assert.ok(sim.totals().excludedRest>=40);
+  assert.equal(sim.hasEdge("extra-turn-A3-frankfurt-to-A3-koeln-5217076"),false);
+  assert.equal(sim.edgeActivity("extra-heumar-26923440").localDischargeVph,700);
+});
+
+test("Montabaur upstream one-lane incident does not block ordinary exit; Dernbach turns are directional",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-13T15:00:00Z"));
+  sim.warmStart();
+  // Measure actual flows, not a rendered arrow or a configured ratio alone.
+  for(let i=0;i<40;i++)sim.advance(12);
+  const north=sim.edgeActivity("ramp-a3-to-a48-from-frankfurt").enteredVph;
+  const south=sim.edgeActivity("ramp-a3-to-a48-from-koeln").enteredVph;
+  assert.ok(north>south*2,"northbound A3 transfers more traffic to A48: "+north+" vs "+south);
+  sim.setEvent({id:"upstream",edgeId:"A3-35484170",kind:"accident",
+    offsetM:200,lengthM:100,closedLanes:[0,1],speedKmh:40,shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<80;i++)sim.advance(12);
+  const local=sim.edgeActivity("extra-heumar-23608535");
+  assert.ok(local.departedVph>30&&local.departedVph<700,"local B255 exit remains usable");
+  assert.ok(sim.speed("extra-heumar-5201206")>30,"upstream accident must not create false exit gridlock");
+  assert.ok(sim.edgeActivity("extra-heumar-310778679").enteredVph<1,
+    "ordinary exit traffic must not be routed back onto the motorway");
+  conservation(sim.totals());
+});
+
+test("A48 receiving bottleneck backs up both Dernbach transfer ramps",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-13T15:00:00Z"));
+  sim.setDemandPercent(180);sim.warmStart();
+  sim.setEvent({id:"downstream",edgeId:"A48-1308398832",kind:"accident",
+    offsetM:30,lengthM:100,closedLanes:[0,1],speedKmh:40,shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<15;i++)sim.advance(12);
+  for(const id of ["ramp-a3-to-a48-from-frankfurt","ramp-a3-to-a48-from-koeln"]){
+    assert.ok(sim.visualBands(id).some(b=>b.color==="jam"||b.color==="standstill"),id);
+    assert.ok(sim.edgeActivity(id).enteredVph>sim.edgeActivity(id).departedVph);
+  }
+  assert.ok(sim.edgeActivity("ramp-a3-to-a48-from-frankfurt").vehicles>
+    sim.edgeActivity("ramp-a3-to-a48-from-koeln").vehicles);
   conservation(sim.totals());
 });

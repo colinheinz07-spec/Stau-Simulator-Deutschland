@@ -8,6 +8,29 @@
 "use strict";
 const R=6371000,rad=Math.PI/180;
 const REST=/\b(?:rastst[aä]tte|rastplatz|rastanlage|autohof|p\s*\+?\s*wc|pwc|service\s*area|rest\s*area)\b/i;
+// Legacy coordinate-only import assigned nearby AS names to service-road
+// stubs. They are not motorway junctions, even if labelled "Abfahrt".
+// Keep the through carriageways; omit these legacy OSM ways from graph AND map.
+const LEGACY_SERVICE_WAYS=new Set([
+  407503235,407503237,546687699,546687703, // Siegburg
+  407502471,407502472,407502474,407502475, // Königsforst
+  407505963,407505964,407505965,407505966, // Logebachtal
+  407512342,407512344,407517109, // Epgert / rest facilities north of Neustadt
+  30039941,31056168,384057209,384059762,1512535542,1512535543,
+  1343420595,1343420596,1343420600,1343420601,92793838,381079143,
+  288145297,118225174,303423552,647918374,
+  150282076,718456776,168502894,535463201,535465039,535469311,
+  407515692,407515693,5200961,8205921,23328071,27005343,
+  384052261,384052268,384052273,384055828
+]);
+const isLegacyService=row=>row[1]==="ramp"&&(REST.test(row[5]||"")||
+  (/^extra-(?:heumar-|osm-link-)/.test(String(row[0]))&&LEGACY_SERVICE_WAYS.has(Number(row[6]))));
+// Approximate directional turning proportions (not measured OD counts).
+// "from-frankfurt" means northbound A3 traffic, and vice versa.
+const DERNBACH_TURN_WEIGHTS=new Map([
+  ["ramp-a3-to-a48-from-frankfurt",13.3333333333], // 40 %
+  ["ramp-a3-to-a48-from-koeln",3.5294117647] // 15 %
+]);
 const colourForSpeed=s=>s>65?"free":s>30?"slow":s>10?"jam":"standstill";
 const coord=p=>p.map(n=>Number(n).toFixed(7)).join(",");
 const lengthM=pts=>{
@@ -156,7 +179,12 @@ function createLegacyTrafficScenario(data){
   let excludedRest=0;
   for(const row of data.roads){
     if(!Array.isArray(row[4])||row[4].length<2)continue;
-    if(row[1]==="ramp"&&REST.test(row[5]||"")){excludedRest++;continue;}
+    if(isLegacyService(row)){excludedRest++;continue;}
+    // The old import also synthesized an A3 U-turn at Rösrath by cutting
+    // the real exit Way 5217076 in half. The original exit is retained;
+    // the duplicate ends in the middle of it and cannot serve any traffic.
+    if(row[0]==="extra-turn-A3-frankfurt-to-A3-koeln-5217076"&&
+      rowById.has("extra-heumar-5217076"))continue;
     const id=String(row[0]),lanes=Math.max(1,Math.min(6,Math.floor(Number(row[3])||1)));
     const meters=lengthM(row[4]);
     if(meters<0.2||byId.has(id))continue;
@@ -224,6 +252,13 @@ function createLegacyTrafficScenario(data){
   const linkKeys=new Set();
   function connect(from,to,fromM,toM){
     if(from.index===to.index)return;
+    // Compact OSM data often omits the public road between the two ramps.
+    // A same-AS exit ending exactly at an entrance is a local-road boundary,
+    // not an automatic U-shaped path that rejoins the congested motorway.
+    if(from.kind==="ramp"&&to.kind==="ramp"&&
+      /\bAS\b.*· Abfahrt/i.test(from.name)&&/\bAS\b.*· Auffahrt/i.test(to.name)&&
+      from.name.split(" · ")[0]===to.name.split(" · ")[0]&&
+      fromM>=from.lengthM-.01&&toM<.01)return;
     // A bidirectional connector is not a U-turn at either of its ends.
     if(from.twoWay&&to.twoWay&&from.osm===to.osm)return;
     const fromCell=Math.max(0,Math.min(from.n-1,
@@ -234,7 +269,8 @@ function createLegacyTrafficScenario(data){
     linkKeys.add(key);
     // Legacy app used roughly 5–12 % exits at ordinary junctions,
     // not the previous 25 % per exit. Interchanges may branch more.
-    const weight=to.kind==="mainline"?20:1.5;
+    const weight=to.kind==="mainline"?20:
+      (from.ref==="A3"&&from.kind==="mainline"?DERNBACH_TURN_WEIGHTS.get(to.id):undefined)??1.5;
     const link={to:to.index,fromCell,toCell,fromM,toM,weight};
     from.links.push(link);from.linksFrom[fromCell].push(link);
     to.incoming++;
@@ -1155,7 +1191,10 @@ function createLegacyTrafficScenario(data){
         // closures remain separately visible as event/closure overlays.
         if(edge.stock[k]>=1)minSpeed=Math.min(minSpeed,speed);
         const congested=edge.kind==="ramp"?
-          fraction>.35&&edge.stock[k]>=Math.min(2,edge.jamPerCell*.35):
+          (fraction>.35&&edge.stock[k]>=Math.min(2,edge.jamPerCell*.35))||
+          // A moving queue on a long off-ramp may occupy less than 35 %
+          // of jam storage while its actual measured flow is already slow.
+          (fraction>.18&&edge.stock[k]>=2&&measured<=30&&localTerminal(edge)!==null):
           edge.stock[k]>=Math.max(2,edge.lanes*1.2)&&fraction>.23;
         const color=congested?colourForSpeed(measured):"free";
         if(color!=="free"){
@@ -1670,8 +1709,8 @@ function createLegacyTrafficScenario(data){
         !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(junctionLabel(ramp))){
         end=ramp;break;
       }
-      if(ramp.links.every(t=>edges[t.to].kind==="ramp"))
-        for(const turn of ramp.links)work.push(edges[turn.to]);
+      for(const turn of ramp.links)
+        if(edges[turn.to].kind==="ramp")work.push(edges[turn.to]);
     }
     localTerminalMemo.set(first.index,end);return end;
   }
@@ -2097,18 +2136,21 @@ function createLegacyTrafficScenario(data){
             x.fromM<=(k+1)*edge.cellLength+.001);
         if(k<edge.n-1&&receive[j][k+1]>0&&!crossesClosureGate)
           options.push({to:j,toCell:k+1,weight:20});
+        // A local off-ramp can have both a public-road terminal and a
+        // return-to-motorway branch at the same junction. Drivers leaving
+        // here must keep the terminal route even when the on-ramp is full.
+        const terminal=edge.kind==="ramp"?localTerminal(edge):null;
+        const localFork=terminal&&terminal!==edge&&/\bAS\b|Abfahrt/i.test(terminal.name);
         const legalTurns=edge.linksFrom[k].filter(link=>
-          !blockedMovement(edge,link));
+          !blockedMovement(edge,link)&&(!localFork||localTerminal(edges[link.to])));
         for(const link of legalTurns){
           if(receive[link.to][link.toCell]>0)options.push({...link});
         }
         // Keep the nominal destination split even when a genuine local exit
         // is full. A stopped off-ramp cannot make its assigned vehicles
         // disappear into another open route, nor vice versa.
-        if(edge.kind==="ramp"&&legalTurns.length>1||edge.kind==="mainline"&&legalTurns.some(t=>{
-          const end=localTerminal(edges[t.to]);
-          return end&&/\bAS\b|Abfahrt/i.test(end.name)||designatedTransfers.has(j+":"+t.to);
-        })){
+        if(edge.kind==="ramp"&&legalTurns.length>1||edge.kind==="mainline"&&legalTurns.some(t=>
+          edges[t.to].kind==="ramp"||edges[t.to].ref!==edge.ref)){
           if(k<edge.n-1&&!crossesClosureGate&&!options.some(x=>x.to===j))
             options.push({to:j,toCell:k+1,weight:20});
           for(const link of legalTurns)
@@ -2525,7 +2567,7 @@ function createLegacyTrafficScenario(data){
   return {advance,step,reset,warmStart,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,queueRoadInfo,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
-    edgeActivity,reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
+    edgeActivity,hasEdge:id=>byId.has(id),reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
     recommendedClosureLength,closureAccessPoints,closureGatePoints,
     movementBlocked:(fromId,toId)=>{
       const from=byId.get(fromId);

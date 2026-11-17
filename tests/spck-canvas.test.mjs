@@ -69,8 +69,11 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   runInNewContext(dashboard,{window,document});
   await window.startLegacyCanvas();
   while(frames.length)frames.shift()();
-  assert.equal(element("chip-roads").textContent,"1.931 Fahrwege");
-  assert.equal(element("chip-ramps").textContent,"945 Rampen");
+  const model=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
+  assert.equal(element("chip-roads").textContent,model.edgeCount().toLocaleString("de-DE")+" Fahrwege");
+  assert.equal(element("chip-ramps").textContent,window.STAU_LEGACY_GEOMETRY.roads
+    .filter(r=>r[1]==="ramp"&&model.hasEdge(r[0])).length.toLocaleString("de-DE")+" Rampen");
+  assert.equal(model.hasEdge("extra-heumar-546687699"),false);
   assert.match(element("map-status").textContent,/Modell 0 min/);
   assert.match(element("sim-local-time").textContent,/^\d{2}:\d{2}$/);
   assert.equal(element("jam-count").textContent,"0");

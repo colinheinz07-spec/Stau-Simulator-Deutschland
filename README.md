@@ -193,3 +193,10 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Kurze zusätzliche Fahrstreifen (bis 900 m zwischen gleich breiten gerichteten Hauptfahrbahnen) im kompakten OSM-Bestand werden als Ein-/Ausfädelungsstreifen behandelt. Das ist eine aus der Geometrie abgeleitete Annahme, keine flächendeckend vermessene Spurklassifikation. Dauerhafte Verbreiterungen und uneindeutige Knoten bleiben unverändert.
 - Abfahrten behalten ihre Zielverteilung auch bei begrenztem Empfang; kurze belastete Rampen können farbig erscheinen. Die Karte zeigt schlankere Linien und weniger Stauboxen, die Liste enthält weiterhin alle ermittelten Staus.
 - Bei AD Dernbach → Ransbach Richtung Köln nutzt der betroffene A48-Anteil die reale Abfahrt Höhr-Grenzhausen und die Auffahrt Ransbach Richtung Köln; der Frankfurter Anteil nutzt weiter die offene Überleitung.
+
+## SPCK 0.10.4 – Rastanlagen und richtungsabhängige Rampen
+
+- Die im Koordinatenbestand fälschlich als Anschlussstellen beschrifteten Rastanlagen-Rampen werden aus Simulation und Kartenoverlay entfernt. Die durchgehende Autobahn bleibt bestehen.
+- Ein doppelt importierter, unvollständiger Wendefahrweg bei Rösrath wurde ebenso ausgeschlossen; die tatsächliche Abfahrt bleibt erhalten.
+- Reguläre Abfahrten enden am öffentlichen Straßennetz. Ein anschließender Auffahrtszweig zieht nicht automatisch abfahrende Fahrzeuge zurück auf die Autobahn; Umleitungsverkehr kehrt über die dafür vorgesehenen Auffahrten zurück.
+- Am AD Dernbach gelten vorläufig unterschiedliche Zielanteile für A3 Richtung Köln → A48 (40 %) und A3 Richtung Frankfurt → A48 (15 %). Die Werte sind Modellkalibrierungen, keine erhobenen Fahrbeziehungen. Die tatsächlich ankommenden Mengen können abweichen. Ausgelastete Überleitungen behalten ihre zugeordneten Fahrzeuge und erzeugen kapazitätsabhängigen Rückstau.
