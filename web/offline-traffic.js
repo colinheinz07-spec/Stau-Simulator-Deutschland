@@ -123,6 +123,31 @@ function createLegacyTrafficScenario(data){
     if(match&&knownRefs.has(match[0]))row[2]=match[0];
   }
   const reversedWays=orientExistingMotorwayChains(data);
+  // The compact snapshot includes auxiliary merge/diverge lanes in OSM
+  // lanes. A short N+1 island bounded by N through lanes on the same
+  // directed carriageway is treated as auxiliary, not extra freeway capacity.
+  // Keep longer genuine widenings and ambiguous branches unchanged.
+  if(!data._throughLanesNormalized){
+    const starts=new Map(),ends=new Map(),roads=data.roads.filter(r=>r[1]==="mainline"&&r[2]&&r[4]?.length>1);
+    const index=(map,key,row)=>{const list=map.get(key)||[];list.push(row);map.set(key,list);};
+    const key=(row,point)=>row[2]+":"+coord(point);
+    for(const r of roads){index(starts,key(r,r[4][0]),r);index(ends,key(r,r[4].at(-1)),r);}
+    const corrections=new Map();
+    for(const r of roads){
+      const before=ends.get(key(r,r[4][0]))||[];
+      if(before.length!==1||Number(before[0][3])!==Number(r[3])-1)continue;
+      const island=[];let now=r,total=0;
+      while(now&&now[3]===r[3]&&!island.includes(now)&&total<=900){
+        island.push(now);total+=lengthM(now[4]);
+        const next=starts.get(key(now,now[4].at(-1)))||[];
+        now=next.length===1?next[0]:null;
+      }
+      if(now&&Number(now[3])===Number(r[3])-1&&total<=900)
+        for(const part of island)corrections.set(part,Number(r[3])-1);
+    }
+    for(const [row,lanes] of corrections)row[3]=lanes;
+    Object.defineProperty(data,"_throughLanesNormalized",{value:true,configurable:true});
+  }
   const edges=[],outByNode=new Map(),inByNode=new Map(),byId=new Map();
   const rowById=new Map(data.roads.map(row=>[String(row[0]),row]));
   const NO_EFFECTS=Object.freeze([]);
@@ -462,6 +487,17 @@ function createLegacyTrafficScenario(data){
     const newOffset=Math.max(0,Math.min(edge.lengthM-.001,
       edge.lengthM-old-eventLength));
     return {...raw,offsetM:newOffset};
+  }
+  function restoreEvent(raw){
+    const edge=raw&&byId.get(raw.edgeId);
+    // A saved complete closure from a pre-normalization four-lane Way
+    // must remain a complete closure when only three through lanes remain.
+    // Do not relax validation of newly created partial-lane events.
+    if(edge&&raw.kind==="closure"&&Array.isArray(raw.closedLanes)&&
+      raw.closedLanes.length===edge.lanes+1&&
+      Array.from({length:edge.lanes+1},(_,i)=>i).every(i=>raw.closedLanes.includes(i)))
+      raw={...raw,closedLanes:Array.from({length:edge.lanes},(_,i)=>i)};
+    return setEvent(raw);
   }
   function listEvents(){
     return [...eventRecords.values()].map(record=>({...record.spec,
@@ -1118,14 +1154,21 @@ function createLegacyTrafficScenario(data){
         // No vehicle = no measured travel speed. Capacity restrictions and
         // closures remain separately visible as event/closure overlays.
         if(edge.stock[k]>=1)minSpeed=Math.min(minSpeed,speed);
-        const congested=edge.stock[k]>=Math.max(2,edge.lanes*1.2)&&fraction>.23;
+        const congested=edge.kind==="ramp"?
+          fraction>.35&&edge.stock[k]>=Math.min(2,edge.jamPerCell*.35):
+          edge.stock[k]>=Math.max(2,edge.lanes*1.2)&&fraction>.23;
         const color=congested?colourForSpeed(measured):"free";
         if(color!=="free"){
           const previous=bands.at(-1);
           if(previous&&previous.color===color&&Math.abs(previous.toM-a)<.001){
+            const oldLength=previous.toM-previous.fromM;
+            previous.travelMin+=edge.cellLength*60/1000/Math.max(1,measured);
             previous.toM=b;
-            previous.speedKmh=Math.min(previous.speedKmh,measured);
-          }else bands.push({fromM:a,toM:b,color,speedKmh:measured});
+            previous.speedKmh=(oldLength+edge.cellLength)*60/1000/previous.travelMin;
+            previous.worstKmh=Math.min(previous.worstKmh,measured);
+            previous.delayLowerBound ||= measured<1;
+          }else bands.push({fromM:a,toM:b,color,speedKmh:Math.max(1,measured),
+            worstKmh:measured,travelMin:edge.cellLength*60/1000/Math.max(1,measured),delayLowerBound:measured<1});
         }
       }
       edge.speed=minSpeed;
@@ -1143,15 +1186,16 @@ function createLegacyTrafficScenario(data){
         const m=band.toM-band.fromM;
         const delay=Math.max(0,(m/1000)*60*
           (1/Math.max(5,band.speedKmh)-1/edge.freeKmh));
-        const travelMin=band.speedKmh>1?m/1000*60/band.speedKmh:Infinity;
+        const travelMin=band.travelMin??m/1000*60/Math.max(1,band.speedKmh);
         const freeMin=m/1000*60/edge.freeKmh;
         const last=local.at(-1);
         if(last&&Math.abs(last.toM-band.fromM)<.02){
           last.toM=band.toM;last.delayMin+=delay;last.travelMin+=travelMin;last.freeMin+=freeMin;
-          last.worstKmh=Math.min(last.worstKmh,band.speedKmh);
+          last.worstKmh=Math.min(last.worstKmh,band.worstKmh??band.speedKmh);
+          last.delayLowerBound ||= band.delayLowerBound;
         }else{
           const item={index:pieces.length,edgeId:edge.id,fromM:band.fromM,
-            toM:band.toM,delayMin:delay,travelMin,freeMin,worstKmh:band.speedKmh};
+            toM:band.toM,delayMin:delay,travelMin,freeMin,worstKmh:band.worstKmh??band.speedKmh,delayLowerBound:band.delayLowerBound};
           pieces.push(item);local.push(item);
         }
       }
@@ -1189,6 +1233,7 @@ function createLegacyTrafficScenario(data){
       g.segments.push(piece);
       g.lengthM+=len;g.delayMin+=piece.delayMin;g.travelMin+=piece.travelMin;g.freeMin+=piece.freeMin;
       g.worstKmh=Math.min(g.worstKmh,piece.worstKmh);
+      g.delayLowerBound ||= piece.delayLowerBound;
       if(len>g.longestM){
         g.longestM=len;g.edgeId=piece.edgeId;
         g.offsetM=(piece.fromM+piece.toM)/2;
@@ -1231,10 +1276,10 @@ function createLegacyTrafficScenario(data){
         publicGroup.meanKmh=Number.isFinite(travelMin)&&travelMin>0?g.lengthM/1000*60/travelMin:0;
         publicGroup.routingDelayMin=g.delayMin;
         const travelDelay=travelMin-freeMin;
-        // A snapshot cannot predict when a blocked route will reopen.
-        // Extremely long extrapolations from creeping traffic are equally unreliable.
-        const closedAhead=head&&closureDistanceAhead(byId.get(head.edgeId),head.toM,500)!==Infinity;
-        publicGroup.delayMin=!closedAhead&&Number.isFinite(travelDelay)&&travelDelay<=240?Math.max(0,travelDelay):null;
+        // The queue itself has a measured snapshot travel time independent
+        // of a downstream closure. Below 1 km/h report a lower bound, not
+        // an invented opening time or unlimited numerical extrapolation.
+        publicGroup.delayMin=Number.isFinite(travelDelay)?Math.max(0,travelDelay):null;
         if(head){
           publicGroup.endEdgeId=head.edgeId;
           publicGroup.endOffsetM=head.toM;
@@ -1277,7 +1322,12 @@ function createLegacyTrafficScenario(data){
         info.direction=traffic.motorwayDirection(anchor.ref,[section.from[3],section.to[3]],"");
       }
     }else{
-      info.location=anchor.name||"Autobahnrampe";
+      const adjacent=[...incomingTurns[anchor.index].map(t=>t.from),...anchor.links.map(t=>edges[t.to])];
+      const named=adjacent.find(r=>r.kind==="ramp"&&r.name)||adjacent.find(r=>r.ref);
+      if(!info.ref&&named?.ref)info.ref=named.ref;
+      if(!info.name&&named?.name)info.name=named.name;
+      if(named&&!anchor.ref)info.direction=traffic.referenceForRoad(rowById.get(named.id)).key;
+      info.location=info.name||"Autobahnrampe";
     }
     // Limit memory for an advancing queue; coordinates remain true to the
     // queue's actual endpoint rather than the midpoint of an arbitrary Way.
@@ -2055,9 +2105,9 @@ function createLegacyTrafficScenario(data){
         // Keep the nominal destination split even when a genuine local exit
         // is full. A stopped off-ramp cannot make its assigned vehicles
         // disappear into another open route, nor vice versa.
-        if(edge.kind==="mainline"&&legalTurns.some(t=>{
+        if(edge.kind==="ramp"&&legalTurns.length>1||edge.kind==="mainline"&&legalTurns.some(t=>{
           const end=localTerminal(edges[t.to]);
-          return end&&/\bAS\b|Abfahrt/i.test(end.name);
+          return end&&/\bAS\b|Abfahrt/i.test(end.name)||designatedTransfers.has(j+":"+t.to);
         })){
           if(k<edge.n-1&&!crossesClosureGate&&!options.some(x=>x.to===j))
             options.push({to:j,toCell:k+1,weight:20});
@@ -2486,7 +2536,7 @@ function createLegacyTrafficScenario(data){
     entryIncomingCount:id=>byId.get(id)?.incomingAtStart??0,
     sourceIds:()=>sources.map(x=>x.id),
     normalizedReversedWays:()=>[...reversedWays],
-    migrateLegacyEvent,
+    migrateLegacyEvent,restoreEvent,
     diversionShare,
     detourPlans:()=>[...exitDetours.values(),...fallbackExits.values()].map(plan=>({
       terminalEdgeId:edges[plan.terminal].id,

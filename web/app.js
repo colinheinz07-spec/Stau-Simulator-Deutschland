@@ -157,14 +157,14 @@ function drawJamCallouts(rendered,byId,showMap=true){
       const metres=band.toM-band.fromM;
       const delay=Math.max(0,(metres/1000)*60*
         (1/Math.max(5,band.speedKmh)-1/edge.freeSpeedKmh));
-      const travelMin=band.speedKmh>1?metres/1000*60/band.speedKmh:Infinity;
+      const travelMin=metres/1000*60/Math.max(1,band.speedKmh);
       const freeMin=metres/1000*60/edge.freeSpeedKmh;
       const last=row.at(-1);
       if(last&&Math.abs(last.toM-band.fromM)<.1){
-        last.toM=band.toM;last.lengthM+=metres;last.delayMin+=delay;last.travelMin+=travelMin;last.freeMin+=freeMin;last.worstKmh=Math.min(last.worstKmh,band.speedKmh);
+        last.toM=band.toM;last.lengthM+=metres;last.delayMin+=delay;last.travelMin+=travelMin;last.freeMin+=freeMin;last.worstKmh=Math.min(last.worstKmh,band.speedKmh);last.delayLowerBound ||= band.speedKmh<1;
       }else{
         const part={index:pieces.length,edgeId:edge.id,
-          fromM:band.fromM,toM:band.toM,lengthM:metres,delayMin:delay,travelMin,freeMin,worstKmh:band.speedKmh};
+          fromM:band.fromM,toM:band.toM,lengthM:metres,delayMin:delay,travelMin,freeMin,worstKmh:band.speedKmh,delayLowerBound:band.speedKmh<1};
         pieces.push(part);row.push(part);
       }
     }
@@ -207,7 +207,7 @@ function drawJamCallouts(rendered,byId,showMap=true){
     const id=root(part.index);
     const g=groups.get(id)??{lengthM:0,delayMin:0,travelMin:0,freeMin:0,worstKmh:Infinity,longestM:0,anchor:null,parts:[]};
     g.lengthM+=part.lengthM;g.delayMin+=part.delayMin;g.travelMin+=part.travelMin;g.freeMin+=part.freeMin;g.worstKmh=Math.min(g.worstKmh,part.worstKmh);
-    g.parts.push(part);
+    g.parts.push(part);g.delayLowerBound ||= part.delayLowerBound;
     if(part.lengthM>g.longestM){g.longestM=part.lengthM;g.anchor=part;}
     groups.set(id,g);
   }
@@ -221,7 +221,7 @@ function drawJamCallouts(rendered,byId,showMap=true){
       return {...g,edgeId:g.anchor.edgeId,offsetM:(g.anchor.fromM+g.anchor.toM)/2,
         startEdgeId:tail.edgeId,startOffsetM:tail.fromM,endEdgeId:head.edgeId,endOffsetM:head.toM,
         meanKmh:Number.isFinite(g.travelMin)&&g.travelMin>0?g.lengthM/1000*60/g.travelMin:0,
-        delayMin:Number.isFinite(g.travelMin)&&g.travelMin-g.freeMin<=240?Math.max(0,g.travelMin-g.freeMin):null};
+        delayMin:Number.isFinite(g.travelMin)?Math.max(0,g.travelMin-g.freeMin):null};
     });
   const nodeRefs=new Map();
   for(const edge of byId.values())for(const node of [edge.fromNodeId,edge.toNodeId]){

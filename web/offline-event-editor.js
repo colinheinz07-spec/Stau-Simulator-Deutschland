@@ -37,7 +37,7 @@ function createOfflineEventEditor(options){
       if(Array.isArray(saved))for(const original of saved.slice(0,150)){
         try{
           const item=legacy?scenario.migrateLegacyEvent?.(original)??original:original;
-          scenario.setEvent(item);
+          if(scenario.restoreEvent)scenario.restoreEvent(item);else scenario.setEvent(item);
         }catch(ex){console.warn("Ungültiges Alt-Ereignis",ex);}
       }
       // Upgrade once: v2 stays as a read-only recovery copy.

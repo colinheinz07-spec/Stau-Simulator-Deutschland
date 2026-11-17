@@ -166,7 +166,8 @@ test("congested connected OSM Ways have a queue length and positive delay",async
   assert.ok(jams.length>0,"a sustained closure must eventually generate measured queue statistics");
   assert.ok(jams.every(x=>x.lengthM>=100&&(x.delayMin===null||x.delayMin>=0)));
   assert.ok(jams.every(x=>(x.delayMin===null||Number.isFinite(x.delayMin))&&x.worstKmh>=0&&Number.isFinite(x.meanKmh)));
-  assert.ok(jams.some(x=>x.delayMin===null),"closed route must not report a finite extrapolated delay");
+  assert.ok(jams.every(x=>Number.isFinite(x.delayMin)),"queue travel delay is independent of reopening");
+  assert.ok(jams.some(x=>x.delayMin>0),"moving queue receives a positive delay");
   assert.ok(jams.some(x=>["a","b","c"].includes(x.edgeId)));
   conservation(scenario.totals());
   scenario.reset(true);
@@ -991,6 +992,9 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
   assert.ok(northExit.divertedVehiclesOnEdge>1&&northExit.departedVph<=705&&northExit.departedVph>550,
     "A48 diversions actually exit at northbound Ransbach under finite capacity");
   assert.ok(northExit.storageVehicles>ransbach.storageVehicles,"longer physical ramp stores more cars");
+  for(const id of ["extra-heumar-8298586","extra-heumar-4452557"])
+    assert.ok(sim.visualBands(id).some(b=>b.color==="jam"||b.color==="standstill"),
+      "overloaded exit ramp must be rendered red, not green: "+id);
   assert.ok(sim.edgeActivity("extra-heumar-31056168").enteredVph>100,"vehicles already beyond Ransbach exit via Höhr");
   assert.ok(sim.jamSummaries().some(g=>g.endEdgeId==="A3-326138758"&&g.lengthM>500),
     "saturated local exit spills back onto A3");
@@ -1015,4 +1019,45 @@ test("nonzero queue speeds produce harmonic average speed and a consistent trave
   const jam=sim.jamSummaries().find(g=>g.delayMin!==null&&g.meanKmh>1);
   assert.ok(jam,"finite speed queue expected");
   assert.ok(Math.abs(jam.delayMin-(jam.lengthM/1000*60*(1/jam.meanKmh-1/120)))<.001);
+});
+
+test("short auxiliary lane islands do not inflate motorway through capacity",async()=>{
+  const data={roads:[
+    ["a","mainline","A48",2,[[50,7],[50,7.012]],"",1],
+    ["b","mainline","A48",3,[[50,7.012],[50,7.015]],"",2],
+    ["c","mainline","A48",3,[[50,7.015],[50,7.018]],"",3],
+    ["d","mainline","A48",2,[[50,7.018],[50,7.031]],"",4],
+    ["e","mainline","A48",3,[[50,7.031],[50,7.06]],"",5]
+  ]};
+  const sim=(await engine())(data);
+  assert.equal(sim.edgeActivity("b").capacityVph,4400);
+  assert.equal(sim.edgeActivity("c").capacityVph,4400);
+  assert.equal(sim.edgeActivity("e").capacityVph,6600);
+  const oldClosure={id:"saved",edgeId:"b",kind:"closure",closedLanes:[0,1,2],
+    offsetM:0,lengthM:100,speedKmh:0,shoulder:"normal",hasShoulder:false};
+  assert.throws(()=>sim.setEvent(oldClosure),/Fahrstreifen/);
+  assert.equal(sim.restoreEvent(oldClosure).closedLanes.length,2);
+});
+
+test("Dernbach Köln closure: A48 exits at Höhr and returns at Ransbach",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  sim.setDemandPercent(180);sim.warmStart();
+  const e=sim.setEvent({id:"north",edgeId:"A3-25993915",kind:"closure",
+    offsetM:50,lengthM:100,closedLanes:[0,1,2],speedKmh:0,shoulder:"normal",hasShoulder:false});
+  assert.match(e.closureFrom,/AD Dernbach/);assert.match(e.closureTo,/Ransbach/);
+  for(let i=0;i<25;i++)sim.advance(12);
+  const terminal="extra-heumar-1512535542";
+  assert.ok(sim.detourPlans().some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-807709861"));
+  assert.ok(sim.edgeActivity(terminal).divertedVehiclesOnEdge>0);
+  assert.ok(sim.edgeActivity(terminal).departedVph<=705);
+  assert.ok(sim.visualBands(terminal).some(b=>b.color==="jam"||b.color==="standstill")||
+    sim.visualBands("extra-heumar-26923440").some(b=>b.color==="jam"||b.color==="standstill"),
+    "Höhr exit backlog must be visible when overloaded");
+  assert.ok(sim.edgeActivity("ramp-a48-to-frankfurt").enteredVph>100);
+  assert.ok(sim.jamSummaries().every(g=>Number.isFinite(g.delayMin)));
+  conservation(sim.totals());
 });

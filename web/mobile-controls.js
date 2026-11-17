@@ -26,16 +26,20 @@
     const title=(road.ref||"Autobahn")+(destination?" Richtung "+destination:"");
     const km=(Math.max(0,Number(group.lengthM)||0)/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1});
     const delay=Number.isFinite(group.delayMin)?Math.max(1,Math.round(group.delayMin)):null;
+    const delayText=delay===null?null:(group.delayLowerBound?"≥ ":"")+"+"+
+      (delay>=120?Math.floor(delay/60)+" h"+(delay%60?" "+delay%60+" min":""):delay+" min");
     return {title,destination,bottleneck:road.bottleneck,location:road.location||road.name||(road.kind==="ramp"?"Auf-/Abfahrt oder Überleitung":"Autobahnabschnitt"),
       ref:road.ref||"Autobahn",severity,state,color,length:km+" km",
-      delay:delay===null?"Nicht berechenbar":"+"+delay+" min",shortDelay:delay===null?"Zeit offen":"+"+delay+" min",speed:known?Math.round(speed)+" km/h":"–"};
+      delay:delayText??"Nicht berechenbar",
+      shortDelay:delayText??"Zeit offen",
+      speed:known?(group.delayLowerBound?"≤ ":"")+Math.round(speed)+" km/h":"–"};
   }
   function renderJams(groups,roadFor,focus){
     const list=$("jam-list"),count=$("jam-count");
     if(!list||!count)return;
     const sorted=[...groups].sort((a,b)=>b.delayMin-a.delayMin);
     count.textContent=String(sorted.length);
-    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),g.startEdgeId,g.endEdgeId,g.startOffsetM,g.endOffsetM,Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2]));
+    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),g.startEdgeId,g.endEdgeId,g.startOffsetM,g.endOffsetM,Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),g.delayLowerBound,Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2]));
     if(list.dataset.signature===key)return;
     list.dataset.signature=key;
     list.replaceChildren();

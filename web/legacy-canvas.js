@@ -309,7 +309,7 @@ async function startLegacyCanvas(existingMap=null){
               const a=road.points[0],b=road.points.at(-1);
               const left=part.fromM<=1&&junction.ends.has(junction.key(road,a));
               const right=part.toM>=road.meters-1&&junction.starts.has(junction.key(road,b));
-              if(!left&&!right)continue;
+              if(!left&&!right&&(road.kind!=="ramp"||zoom<9))continue;
             }
             changed=appendRange(road,part.fromM,part.toM,scale)||changed;
           }
@@ -334,14 +334,15 @@ async function startLegacyCanvas(existingMap=null){
       // red carriageway all the way back to the first blocked ramp vertex.
       // The old alternation drew only red/white dashes over green gaps,
       // visually suggesting the first half of a connector was still open.
-      const closureWidth=Math.max(line+1.4,2.8);
+      const closureWidth=Math.max(line+1,2.6);
       context.lineWidth=closureWidth;
       context.strokeStyle="#d52b3e";context.stroke();
       if(typeof context.setLineDash==="function"){
         context.lineWidth=closureWidth*.68;
-        context.setLineDash([10,10]);context.lineDashOffset=0;
+        const oldCap=context.lineCap;context.lineCap="butt";
+        context.setLineDash([6,5]);context.lineDashOffset=0;
         context.strokeStyle="#ffffff";context.stroke();
-        context.setLineDash([]);context.lineDashOffset=0;
+        context.setLineDash([]);context.lineDashOffset=0;context.lineCap=oldCap;
       }
     }
   }
@@ -367,10 +368,10 @@ async function startLegacyCanvas(existingMap=null){
   }
   function drawJamLabels(){
     const boxes=[];
-    if(zoom<8.1||typeof scenario.jamSummaries!=="function")return boxes;
+    if(zoom<10.2||typeof scenario.jamSummaries!=="function")return boxes;
     const groups=scenario.jamSummaries(),scale=2**zoom;
     for(const group of groups){
-      if(boxes.length>=(width<480?3:6))break;
+      if(boxes.length>=(width<480?2:5))break;
       const road=segmentById.get(group.edgeId);
       if(!road||!inView(road,scale))continue;
       const [x,y]=pointAt(pointAlong(road,group.offsetM));
@@ -550,10 +551,10 @@ async function startLegacyCanvas(existingMap=null){
       context.lineJoin="round";context.lineCap="round";
       const layers=[{roads:mainlines,
         visible:mainlines.filter(road=>inView(road,scale)),
-        line:clamp(2.7+(zoom-10)*.47,1.7,5.2)}];
+        line:clamp(2.25+(zoom-10)*.40,1.5,4.5)}];
       if(zoom>=7.6)layers.push({roads:ramps,
         visible:ramps.filter(road=>inView(road,scale)),
-        line:clamp(1.15+(zoom-10)*.20,.8,2.9)});
+        line:clamp(1.1+(zoom-10)*.19,.9,2.6)});
       // Two cheap batched background strokes per layer, followed by real
       // queue overlays and closures; never hide red beneath later green.
       for(const phase of ["base","speeds","closed"])
