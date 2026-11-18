@@ -1552,7 +1552,7 @@ test("A48-like motorway-ending transfer ramp incident offers an earlier A48 exit
     ["early","ramp","A48",1,[[50,7.025],[50.006,7.026]],"AS West · Abfahrt von A48",2],
     ["late","ramp","A48",1,[[50,7.06],[50.006,7.061]],"AS Ost · Abfahrt von A48",3],
     ["frankfurt","ramp","A3",1,[[50,7.09],[50.003,7.105]],"AD Test · Überleitung Frankfurt",4],
-    ["towards-frankfurt","mainline","A3",3,[[50.003,7.105],[50.003,7.135],[50.003,7.18]],"",5],
+    ["towards-frankfurt","mainline","A3",3,[[50.003,7.105],[50.003,7.135],[50.003,7.15],[50.003,7.18]],"",5],
     ["return","ramp","A3",1,[[50.009,7.15],[50.003,7.15]],"AS Hinter Unfall · Auffahrt A3",6],
     ["koeln","ramp","A3",1,[[50,7.09],[50.01,7.085]],"AD Test · Überleitung Köln",7],
     ["towards-koeln","mainline","A3",3,[[50.01,7.085],[50.01,7.045]],"",8]
@@ -1566,7 +1566,7 @@ test("A48-like motorway-ending transfer ramp incident offers an earlier A48 exit
   assert.equal(free.totals().detouredVehicles,0,
     "a normal motorway split must not generate a phantom diversion");
   blocked.setEvent({id:"ramp-incident",kind:"accident",edgeId:"frankfurt",
-    offsetM:550,lengthM:100,closedLanes:[0],speedKmh:0,
+    offsetM:850,lengthM:100,closedLanes:[0],speedKmh:0,
     shoulder:"normal",hasShoulder:false});
   for(let i=0;i<40;i++)blocked.advance(12);
   const plans=blocked.detourPlans();
