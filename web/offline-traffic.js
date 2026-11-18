@@ -1791,22 +1791,47 @@ function createLegacyTrafficScenario(data){
     if(bottleneckExposureEpoch!==exposureEpoch){
       bottleneckExposureCache.clear();bottleneckExposureEpoch=exposureEpoch;
     }
-    const key=edge.id+":"+Math.floor(offsetM/100)+":"+targetId;
-    if(bottleneckExposureCache.has(key))return bottleneckExposureCache.get(key);
-    const visit=(current,seen,depth)=>{
-      if(current.id===targetId)return 1;
-      if(depth>=160||seen.has(current.id))return 0;
-      const visited=new Set(seen);visited.add(current.id);
-      const turns=current.next.filter(t=>!visited.has(edges[t.to].id));
-      const through=current.kind==="mainline"?turns.filter(t=>
-        edges[t.to].kind==="mainline"&&edges[t.to].ref===current.ref):[];
-      const choices=through.length?through:current.kind==="mainline"?
-        turns.filter(t=>edges[t.to].kind==="mainline"||edges[t.to].kind==="ramp"):turns;
-      if(!choices.length)return 0;
-      return choices.reduce((total,t)=>total+visit(edges[t.to],visited,depth+1),0)/choices.length;
-    };
-    const result=visit(edge,new Set(),0);
-    bottleneckExposureCache.set(key,result);return result;
+    if(!byId.has(targetId))return 0;
+    // The former forward DFS stopped after 160 tiny OSM Ways. A driver at
+    // an earlier AS then appeared entirely unaffected by a multi-hour jam.
+    // Work backwards from the real target once, using actual directed OSM
+    // links. Cache the result for every approaching motorway and ramp.
+    if(!bottleneckExposureCache.has(targetId)){
+      const target=byId.get(targetId),prob=new Map([[target.index,1]]);
+      const distance=new Map([[target.index,0]]);
+      const pending=[{index:target.index,p:1,metres:0}];
+      const maxDistanceM=250000;
+      for(let i=0;i<pending.length&&i<20000;i++){
+        const {index,p,metres}=pending[i];
+        if(p+1e-8<(prob.get(index)||0)||metres>(distance.get(index)??Infinity)+.01)continue;
+        for(const {from,turn} of incomingTurns[index]){
+          const next=edges[turn.to];
+          if(!next||next.index!==index)continue;
+          const travelled=metres+Math.max(1,turn.fromM);
+          if(travelled>maxDistanceM)continue;
+          const links=from.next.filter(t=>edges[t.to].kind==="mainline"||
+            edges[t.to].kind==="ramp");
+          if(!links.length)continue;
+          const same=from.kind==="mainline"?links.filter(t=>
+            edges[t.to].kind==="mainline"&&edges[t.to].ref===from.ref):[];
+          const isThrough=same.some(t=>t.to===index);
+          // Keep through-bound long-distance drivers on their motorway.
+          // Local turnoffs are not assumed to steal a fixed percentage at
+          // each AS. At a genuine AD/AK split with no same-ref continuation,
+          // divide unknown destinations across open motorway arms.
+          const ratio=same.length?(isThrough?1/same.length:
+            .25/Math.max(1,links.length-same.length)):1/links.length;
+          const score=p*ratio,old=prob.get(from.index)||0;
+          const oldDist=distance.get(from.index)??Infinity;
+          if(score>old+1e-8||Math.abs(score-old)<=1e-8&&travelled<oldDist-.01){
+            prob.set(from.index,score);distance.set(from.index,travelled);
+            pending.push({index:from.index,p:score,metres:travelled});
+          }
+        }
+      }
+      bottleneckExposureCache.set(targetId,prob);
+    }
+    return bottleneckExposureCache.get(targetId).get(edge.index)||0;
   }
   function blockedMovement(from,link){
     updateEffects();
