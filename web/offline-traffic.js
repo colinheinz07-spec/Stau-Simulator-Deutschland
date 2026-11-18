@@ -649,6 +649,10 @@ function createLegacyTrafficScenario(data){
   // Combine same-minute arrivals to keep the simulator responsive on phones.
   const detourBatchIndex=new Map();
   const terminalDetours=new Map(),exitDetours=new Map(),fallbackExits=new Map(),fallbackTransfers=new Map();
+  // An open motorway arm may provide a real exit and public-road bypass to
+  // the affected arm's downstream continuation. Never redirect the drivers
+  // whose actual destination remains on that open arm.
+  const dynamicTransferChoices=new Map();
   const designatedApproach=new Set(),designatedTransfers=new Map();
   const transferFallbackByApproach=new Map();
   const localSourceDetours=new Map();
@@ -1594,7 +1598,8 @@ function createLegacyTrafficScenario(data){
     elapsed=0;generated=0;exited=0;initialVehicles=0;warmedUp=false;
     outsideVehicles=0;detouredVehicles=0;returnedVehicles=0;
     detourTrips.length=0;detourBatchIndex.clear();
-    terminalDetours.clear();exitDetours.clear();fallbackExits.clear();fallbackTransfers.clear();designatedApproach.clear();designatedTransfers.clear();detourPlansKey=null;
+    terminalDetours.clear();exitDetours.clear();fallbackExits.clear();fallbackTransfers.clear();dynamicTransferChoices.clear();
+    designatedApproach.clear();designatedTransfers.clear();detourPlansKey=null;
     localSourceDetours.clear();transferFallbackByApproach.clear();localSourceCandidates.clear();localSourceChoiceCache.clear();localSourceChoiceMinute=-1;
     routeChanges.clear();routeAccounting.clear();routePaths.clear();routePathCosts.clear();motorwayAlternatives.clear();
     delayCache.clear();delayCacheMinute=-1;directedDelayCache.clear();directedDelayStamp="";
@@ -2374,7 +2379,7 @@ function createLegacyTrafficScenario(data){
     const key=exposureEpoch+":"+obstacles.map(x=>x.spec.id+":"+x.spans.map(s=>
       s.edgeId+":"+Math.round(s.fromM)+":"+Math.round(s.toM)).join(",")).join("|");
     if(key===detourPlansKey)return;
-    detourPlansKey=key;exitDetours.clear();fallbackExits.clear();fallbackTransfers.clear();motorwayAlternatives.clear();
+    detourPlansKey=key;exitDetours.clear();fallbackExits.clear();fallbackTransfers.clear();dynamicTransferChoices.clear();motorwayAlternatives.clear();
     designatedApproach.clear();designatedTransfers.clear();localSourceDetours.clear();transferFallbackByApproach.clear();
     localSourceCandidates.clear();localSourceChoiceCache.clear();
     const routePlans=new Map();mandatoryMemo.clear();
@@ -2517,6 +2522,58 @@ function createLegacyTrafficScenario(data){
       // A feeder whose intended motorway transfer is closed may still
       // have an open transfer toward a public-road exit. Discover this
       // from directed turns for ANY interchange; no named-road exceptions.
+      // Voluntary motorway-arm bypasses also work for accidents, roadworks
+      // and queues WITHOUT a full closure. Trace the affected branch and its
+      // genuinely open sibling through mapped directed OSM turns. Drivers can
+      // take the open arm, leave it at its first public-road AS, and enter the
+      // original motorway behind the bottleneck. This is network-wide, not
+      // an A48/Dernbach special case.
+      if(obstacle.spec.kind!=="closure")for(const from of edges){
+        if(from.kind!=="mainline"||from.ref===endEdge.ref||!approach.has(from.id))continue;
+        const causeEdgeId=obstacle.spec.causeEdgeId||
+          obstacle.routeSpans?.[0]?.edgeId||obstacle.spans[0]?.edgeId;
+        if(!causeEdgeId)continue;
+        const junctions=new Map();
+        for(const link of from.links){
+          if(blockedMovement(from,link))continue;
+          const list=junctions.get(link.fromCell)||[];
+          list.push(link);junctions.set(link.fromCell,list);
+        }
+        for(const [cell,links] of junctions){
+          if(links.length<2)continue;
+          const affected=links.filter(link=>
+            bottleneckExposureAhead(edges[link.to],link.toM,causeEdgeId)>.30);
+          const open=links.filter(link=>{
+            const branch=edges[link.to];
+            return !localTerminal(branch)&&
+              bottleneckExposureAhead(branch,link.toM,causeEdgeId)<.01;
+          });
+          if(!affected.length||!open.length)continue;
+          for(const bad of affected)for(const good of open){
+            const branch=edges[good.to];
+            const arrivals=branch.kind==="mainline"?[{road:branch,metre:good.toM}]:
+              branch.kind==="ramp"?rampMainlineArrivals(branch,(a,b)=>!blockedMovement(a,b)):[];
+            for(const arrival of arrivals){
+              if(arrival.road.ref===endEdge.ref)continue;
+              const exit=firstLocalExit(arrival.road,arrival.metre);
+              if(!exit||fallbackExits.has(exit.first))continue;
+              const reentry=candidates[0];
+              const durationS=estimatedOutsideSeconds(exit.terminal,reentry.ramp);
+              const plan={terminal:exit.terminal.index,reentry:reentry.ramp.index,
+                durationS,closureId:obstacle.spec.id,kind:obstacle.spec.kind,
+                causeEdgeId,transferRef:arrival.road.ref,feederRef:from.ref,
+                entries:[{reentry:reentry.ramp.index,distanceM:reentry.distance,
+                  weight:1,durationS,junction:reentry.junction,closureId:obstacle.spec.id}]};
+              fallbackExits.set(exit.first,plan);
+              terminalDetours.set(plan.terminal,plan);
+              const key=from.index+":"+cell;
+              const choices=dynamicTransferChoices.get(key)||[];
+              choices.push({from,bad,good,plan,causeEdgeId});
+              dynamicTransferChoices.set(key,choices);
+            }
+          }
+        }
+      }
       if(obstacle.spec.kind==="closure")for(const from of edges){
         if(from.kind!=="mainline"||from.ref===endEdge.ref||!approach.has(from.id))continue;
         const affected=from.links.filter(t=>blockedMovement(from,t)&&(
@@ -2764,6 +2821,47 @@ function createLegacyTrafficScenario(data){
       }
     }
     routePaths.set(terminal,paths);routePathCosts.set(terminal,distances);return paths;
+  }
+  function interchangeTransferChoice(edge,k,options){
+    const choices=dynamicTransferChoices.get(edge.index+":"+k);
+    if(!choices?.length)return null;
+    let best=null;
+    for(const option of choices){
+      const {bad,good,plan,causeEdgeId}=option;
+      if(blockedMovement(edge,bad)||blockedMovement(edge,good))continue;
+      const affected=options.find(o=>o.to===bad.to&&o.toCell===bad.toCell);
+      const alternative=options.find(o=>o.to===good.to&&o.toCell===good.toCell);
+      if(!affected||!alternative||affected.weight<=0)continue;
+      // Cost of the SAME destination via the disrupted motorway and via
+      // the other arm's real exit, with shared downstream reentry.
+      let saving=-Infinity;
+      for(const {road:target} of rampMainlineArrivals(edges[plan.reentry])){
+        cohortPath(target.index);
+        const costs=routePathCosts.get(target.index);
+        const direct=costs.get(cellKey(bad.to,bad.toCell));
+        const downstream=costs.get(cellKey(plan.reentry,0));
+        if(Number.isFinite(direct)&&Number.isFinite(downstream)){
+          cohortPath(plan.terminal);
+          const local=routePathCosts.get(plan.terminal)
+            .get(cellKey(good.to,good.toCell));
+          if(Number.isFinite(local))
+            saving=Math.max(saving,direct-(local+plan.durationS/60+
+              returnWaitMinutes(plan.reentry)+downstream));
+        }
+      }
+      if(!Number.isFinite(saving)){
+        // Fully blocked accident: time is represented by the queue on all
+        // successive affected roads (feeder, transfer and downstream), never
+        // by a missing graph path or a fictional infinite time loss.
+        const observed=directedDelayToCause(edge,bad.fromM,causeEdgeId);
+        if(Number.isFinite(observed)&&observed>30)
+          saving=observed-plan.durationS/60-returnWaitMinutes(plan.reentry);
+      }
+      const fraction=diversionShare(saving);
+      if(fraction>0&&(!best||fraction>best.fraction))
+        best={...option,fraction,saving};
+    }
+    return best;
   }
   function motorwayChoice(edge,k,options){
     const candidates=motorwayAlternatives.get(cellKey(edge.index,k));
@@ -3076,7 +3174,22 @@ function createLegacyTrafficScenario(data){
         // A saturated exit is still a valid destination: motorists must queue
         // for its receiving capacity, not skip past it into the closure.
         let hasLegalClosureDetour=false,diversionIntent=0,strictSplit=false;
-        const motorway=edge.kind==="mainline"?motorwayChoice(edge,k,options):null;
+        const dynamic=edge.kind==="mainline"?interchangeTransferChoice(edge,k,options):null;
+        const motorway=!dynamic&&edge.kind==="mainline"?motorwayChoice(edge,k,options):null;
+        if(dynamic){
+          const {bad,good,plan,fraction}=dynamic;
+          const blocked=options.find(o=>o.to===bad.to&&o.toCell===bad.toCell);
+          const alternate=options.find(o=>o.to===good.to&&o.toCell===good.toCell);
+          if(blocked&&alternate){
+            const shifted=blocked.weight*fraction;
+            blocked.weight-=shifted;
+            alternate.weight+=shifted;
+            alternate.markFraction=shifted/alternate.weight;
+            alternate.newRouteTerminal=plan.terminal;
+            alternate.ignoreBypass=true;
+            strictSplit=true;
+          }
+        }
         if(motorway){
           const throughWeight=motorway.through.reduce((n,turn)=>n+turn.weight,0)||20;
           const moved=throughWeight*motorway.share;
