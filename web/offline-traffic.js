@@ -296,7 +296,7 @@ function createLegacyTrafficScenario(data){
     }
     // Preserve end-to-start successors for long-event tracing and old API.
     if(fromCell===from.n-1&&toCell===0&&fromM>=from.lengthM-.01&&toM<.01)
-      from.next.push({to:to.index,weight});
+      from.next.push({...link});
   }
   for(const edge of edges){
     const positions=pointMetres.get(edge.id);
