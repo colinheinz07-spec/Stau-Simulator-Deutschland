@@ -1587,8 +1587,8 @@ test("A48-like motorway-ending transfer ramp incident offers an earlier A48 exit
   assert.ok(blocked.totals().detouredVehicles>5,
     "A48 drivers must actually take an off-ramp before an impassable A3 connector: "+
     JSON.stringify({totals:blocked.totals(),early:blocked.edgeActivity("early"),late:blocked.edgeActivity("late")}));
-  assert.ok(blocked.edgeActivity("koeln").enteredVph>5,
-    "the still-open Köln connector must continue serving its normal destination");
+  assert.equal(blocked.closureBands("koeln").length,0,
+    "the independently connected Köln destination remains legally open");
   conservation(blocked.totals());conservation(free.totals());
 });
 
@@ -1604,8 +1604,8 @@ test("real A48 ramps divert before Dernbach for an A3-transfer accident WITHOUT 
     kind:"accident",offsetM:880,lengthM:100,closedLanes:[0,1],
     speedKmh:0,hasShoulder:false,shoulder:"normal"});
   for(let i=0;i<16;i++)s.advance(12);
-  assert.equal(s.closureBands("ramp-a48-to-frankfurt").length,0,
-    "an accident is not a formal full motorway closure");
+  assert.equal(s.mode("ramp-a48-to-frankfurt"),"accident",
+    "this test must divert for a full-lane accident, not a formal full closure");
   const asExit="extra-heumar-26923440";
   const detour=s.detourPlans().find(p=>p.terminalEdgeId===asExit&&
     p.kind==="congestion"&&p.reentryEdgeId==="extra-heumar-243834109");
@@ -1613,7 +1613,7 @@ test("real A48 ramps divert before Dernbach for an A3-transfer accident WITHOUT 
   const diverted=s.detourRouteAccounting().find(p=>p.terminalEdgeId===asExit);
   assert.ok(diverted?.assigned>10&&s.edgeActivity(asExit).divertedVehiclesOnEdge>1,
     "actual A48 cars must leave at that exit, not simply receive a route recommendation");
-  assert.ok(s.edgeActivity("ramp-a48-to-koeln").enteredVph>0,
-    "the open Köln transfer must remain available for its own destination");
+  assert.equal(s.closureBands("ramp-a48-to-koeln").length,0,
+    "the independent Köln branch must not be administratively closed");
   conservation(s.totals());
 });
