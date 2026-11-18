@@ -1612,8 +1612,8 @@ test("real A48 ramps divert before Dernbach for an A3-transfer accident WITHOUT 
     p.kind==="congestion"&&p.reentryEdgeId==="extra-heumar-243834109");
   assert.ok(detour,"A48 traffic needs a real exit before the congested A3-Frankfurt transfer");
   const diverted=s.detourRouteAccounting().find(p=>p.terminalEdgeId===asExit);
-  assert.ok(diverted?.assigned>10&&s.edgeActivity(asExit).divertedVehiclesOnEdge>1,
-    "actual A48 cars must leave at that exit, not simply receive a route recommendation");
+  assert.ok(diverted?.assigned>10&&diverted.arrived>10&&s.edgeActivity(asExit).departedVph>300,
+    "actual A48 cars must DISCHARGE through the exit, not merely receive a recommendation or be stored there");
   assert.equal(s.closureBands("ramp-a48-to-koeln").length,0,
     "the independent Köln branch must not be administratively closed");
   conservation(s.totals());
@@ -1659,4 +1659,87 @@ test("A48-like motorway approach: a multihour queue diverts at earlier AS onto t
   assert.ok(blocked.jamSummaries().some(p=>p.endEdgeId==="bad"&&p.delayMin>=45&&p.delayMin<120),
     "rerouting must relieve the multi-hour hypothetical queue, not leave cars stranded");
   conservation(free.totals());conservation(blocked.totals());
+});
+
+
+test("nationwide route choice grows from 30–45 min to ~90% at 2.5 hours of time saved",async()=>{
+  const make=await engine();
+  const sim=make({roads:[
+    ["main","mainline","A7",3,[[50,8],[50,8.03]],"",1],
+    ["exit","ramp","A7",1,[[50,8.03],[50.005,8.03]],"AS Beispiel · Abfahrt von A7",2]
+  ]});
+  const curve=sim.diversionShare;
+  assert.ok(curve(10)===0&&curve(20)>.005&&curve(20)<.025);
+  assert.ok(curve(30)>.01&&curve(30)<.05);
+  assert.ok(curve(45)>.02&&curve(45)<.08);
+  assert.ok(curve(60)>=.10&&curve(60)<.2);
+  assert.ok(curve(90)>=.40&&curve(90)<.60);
+  assert.ok(curve(120)>=.79&&curve(120)<.85);
+  assert.ok(curve(150)>=.89&&curve(150)<.95);
+  assert.ok(curve(180)>=.96&&curve(180)<.99);
+  assert.ok(curve(240)>=.989);
+  let prev=0;
+  for(let i=0;i<=1000;i++){
+    const saving=i*.3,p=curve(saving);
+    assert.ok(p>=prev-1e-10&&p<=.99+1e-10,
+      "voluntary diversion policy must be monotonic: "+saving);
+    prev=p;
+  }
+  assert.equal(curve(-40),0);
+  assert.equal(curve(NaN),0);
+  assert.equal(curve(Infinity),.99);
+});
+
+test("real interchange: A3 Frankfurt accident creates A48 exits AND route over open Köln arm",async()=>{
+  const w={};
+  for(const file of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  s.setDemandPercent(160);s.warmStart();
+  s.setEvent({id:"real-incident",edgeId:"A3-31352372",kind:"accident",
+    offsetM:40,lengthM:100,closedLanes:[0,1,2],speedKmh:0,
+    shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<40;i++)s.advance(12);
+  const plans=s.detourPlans();
+  assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-26923440"&&
+    p.reentryEdgeId==="extra-heumar-243834109"),
+    "A48 local Höhr exit must re-enter the ORIGINAL A3 Frankfurt destination");
+  assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-4452557"&&
+    p.reentryEdgeId==="extra-heumar-243834109"),
+    "open Köln motorway arm must offer first usable A3 AS and Frankfurt reentry");
+  const early=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-26923440");
+  const via=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-4452557");
+  assert.ok(early?.assigned>100,
+    "earlier A48 exits must be USED, not just advertised in route plans");
+  assert.ok(via?.assigned>30,
+    "cars taking open Cologne arm must actually exit and be counted as rerouted");
+  assert.equal(s.mode("A3-31352372"),"accident");
+  assert.equal(s.closureBands("ramp-a48-to-koeln").length,0);
+  assert.equal(s.totals().conservationResidual,0);
+});
+
+test("real interchange: complete Frankfurt closure transfers blocked cohort to Köln AS and preserves open Köln ramp",async()=>{
+  const w={};
+  for(const file of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  s.setDemandPercent(160);s.warmStart();
+  s.setEvent({id:"closed-after-ad",edgeId:"A3-31352372",kind:"closure",
+    offsetM:40,lengthM:100,closedLanes:[0,1,2],speedKmh:0,
+    shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<28;i++)s.advance(12);
+  const via=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-4452557");
+  assert.ok(via?.assigned>100,"a blocked Frankfurt-bound cohort must take the legal Köln branch");
+  assert.ok(s.closureBands("ramp-a48-to-frankfurt").length>0,
+    "Frankfurt connector is physically shut");
+  assert.ok(s.visualBands("extra-heumar-26923440").some(x=>
+    x.color==="jam"||x.color==="standstill"),
+    "the congested real exit must be drawn red, not falsely green");
+  assert.equal(s.closureBands("ramp-a48-to-koeln").length,0,
+    "Köln connector remains physically open");
+  assert.ok(s.designatedDetourRoutes("closed-after-ad").some(x=>/A48.*A3.*Ransbach-Baumbach.*Montabaur/.test(x)),
+    "a Köln-side exit must rejoin the unaffected downstream Frankfurt carriageway");
+  conservation(s.totals());
 });
