@@ -2528,7 +2528,7 @@ function createLegacyTrafficScenario(data){
       // take the open arm, leave it at its first public-road AS, and enter the
       // original motorway behind the bottleneck. This is network-wide, not
       // an A48/Dernbach special case.
-      if(obstacle.spec.kind!=="closure")for(const from of edges){
+      for(const from of edges){
         if(from.kind!=="mainline"||from.ref===endEdge.ref||!approach.has(from.id))continue;
         const causeEdgeId=obstacle.spec.causeEdgeId||
           obstacle.routeSpans?.[0]?.edgeId||obstacle.spans[0]?.edgeId;
@@ -2860,7 +2860,10 @@ function createLegacyTrafficScenario(data){
         if(Number.isFinite(observed)&&observed>30)
           saving=observed-plan.durationS/60-returnWaitMinutes(plan.reentry);
       }
-      const fraction=diversionShare(saving);
+      // A physically closed destination has no voluntary through option.
+      // Divert its affected turning cohort even before a visible queue forms,
+      // but leave the other motorway's original destinations untouched.
+      const fraction=plan.kind==="closure"?1:diversionShare(saving);
       if(fraction>0&&(!best||fraction>best.fraction))
         best={...option,fraction,saving};
     }
