@@ -1618,3 +1618,45 @@ test("real A48 ramps divert before Dernbach for an A3-transfer accident WITHOUT 
     "the independent Köln branch must not be administratively closed");
   conservation(s.totals());
 });
+
+
+test("A48-like motorway approach: a multihour queue diverts at earlier AS onto the onward motorway WITHOUT formal closure",async()=>{
+  const make=await engine();
+  const roads=[
+    ["up","mainline","A48",2,[[50,7],[50,7.01],[50,7.02],[50,7.035],[50,7.04]],"",1],
+    ["bad","mainline","A48",2,[[50,7.04],[50,7.06]],"",2],
+    ["terminal","mainline","A48",2,[[50,7.06],[50,7.08]],"",3],
+    ["first-exit","ramp","A48",1,[[50,7.01],[50.006,7.01]],"AS 1 Erste · Abfahrt von A48",4],
+    ["last-exit","ramp","A48",1,[[50,7.035],[50.006,7.035]],"AS 2 Letzte · Abfahrt von A48",5],
+    ["transfer-ffm","ramp","A48",2,[[50,7.08],[50.003,7.09]],"AD Test · Überleitung Frankfurt",6],
+    ["ffm","mainline","A3",3,[[50.003,7.09],[50.003,7.11],[50.003,7.12],[50.003,7.14]],"",7],
+    ["reenter-ffm","ramp","A3",1,[[50.008,7.12],[50.003,7.12]],"AS 3 Danach · Auffahrt auf A3",8],
+    ["transfer-cgn","ramp","A48",1,[[50,7.08],[50.015,7.085]],"AD Test · Überleitung Köln",9],
+    ["cgn","mainline","A3",3,[[50.015,7.085],[50.015,7.12],[50.015,7.14]],"",10],
+    ["reenter-cgn","ramp","A3",1,[[50.02,7.12],[50.015,7.12]],"AS 4 Danach · Auffahrt auf A3",11]
+  ];
+  const free=make({roads}),blocked=make({roads});
+  for(const sim of [free,blocked]){
+    sim.setSimulationStart(Date.parse("2026-11-13T14:00:00Z"));
+    sim.setDemandPercent(175);sim.warmStart();
+  }
+  blocked.setEvent({id:"incident",edgeId:"bad",kind:"accident",
+    offsetM:300,lengthM:150,closedLanes:[0,1],speedKmh:0,
+    shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<32;i++){free.advance(12);blocked.advance(12);}
+  assert.equal(free.totals().detouredVehicles,0,"no arbitrary off-ramp detours on the unobstructed A48");
+  assert.equal(blocked.mode("bad"),"accident","a severe accident is NOT a formal closure");
+  const plans=blocked.detourPlans();
+  for(const exit of ["last-exit","first-exit"])
+    assert.ok(plans.some(p=>p.terminalEdgeId===exit&&p.reentryEdgeId==="reenter-ffm"),
+      "motorway-end routing must use actual downstream A3 on-ramp and this earlier A48 exit: "+exit);
+  const counts=blocked.detourRouteAccounting();
+  const last=counts.find(p=>p.terminalEdgeId==="last-exit");
+  const first=counts.find(p=>p.terminalEdgeId==="first-exit");
+  assert.ok(last?.assigned>150&&first?.assigned>80,
+    "earlier A48 exit activates after growing time loss, not merely the last exit: "+
+    JSON.stringify({last,first}));
+  assert.ok(blocked.jamSummaries().some(p=>p.endEdgeId==="bad"&&p.delayMin>=45&&p.delayMin<120),
+    "rerouting must relieve the multi-hour hypothetical queue, not leave cars stranded");
+  conservation(free.totals());conservation(blocked.totals());
+});

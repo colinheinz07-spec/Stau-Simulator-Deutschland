@@ -296,7 +296,7 @@ function createLegacyTrafficScenario(data){
     }
     // Preserve end-to-start successors for long-event tracing and old API.
     if(fromCell===from.n-1&&toCell===0&&fromM>=from.lengthM-.01&&toM<.01)
-      from.next.push({to:to.index,weight});
+      from.next.push({...link});
   }
   for(const edge of edges){
     const positions=pointMetres.get(edge.id);
@@ -2256,8 +2256,7 @@ function createLegacyTrafficScenario(data){
     // make a second phantom obstruction on a route already carrying an event.
     const eventEdges=new Set(events.flatMap(event=>event.spans.map(span=>span.edgeId)));
     const queues=jamGroups.filter(group=>group.routingDelayMin>=20&&group.lengthM>=500&&
-      group.endEdgeId&&!eventEdges.has(group.endEdgeId)&&
-      !designatedApproach.has(byId.get(group.endEdgeId).index))
+      group.endEdgeId&&!eventEdges.has(group.endEdgeId))
       .flatMap(group=>{
         const head=byId.get(group.endEdgeId),at=group.endOffsetM;
         const spec={id:"queue:"+head.id+":"+Math.round(at/100),
@@ -2280,6 +2279,43 @@ function createLegacyTrafficScenario(data){
           }));
       });
     const obstacles=[...events,...queues];
+    // An A48-style feeder can end at an AD with no on-ramp onto the SAME
+    // motorway beyond its queue. In that case extend the bypass destination
+    // through physically connected transfer ramps into the onward motorways.
+    // Never invent a public road or treat the other motorway direction as
+    // the driver's intended destination.
+    function receiversBeyondMotorwayEnd(road,offsetM){
+      const found=new Map(),maxM=30000;
+      const metresAlong=(end,at)=>{
+        let current=road,offset=offsetM,total=0;
+        const seen=new Set();
+        while(!seen.has(current.id)&&total<=maxM){
+          seen.add(current.id);
+          if(current===end)return total+Math.max(0,at-offset);
+          total+=Math.max(0,current.lengthM-offset);
+          const same=current.next.filter(t=>
+            edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref);
+          if(same.length!==1)break;
+          current=edges[same[0].to];offset=same[0].toM;
+        }
+        return Infinity;
+      };
+      routeForks(road,offsetM,(from,turn)=>{
+        const distance=metresAlong(from,turn.fromM);
+        if(distance>maxM||!Number.isFinite(distance))return;
+        const branch=edges[turn.to];
+        if(localTerminal(branch))return;
+        const destinations=branch.kind==="mainline"?[{road:branch,metre:turn.toM}]:
+          branch.kind==="ramp"?rampMainlineArrivals(branch,(a,b)=>!blockedMovement(a,b)):[];
+        for(const destination of destinations){
+          if(destination.road.ref===road.ref)continue;
+          const id=destination.road.id+":"+Math.floor(destination.metre/10);
+          const prev=found.get(id);
+          if(!prev||distance<prev.distance)found.set(id,{...destination,distance});
+        }
+      });
+      return [...found.values()].sort((a,b)=>a.distance-b.distance).slice(0,6);
+    }
     const key=exposureEpoch+":"+obstacles.map(x=>x.spec.id+":"+x.spans.map(s=>
       s.edgeId+":"+Math.round(s.fromM)+":"+Math.round(s.toM)).join(",")).join("|");
     if(key===detourPlansKey)return;
@@ -2395,7 +2431,27 @@ function createLegacyTrafficScenario(data){
           motorwayAlternatives.set(fork,list);
         }
       }
-      if(!candidates.length)continue;
+      if(!candidates.length){
+        // If there is no actual legal post-queue return on this terminating
+        // motorway, retry on each physically reached NEXT motorway. This is
+        // the generic AD/AK equivalent of the old app's targetPath routing.
+        if(!obstacle.extendedAcrossInterchange){
+          const routeSpans=obstacle.routeSpans||obstacle.spans;
+          for(const arrival of receiversBeyondMotorwayEnd(endEdge,last.toM)){
+            const nextObstacle={
+              ...obstacle,
+              extendedAcrossInterchange:true,
+              routeSpans,
+              spans:[{edgeId:arrival.road.id,fromM:arrival.metre,toM:arrival.metre}],
+              spec:{...obstacle.spec,id:obstacle.spec.kind==="closure"?
+                obstacle.spec.id:obstacle.spec.id+":via:"+arrival.road.id,
+                causeEdgeId:obstacle.spec.causeEdgeId||last.edgeId}
+            };
+            obstacles.push(nextObstacle);
+          }
+        }
+        continue;
+      }
       // The last tiny OSM Way can curve opposite to the actual motorway
       // direction. A real, named return ramp gives the intended direction.
       const routeKey=endEdge.ref+":"+traffic.motorwayDirection(endEdge.ref,
