@@ -1863,8 +1863,10 @@ function createLegacyTrafficScenario(data){
   // A blocked motorway still imposes a mandatory exit at its last legal AS.
   function diversionShare(savingMin){
     if(savingMin===Infinity)return .99;
-    if(!Number.isFinite(savingMin)||savingMin<=30)return 0;
-    const anchors=[[30,0],[45,.035],[60,.12],[90,.45],
+    if(!Number.isFinite(savingMin)||savingMin<=10)return 0;
+    // Small, anticipatory minority choices are possible as soon as a
+    // real detour saves 10–30 minutes; substantial adoption comes later.
+    const anchors=[[10,0],[20,.012],[30,.025],[45,.035],[60,.12],[90,.45],
       [120,.80],[150,.90],[180,.965],[240,.99]];
     for(let i=1;i<anchors.length;i++){
       const [end,upper]=anchors[i], [start,lower]=anchors[i-1];
@@ -2878,7 +2880,20 @@ function createLegacyTrafficScenario(data){
       // branch without sending a single vehicle into the physical barrier.
       if(!alternative||!affected&&!blockedMovement(edge,bad))continue;
       if(plan.kind==="closure"){
-        best={...option,fraction:1,saving:Infinity};continue;
+        // A closed arm can still lead to an OPEN local AS *before* the
+        // blocked mainline section. If so, preserve the normal Frankfurt
+        // transfer and allow its drivers to leave at the nearer AS. Forcing
+        // them onto the Köln arm at every upstream AD would be incorrect.
+        const branch=edges[bad.to];
+        const arrivals=branch.kind==="mainline"?[{road:branch,metre:bad.toM}]:
+          branch.kind==="ramp"?rampMainlineArrivals(branch,(a,b)=>!blockedMovement(a,b)):[];
+        const laterExit=arrivals.some(a=>!!firstLocalExit(a.road,a.metre));
+        if(!laterExit){
+          best={...option,fraction:1,saving:Infinity};continue;
+        }
+        // A later usable exit exists: do not label every Frankfurt-bound
+        // traveller as forced to take the alternative arm at this junction.
+        continue;
       }
       if(!affected||affected.weight<=0)continue;
       // Cost of the SAME destination via the disrupted motorway and via
