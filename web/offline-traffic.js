@@ -1597,7 +1597,8 @@ function createLegacyTrafficScenario(data){
     terminalDetours.clear();exitDetours.clear();fallbackExits.clear();fallbackTransfers.clear();designatedApproach.clear();designatedTransfers.clear();detourPlansKey=null;
     localSourceDetours.clear();transferFallbackByApproach.clear();localSourceCandidates.clear();localSourceChoiceCache.clear();localSourceChoiceMinute=-1;
     routeChanges.clear();routeAccounting.clear();routePaths.clear();routePathCosts.clear();motorwayAlternatives.clear();
-    delayCache.clear();delayCacheMinute=-1;routeChoiceCache.clear();routeChoiceMinute=-1;
+    delayCache.clear();delayCacheMinute=-1;directedDelayCache.clear();directedDelayStamp="";
+    routeChoiceCache.clear();routeChoiceMinute=-1;
     returnWaitCache.clear();returnWaitMinute=-1;
     for(const edge of edges){
       edge.stock.fill(0);edge.divertStock.fill(0);edge.bypassStock.fill(0);edge.routeStock.fill(null);edge.turnStock.fill(null);
@@ -1883,6 +1884,50 @@ function createLegacyTrafficScenario(data){
     delayCache.set(key,result);
     return result;
   }
+  // Sum the delays over the actual directed journey toward a bottleneck.
+  // This follows A48 -> transfer ramp -> A3 (or any other sequence), rather
+  // than stopping at a motorway-number boundary as measuredDelayAhead does.
+  // An unrelated destination branch is NEVER charged this delay.
+  const directedDelayCache=new Map();let directedDelayStamp="";
+  function directedDelayToCause(road,offset,causeId){
+    const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
+    if(directedDelayStamp!==stamp){directedDelayCache.clear();directedDelayStamp=stamp;}
+    const key=road.id+":"+Math.floor(offset/100)+":"+causeId;
+    if(directedDelayCache.has(key))return directedDelayCache.get(key);
+    const maxDistance=180000,memo=new Map();
+    const loss=(edge,start,end)=>{
+      let total=0;
+      const begin=Math.max(0,Math.min(edge.lengthM,start));
+      for(let k=Math.floor(begin/edge.cellLength);k<edge.n&&k*edge.cellLength<end;k++){
+        const metres=Math.max(0,Math.min(end,(k+1)*edge.cellLength)-Math.max(begin,k*edge.cellLength));
+        if(metres<=0)continue;
+        const speed=routingCellSpeed(edge,k);
+        total+=Math.max(0,metres*.06*(1/speed-1/edge.freeKmh));
+      }
+      return total;
+    };
+    const visit=(current,start,distance,seen,depth)=>{
+      if(depth>300||distance>maxDistance||seen.has(current.id))return Infinity;
+      if(current.id===causeId)return loss(current,start,current.lengthM);
+      const memoKey=current.id+":"+Math.round(start/10);
+      if(memo.has(memoKey))return memo.get(memoKey);
+      const visited=new Set(seen);visited.add(current.id);
+      let result=Infinity;
+      for(const turn of current.links){
+        if(turn.fromM<start-.05||blockedMovement(current,turn))continue;
+        const next=edges[turn.to];
+        if(!next||next.kind==="ramp"&&localTerminal(next))continue;
+        const approach=turn.fromM-start;
+        if(distance+approach>maxDistance)continue;
+        const nextLoss=visit(next,turn.toM,distance+approach,visited,depth+1);
+        if(Number.isFinite(nextLoss))
+          result=Math.min(result,loss(current,start,turn.fromM)+nextLoss);
+      }
+      memo.set(memoKey,result);return result;
+    };
+    const result=visit(road,Math.max(0,offset),0,new Set(),0);
+    directedDelayCache.set(key,result);return result;
+  }
   // Actual travel to a downstream fork on the same directed motorway.
   // For a complete closure compare EXIT routes, never a fictitious drive
   // through the barrier. The later exit may be clear even when the road
@@ -2020,7 +2065,8 @@ function createLegacyTrafficScenario(data){
         // upstream delay develops. Do not instantly reroute drivers at the
         // first distant AS; wait for a measurable time disadvantage. A queue
         // obstacle already passed its own minimum-delay check.
-        const significantDelay=plan.kind==="congestion"||
+        const delayAcrossInterchanges=directedDelayToCause(road,link.fromM,plan.causeEdgeId);
+        const significantDelay=delayAcrossInterchanges>=30||
           measuredDelayAhead(road,link.fromM,50000)>=45;
         if(impassable&&significantDelay){
           verified=true;blockedVerified=true;direct=Infinity;
