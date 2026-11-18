@@ -1581,3 +1581,29 @@ test("A48-like motorway-ending transfer ramp incident offers an earlier A48 exit
     "the still-open Köln connector must continue serving its normal destination");
   conservation(blocked.totals());conservation(free.totals());
 });
+
+
+test("real A48 ramps divert before Dernbach for an A3-transfer accident WITHOUT a motorway full closure",async()=>{
+  const w={};
+  for(const file of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(file,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  s.setDemandPercent(160);s.warmStart();
+  s.setEvent({id:"real-transfer-incident",edgeId:"ramp-a48-to-frankfurt",
+    kind:"accident",offsetM:880,lengthM:100,closedLanes:[0,1],
+    speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  for(let i=0;i<16;i++)s.advance(12);
+  assert.equal(s.closureBands("ramp-a48-to-frankfurt").length,0,
+    "an accident is not a formal full motorway closure");
+  const asExit="extra-heumar-26923440";
+  const detour=s.detourPlans().find(p=>p.terminalEdgeId===asExit&&
+    p.kind==="congestion"&&p.reentryEdgeId==="extra-heumar-243834109");
+  assert.ok(detour,"A48 traffic needs a real exit before the congested A3-Frankfurt transfer");
+  const diverted=s.detourRouteAccounting().find(p=>p.terminalEdgeId===asExit);
+  assert.ok(diverted?.assigned>10&&s.edgeActivity(asExit).divertedVehiclesOnEdge>1,
+    "actual A48 cars must leave at that exit, not simply receive a route recommendation");
+  assert.ok(s.edgeActivity("ramp-a48-to-koeln").enteredVph>0,
+    "the open Köln transfer must remain available for its own destination");
+  conservation(s.totals());
+});
