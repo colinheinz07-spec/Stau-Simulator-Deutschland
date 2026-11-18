@@ -2467,7 +2467,8 @@ function createLegacyTrafficScenario(data){
             // reference. A3 accidents also affect A48 vehicles approaching
             // through the Frankfurt transfer, not only A3 mainline cars.
             // Traverse existing directed OSM turns; never join by proximity.
-            if(turn.toM<=until+.05&&!blockedMovement(from,turn))
+            if(turn.toM<=until+.05&&(obstacle.spec.kind==="closure"||
+              !blockedMovement(from,turn)))
               approachAt(from.id,turn.fromM);
         }
       }
@@ -2831,10 +2832,17 @@ function createLegacyTrafficScenario(data){
     let best=null;
     for(const option of choices){
       const {bad,good,plan,causeEdgeId}=option;
-      if(blockedMovement(edge,bad)||blockedMovement(edge,good))continue;
+      if(blockedMovement(edge,good))continue;
       const affected=options.find(o=>o.to===bad.to&&o.toCell===bad.toCell);
       const alternative=options.find(o=>o.to===good.to&&o.toCell===good.toCell);
-      if(!affected||!alternative||affected.weight<=0)continue;
+      // A closed arm is not among legal movement options. Its ordinary
+      // destination share must nevertheless be transferred to the OPEN
+      // branch without sending a single vehicle into the physical barrier.
+      if(!alternative||!affected&&!blockedMovement(edge,bad))continue;
+      if(plan.kind==="closure"){
+        best={...option,fraction:1,saving:Infinity};continue;
+      }
+      if(!affected||affected.weight<=0)continue;
       // Cost of the SAME destination via the disrupted motorway and via
       // the other arm's real exit, with shared downstream reentry.
       let saving=-Infinity;
@@ -3186,9 +3194,9 @@ function createLegacyTrafficScenario(data){
           const {bad,good,plan,fraction}=dynamic;
           const blocked=options.find(o=>o.to===bad.to&&o.toCell===bad.toCell);
           const alternate=options.find(o=>o.to===good.to&&o.toCell===good.toCell);
-          if(blocked&&alternate){
-            const shifted=blocked.weight*fraction;
-            blocked.weight-=shifted;
+          if(alternate&&(blocked||blockedMovement(edge,bad))){
+            const shifted=(blocked?.weight??bad.weight)*fraction;
+            if(blocked)blocked.weight-=shifted;
             alternate.weight+=shifted;
             alternate.markFraction=shifted/alternate.weight;
             alternate.newRouteTerminal=plan.terminal;
