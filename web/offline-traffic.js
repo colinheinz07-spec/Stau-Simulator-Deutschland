@@ -1826,14 +1826,23 @@ function createLegacyTrafficScenario(data){
       return !alreadyInside(item.event.id,item.event.kind==="closure");
     });
   }
-  // Route choice is based on net time saved, not merely a queue's length.
+  // Nation-wide progressive route response, calibrated to the old app's
+  // increasing voluntary share. Argument = real journey time SAVED, after
+  // local-road travel and queueing have been deducted, not incident length.
+  // A blocked motorway still imposes a mandatory exit at its last legal AS.
   function diversionShare(savingMin){
-    // Net time saved on the alternative, NOT distance to the queue. Drivers
-    // differ in route familiarity and tolerance. A small minority remains on
-    // an OPEN motorway even at enormous delay; physical gates are separate.
     if(savingMin===Infinity)return .99;
-    if(!Number.isFinite(savingMin)||savingMin<=10)return 0;
-    return .99*(1-Math.exp(-Math.pow((savingMin-10)/77,1.55)));
+    if(!Number.isFinite(savingMin)||savingMin<=30)return 0;
+    const anchors=[[30,0],[45,.035],[60,.12],[90,.45],
+      [120,.80],[150,.90],[180,.965],[240,.99]];
+    for(let i=1;i<anchors.length;i++){
+      const [end,upper]=anchors[i], [start,lower]=anchors[i-1];
+      if(savingMin<=end){
+        const t=(savingMin-start)/(end-start);
+        return lower+(upper-lower)*t;
+      }
+    }
+    return .99;
   }
   const delayCache=new Map();
   let delayCacheMinute=-1;
@@ -1870,7 +1879,7 @@ function createLegacyTrafficScenario(data){
       if(next.length!==1)break;
       current=next[0];from=0;
     }
-    const result=Math.min(360,delay);
+    const result=Math.min(1440,delay);
     delayCache.set(key,result);
     return result;
   }
