@@ -2007,7 +2007,15 @@ function createLegacyTrafficScenario(data){
         const impassable=cause&&(activeEffects.get(cause.id)||NO_EFFECTS).some(x=>
           x.event.kind==="closure"||x.event.closedLanes.length>=cause.lanes&&x.event.shoulder!=="open");
         // A known blocked branch is not an unknown missing graph path.
-        if(impassable){verified=true;blockedVerified=true;direct=Infinity;}
+        // An accident can be physically blocked before any appreciable
+        // upstream delay develops. Do not instantly reroute drivers at the
+        // first distant AS; wait for a measurable time disadvantage. A queue
+        // obstacle already passed its own minimum-delay check.
+        const significantDelay=plan.kind==="congestion"||
+          measuredDelayAhead(road,link.fromM,50000)>=45;
+        if(impassable&&significantDelay){
+          verified=true;blockedVerified=true;direct=Infinity;
+        }
       }
       if(!verified){routeChoiceCache.set(key,0);return 0;}
       laterCost=Math.min(laterCost,direct);
