@@ -1986,19 +1986,38 @@ function createLegacyTrafficScenario(data){
         [...edges[fallback.plan.terminal].stock].reduce((a,b)=>a+b,0)*60/(localDischargeVph(edges[fallback.plan.terminal])||700));
     }
     if(plan.kind!=="closure"){
-      // Staying on the original motorway is also a legal choice. Compare
-      // to the real directed merge of the bypass, not the exit's distance.
+      // Compare arrival at the SAME downstream merge even when the approach
+      // motorway terminates in a different motorway number at an interchange.
+      // No straight-line shortcut or disconnected same-ref assumption.
       const entrance=edges[plan.reentry];
-      let direct=Infinity;
-      for(const {road:target,metre} of rampMainlineArrivals(entrance))
-        direct=Math.min(direct,corridorMinutes(road,link.fromM,target,metre));
-      // A local bypass is optional only if its original route to the same
-      // return point is verified. Never infer a time saving from a graph gap.
-      if(!Number.isFinite(direct)){routeChoiceCache.set(key,0);return 0;}
+      let direct=Infinity,verified=false;
+      for(const {road:target} of rampMainlineArrivals(entrance)){
+        cohortPath(target.index);
+        const costs=routePathCosts.get(target.index);
+        const currentCell=Math.min(road.n-1,Math.floor(link.fromM/road.cellLength));
+        const original=costs.get(cellKey(road.index,currentCell));
+        const afterBypass=costs.get(cellKey(entrance.index,0));
+        if(Number.isFinite(original)&&Number.isFinite(afterBypass)){
+          verified=true;direct=Math.min(direct,Math.max(0,original-afterBypass));
+        }
+      }
+      if(!verified&&plan.causeEdgeId&&bottleneckExposureAhead(road,link.fromM,plan.causeEdgeId)>0){
+        const cause=byId.get(plan.causeEdgeId);
+        const impassable=cause&&(activeEffects.get(cause.id)||NO_EFFECTS).some(x=>
+          x.event.kind==="closure"||x.event.closedLanes.length>=cause.lanes&&x.event.shoulder!=="open");
+        // A known blocked branch is not an unknown missing graph path.
+        if(impassable){verified=true;direct=Infinity;}
+      }
+      if(!verified){routeChoiceCache.set(key,0);return 0;}
       laterCost=Math.min(laterCost,direct);
     }
-    // No verified comparator: don't invent a convenient road or destination.
-    const saving=Number.isFinite(laterCost)?laterCost-nowCost:0;
+    // Compare with a later legal exit first: early diversions are warranted
+    // only when they actually save time. The last exit before a closed
+    // destination cannot use an impassable motorway as its alternative.
+    const physicalClosure=plan.kind==="closure"&&
+      closureExposureAhead(road,link.fromM,Infinity,plan.closureId)>0;
+    const saving=Number.isFinite(laterCost)?laterCost-nowCost:
+      physicalClosure?Infinity:0;
     routeChoiceCache.set(key,saving);return saving;
   }
   // A ramp is a usable diversion only if its genuine OSM turns do not lead
