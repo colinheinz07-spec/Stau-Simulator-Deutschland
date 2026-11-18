@@ -2554,7 +2554,10 @@ function createLegacyTrafficScenario(data){
             const arrivals=branch.kind==="mainline"?[{road:branch,metre:good.toM}]:
               branch.kind==="ramp"?rampMainlineArrivals(branch,(a,b)=>!blockedMovement(a,b)):[];
             for(const arrival of arrivals){
-              if(arrival.road.ref===endEdge.ref)continue;
+              // Two different directions of the same numbered motorway
+              // are distinct routes. An open A3 Köln arm can legitimately
+              // serve as an escape from the A3 Frankfurt arm.
+              if(bottleneckExposureAhead(arrival.road,arrival.metre,causeEdgeId)>.01)continue;
               const exit=firstLocalExit(arrival.road,arrival.metre);
               if(!exit||fallbackExits.has(exit.first))continue;
               const reentry=candidates[0];
