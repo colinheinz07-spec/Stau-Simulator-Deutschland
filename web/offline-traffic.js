@@ -2500,7 +2500,7 @@ function createLegacyTrafficScenario(data){
               const plan={terminal:ramp.index,reentry:entries[0].reentry,
                 durationS:entries[0].durationS,entries,
                 closureId:obstacle.spec.id,kind:obstacle.spec.kind,
-                causeEdgeId:obstacle.spec.causeEdgeId||null};
+                causeEdgeId:obstacle.spec.causeEdgeId||obstacle.spans[0]?.edgeId||null};
               const routes=routePlans.get(first.index)||new Map();
               const previous=routes.get(routeKey);
               if(!previous||plan.kind==="closure"&&previous.kind!=="closure"||
@@ -3005,16 +3005,15 @@ function createLegacyTrafficScenario(data){
               if(signedApproach&&netExitSaving(edge,link,exitDetours.get(link.to))<=0)return 0;
               return mandatoryLocalShare(edge,link.fromM);
             }))*closureShare:0;
-          // A different Autobahn at the next AD is not automatically a
-          // viable LATER exit for the same destination (e.g. Köln vs
-          // Frankfurt). Compare only actual downstream bypass plans for
-          // the same obstruction.
-          const hasLaterExit=localTurns.some(link=>{
-            const plan=exitDetours.get(link.to);
+          // A real, later local exit on this directed motorway remains
+          // available even if the limited motorway extract has no modeled
+          // return ramp. A transfer into a DIFFERENT destination (Köln)
+          // is not a local exit for Frankfurt-bound traffic.
+          const hasLaterExit=currentAlternatives.some(link=>{
             let later=false;
             routeForks(edge,link.fromM+.06,(from,turn)=>{
-              const next=exitDetours.get(turn.to);
-              if(next&&next.closureId===plan.closureId&&!blockedMovement(from,turn)){
+              if(!blockedMovement(from,turn)&&
+                localTerminal(edges[turn.to])&&isUsableEscape(from,turn)){
                 later=true;return false;
               }
             });
