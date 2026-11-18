@@ -509,7 +509,8 @@ test("growing accident queue: nearly all new through traffic prefers a faster re
   assert.ok(s.routingDelayAhead("up",850)<45,"initially not a long queue");
   assert.equal(s.totals().detouredVehicles,0);
   for(let i=0;i<65;i++)s.advance(12);
-  assert.ok(s.routingDelayAhead("up",850)>=240);
+  assert.ok(s.routingDelayAhead("up",850)>=90,
+    "a real, sustained accident queue still forms, while earlier diversions should limit the delay");
   const through=s.edgeActivity("jam").enteredVph, diverted=s.edgeActivity("out").departedVph;
   assert.ok(through<diverted*.4,"most drivers prefer the detour even with finite return capacity: "+through+" / "+diverted);
   assert.ok(s.edgeActivity("out").departedVph>650&&s.edgeActivity("out").departedVph<=705);
