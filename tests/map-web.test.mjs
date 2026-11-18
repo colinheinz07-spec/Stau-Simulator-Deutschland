@@ -87,8 +87,8 @@ test('SPCK source preview reuses local geometry and loads without Leaflet or Ove
   const sandbox={window:{}};
   runInNewContext(geometry,sandbox);
   const data=sandbox.window.STAU_LEGACY_GEOMETRY;
-  assert.equal(data.roads.length,1929);
-  assert.equal(data.roads.filter(x=>x[1]==='ramp').length,943);
+  assert.equal(data.roads.length,1934);
+  assert.equal(data.roads.filter(x=>x[1]==='ramp').length,948);
   assert.equal(data.junctions.length,73);
   assert.ok(data.roads.some(x=>x[2]==='A3'));
   assert.ok(data.roads.some(x=>x[2]==='A48'));

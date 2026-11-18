@@ -26,12 +26,6 @@ const LEGACY_SERVICE_WAYS=new Set([
 ]);
 const isLegacyService=row=>row[1]==="ramp"&&(REST.test(row[5]||"")||
   LEGACY_SERVICE_WAYS.has(Number(row[6])));
-// Approximate directional turning proportions (not measured OD counts).
-// "from-frankfurt" means northbound A3 traffic, and vice versa.
-const DERNBACH_TURN_WEIGHTS=new Map([
-  ["ramp-a3-to-a48-from-frankfurt",13.3333333333], // 40 %
-  ["ramp-a3-to-a48-from-koeln",3.5294117647] // 15 %
-]);
 const colourForSpeed=s=>s>65?"free":s>30?"slow":s>10?"jam":"standstill";
 const coord=p=>p.map(n=>Number(n).toFixed(7)).join(",");
 const lengthM=pts=>{
@@ -285,8 +279,7 @@ function createLegacyTrafficScenario(data){
     linkKeys.add(key);
     // Legacy app used roughly 5–12 % exits at ordinary junctions,
     // not the previous 25 % per exit. Interchanges may branch more.
-    const weight=to.kind==="mainline"?20:
-      (from.ref==="A3"&&from.kind==="mainline"?DERNBACH_TURN_WEIGHTS.get(to.id):undefined)??1.5;
+    const weight=to.kind==="mainline"?20:1.5;
     const link={to:to.index,fromCell,toCell,fromM,toM,weight};
     from.links.push(link);from.linksFrom[fromCell].push(link);
     to.incoming++;
@@ -402,6 +395,35 @@ function createLegacyTrafficScenario(data){
       }
     }
     if(!invalid&&boundaries.size)for(const e of boundaries)terminateLocalApproach(e);
+  }
+  // Uniform baseline for motorway transfers: distinguish actual directed
+  // motorway connections from local exits, using their narrowest lane count.
+  // These are fallback destination estimates, not prescribed diversion shares
+  // or measured OD flows. Never assign a turn percentage by interchange ID.
+  function transferWidth(first,originRef){
+    const queue=[{edge:first,width:first.lanes}],seen=new Map();
+    let width=0;
+    for(let i=0;i<queue.length;i++){
+      const {edge,width:available}=queue[i];
+      if((seen.get(edge.index)||0)>=available)continue;
+      seen.set(edge.index,available);
+      for(const turn of edge.links){
+        const next=edges[turn.to],lanes=Math.min(available,next.lanes);
+        if(next.kind==="mainline"){
+          if(next.ref!==originRef)width=Math.max(width,lanes);
+        }else if(next.kind==="ramp")queue.push({edge:next,width:lanes});
+      }
+    }
+    return width;
+  }
+  for(const road of edges)if(road.kind==="mainline")for(const link of road.links){
+    const target=edges[link.to];
+    if(target.kind!=="ramp")continue;
+    const width=transferWidth(target,road.ref);
+    if(!width)continue;
+    link.weight=3.5*width;
+    const successor=road.next.find(x=>x.to===link.to);
+    if(successor)successor.weight=link.weight;
   }
   // Source provenance matters: an orphaned OSM ramp Way is NOT a
   // residential on-ramp. Select a single upstream boundary per directional
@@ -630,13 +652,30 @@ function createLegacyTrafficScenario(data){
     return {...raw,offsetM:newOffset};
   }
   function restoreEvent(raw){
-    const edge=raw&&byId.get(raw.edgeId);
+    let edge=raw&&byId.get(raw.edgeId);
+    // The old snapshot sometimes combined several consecutive ramp Ways
+    // of different widths under one ID. Restore old offsets on their actual
+    // successor fragment without moving a saved event to a different ramp.
+    if(edge?.kind==="ramp"&&finite(Number(raw.offsetM))&&raw.offsetM>=edge.lengthM){
+      let offset=Number(raw.offsetM),part=edge;
+      const prefix=edge.id+"-",seen=new Set();
+      while(offset>=part.lengthM&&!seen.has(part.id)){
+        seen.add(part.id);
+        const next=part.links.filter(t=>edges[t.to].id.startsWith(prefix)&&
+          t.fromM>=part.lengthM-.05&&t.toM<.05);
+        if(next.length!==1)break;
+        offset-=part.lengthM;part=edges[next[0].to];
+      }
+      if(part!==edge&&offset<part.lengthM){edge=part;raw={...raw,edgeId:edge.id,offsetM:offset};}
+    }
     // A saved complete closure from a pre-normalization four-lane Way
     // must remain a complete closure when only three through lanes remain.
     // Do not relax validation of newly created partial-lane events.
     if(edge&&raw.kind==="closure"&&Array.isArray(raw.closedLanes)&&
-      raw.closedLanes.length===edge.lanes+1&&
-      Array.from({length:edge.lanes+1},(_,i)=>i).every(i=>raw.closedLanes.includes(i)))
+      raw.closedLanes.length>0&&raw.closedLanes.every((_,i)=>raw.closedLanes.includes(i)))
+      raw={...raw,closedLanes:Array.from({length:edge.lanes},(_,i)=>i)};
+    if(edge?.kind==="ramp"&&raw.kind!=="closure"&&raw.speedKmh===0&&
+      raw.closedLanes?.length===1&&raw.closedLanes[0]===0&&edge.lanes>1)
       raw={...raw,closedLanes:Array.from({length:edge.lanes},(_,i)=>i)};
     return setEvent(raw);
   }
@@ -2557,7 +2596,8 @@ function createLegacyTrafficScenario(data){
         let permitted=edge.freeKmh;
         for(const item of local){
           const ev=item.event;
-          for(const lane of ev.closedLanes){
+          const closedHere=ev.kind==="closure"?Array.from({length:edge.lanes},(_,i)=>i):ev.closedLanes.filter(lane=>lane<edge.lanes);
+          for(const lane of closedHere){
             closed.add(lane);
             // A road closure bans new arrivals. A distinct crash/worksite
             // may physically block cars already within that road section.

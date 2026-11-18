@@ -905,17 +905,15 @@ test("AD Dernbach A3 Frankfurt closure closes FULL A48 to Frankfurt ramp and blo
   assert.match(closure.closureFrom,/A3 39 AD Dernbach/);
   assert.match(closure.closureTo,/A3 40 Montabaur/);
   const frankfurt="ramp-a48-to-frankfurt",koeln="ramp-a48-to-koeln";
-  const ramp=data.roads.find(x=>x[0]===frankfurt);
-  const fullLength=ramp[4].slice(1).reduce((n,p,i)=>{
-    const q=ramp[4][i],dy=(p[0]-q[0])*111100,
-      dx=(p[1]-q[1])*111100*Math.cos(p[0]*Math.PI/180);
-    return n+Math.hypot(dy,dx);
-  },0);
-  const bands=sim.closureBands(frankfurt);
-  assert.equal(bands.length,1,"one full red-white ramp, no fragment gaps");
-  assert.ok(bands[0].fromM<.05&&bands[0].toM>fullLength-2,
-    "entire Frankfurt ramp from the A48 split to its A3 merge must be closed: "+
-    JSON.stringify(bands)+" vs "+fullLength);
+  const parts=data.roads.filter(x=>x[0]===frankfurt||x[0].startsWith(frankfurt+"-"));
+  assert.equal(parts.length,2);
+  assert.deepEqual(Array.from(parts,p=>p[3]),[2,1],"actual lane drop on the Frankfurt ramp");
+  for(const part of parts){
+    const fullLength=sim.edgeActivity(part[0]).lengthM,bands=sim.closureBands(part[0]);
+    assert.equal(bands.length,1,"one full red-white band on each ramp segment");
+    assert.ok(bands[0].fromM<.05&&bands[0].toM>fullLength-2,
+      "entire Frankfurt ramp from the A48 split to its A3 merge must be closed: "+part[0]);
+  }
   assert.equal(sim.closureBands(koeln).length,0,
     "the independent turn A48 to A3 Köln remains open");
   assert.equal(sim.movementBlocked("A48-127602519",frankfurt),true,
@@ -1406,7 +1404,7 @@ test("Montabaur upstream one-lane incident does not block ordinary exit; Dernbac
   for(let i=0;i<40;i++)sim.advance(12);
   const north=sim.edgeActivity("ramp-a3-to-a48-from-frankfurt").enteredVph;
   const south=sim.edgeActivity("ramp-a3-to-a48-from-koeln").enteredVph;
-  assert.ok(north>south*2,"northbound A3 transfers more traffic to A48: "+north+" vs "+south);
+  assert.ok(north>south&&south>100,"wider northbound transfer carries more ordinary traffic, without imposing the former fixed ratio: "+north+" vs "+south);
   sim.setEvent({id:"upstream",edgeId:"A3-35484170",kind:"accident",
     offsetM:200,lengthM:100,closedLanes:[0,1],speedKmh:40,shoulder:"normal",hasShoulder:false});
   for(let i=0;i<80;i++)sim.advance(12);
@@ -1415,6 +1413,31 @@ test("Montabaur upstream one-lane incident does not block ordinary exit; Dernbac
   assert.ok(sim.speed("extra-heumar-5201206")>30,"upstream accident must not create false exit gridlock");
   assert.ok(sim.edgeActivity("extra-heumar-310778679").enteredVph<1,
     "ordinary exit traffic must not be routed back onto the motorway");
+  conservation(sim.totals());
+});
+
+test("Dernbach Frankfurt: actual lane drop, no forced turn on an open A3, old events remain restorable",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  const entry="ramp-a48-to-frankfurt",tail=entry+"-75746365";
+  const head=sim.edgeActivity(entry),last=sim.edgeActivity(tail);
+  assert.equal(head.capacityVph,3000);
+  assert.equal(last.capacityVph,1500);
+  assert.ok(head.lengthM>1000&&last.lengthM>400);
+  assert.equal(sim.restoreEvent({id:"old-ramp",edgeId:entry,kind:"closure",
+    offsetM:head.lengthM+20,lengthM:100,closedLanes:[0],speedKmh:0,shoulder:"normal"}).edgeId,tail);
+  assert.ok(sim.closureBands(entry).length&&sim.closureBands(tail).length);
+  sim.removeEvent("old-ramp");
+  sim.setSimulationStart(Date.parse("2026-11-18T10:00:00Z"));sim.warmStart();
+  for(let i=0;i<15;i++)sim.advance(12);
+  const south="ramp-a3-to-a48-from-koeln";
+  assert.ok(sim.speed("A3-232272183")>65,"A3 southbound remains free");
+  assert.ok(sim.edgeActivity("A3-232272183").sectionVph>2000,"through traffic actually continues to Montabaur");
+  assert.ok(sim.edgeActivity(south).enteredVph<1000,"ordinary Koblenz traffic only");
+  assert.equal(sim.edgeActivity(south).divertedVehiclesOnEdge,0,"no diversion without an obstruction");
+  assert.equal(sim.totals().detouredVehicles,0);
   conservation(sim.totals());
 });
 
@@ -1477,10 +1500,10 @@ test("A48 receiving bottleneck backs up both Dernbach transfer ramps",async()=>{
     offsetM:30,lengthM:100,closedLanes:[0,1],speedKmh:40,shoulder:"normal",hasShoulder:false});
   for(let i=0;i<15;i++)sim.advance(12);
   for(const id of ["ramp-a3-to-a48-from-frankfurt","ramp-a3-to-a48-from-koeln"]){
-    assert.ok(sim.visualBands(id).some(b=>b.color==="jam"||b.color==="standstill"),id);
-    assert.ok(sim.edgeActivity(id).enteredVph>sim.edgeActivity(id).departedVph);
+    const chain=w.STAU_LEGACY_GEOMETRY.roads.filter(r=>r[0]===id||r[0].startsWith(id+"-")).map(r=>r[0]);
+    assert.ok(chain.some(part=>sim.visualBands(part).some(b=>b.color==="jam"||b.color==="standstill")),id);
+    assert.ok(sim.edgeActivity(chain[0]).enteredVph>sim.edgeActivity(chain.at(-1)).departedVph,
+      "physical queue grows across the entire ramp, not necessarily its first short section");
   }
-  assert.ok(sim.edgeActivity("ramp-a3-to-a48-from-frankfurt").vehicles>
-    sim.edgeActivity("ramp-a3-to-a48-from-koeln").vehicles);
   conservation(sim.totals());
 });
