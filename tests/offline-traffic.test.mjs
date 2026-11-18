@@ -631,6 +631,33 @@ test("motorway bypass may rejoin several links beyond an accident and keeps its 
   conservation(s.totals());
 });
 
+test("a congested transfer cannot turn waiting cars into through traffic or create a false diversion on the open motorway",async()=>{
+  const s=(await engine())({roads:[
+    ["approach","mainline","A3",3,[[50,7],[50,7.02]],"",1],
+    ["straight","mainline","A3",3,[[50,7.02],[50,7.05]],"",2],
+    ["branch","ramp","A48",1,[[50,7.02],[50.003,7.023]],"Überleitung",3],
+    ["other","mainline","A48",2,[[50.003,7.023],[50.015,7.04]],"",4]
+  ]});
+  s.setSimulationStart(Date.parse("2026-11-13T12:00:00Z"));
+  s.setDemandPercent(45);s.warmStart();
+  for(let i=0;i<15;i++)s.advance(12);
+  const regular=s.edgeActivity("straight").enteredVph;
+  s.setEvent({id:"ramp-crash",edgeId:"branch",kind:"accident",offsetM:180,lengthM:100,
+    closedLanes:[0],speedKmh:0,shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<20;i++)s.advance(12);
+  const waiting=s.edgeActivity("approach").turnCommitments.find(x=>x.targetEdgeId==="branch");
+  assert.ok(waiting?.vehicles>5,"blocked branch destinations remain individually committed: "+JSON.stringify(waiting));
+  assert.ok(s.edgeActivity("straight").enteredVph>regular*.45,"through drivers retain usable service while the ramp backs up: "+JSON.stringify({regular,straight:s.edgeActivity("straight"),approach:s.edgeActivity("approach")}));
+  assert.equal(s.edgeActivity("branch").divertedVehiclesOnEdge,0);
+  assert.equal(s.totals().detouredVehicles,0);
+  assert.ok(s.speed("branch")<20);
+  conservation(s.totals());
+  s.removeEvent("ramp-crash");s.setDemandPercent(10);
+  for(let i=0;i<30;i++)s.advance(12);
+  assert.ok(s.speed("branch")>50&&s.speed("approach")>65,"committed queues drain through the reopened branch");
+  conservation(s.totals());
+});
+
 test("unrestricted theoretical capacity is not the operating capacity under dense traffic",async()=>{
   const make=await engine(),low=make(network()),high=make(network());
   for(const [s,demand] of [[low,15],[high,135]]){
@@ -1438,6 +1465,15 @@ test("Dernbach Frankfurt: actual lane drop, no forced turn on an open A3, old ev
   assert.ok(sim.edgeActivity(south).enteredVph<1000,"ordinary Koblenz traffic only");
   assert.equal(sim.edgeActivity(south).divertedVehiclesOnEdge,0,"no diversion without an obstruction");
   assert.equal(sim.totals().detouredVehicles,0);
+  // A downstream A48 bottleneck must not make Frankfurt-bound A3 traffic
+  // take the Koblenz ramp. The two destinations stay distinct.
+  sim.setEvent({id:"a48-crash",edgeId:"A48-1308398832",kind:"accident",
+    offsetM:30,lengthM:100,closedLanes:[0,1],speedKmh:40,shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<20;i++)sim.advance(12);
+  assert.equal(sim.edgeActivity(south).divertedVehiclesOnEdge,0);
+  assert.ok(sim.speed("A3-232272183")>65&&sim.edgeActivity("A3-232272183").sectionVph>1000,
+    "open A3 mainline beyond Dernbach must still pass traffic toward Frankfurt");
+  assert.ok(sim.edgeActivity(south).enteredVph<1000,"no additional forced A3 to A48 diversion");
   conservation(sim.totals());
 });
 

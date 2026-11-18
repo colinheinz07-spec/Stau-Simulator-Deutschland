@@ -47,6 +47,7 @@ export class NetworkFlowEngine {
   private readonly moves=new Map<string,Move[]>();
   private readonly incomingMoves=new Map<string,string[]>();
   private readonly movementFlow=new Map<string,number>();
+  private readonly turnStock=new Map<string,Map<string,number>>();
   private readonly openBoundarySinks=new Set<string>();
   private readonly sourceIds:string[]=[];
   private readonly sourceBacklog=new Map<string,number>();
@@ -208,6 +209,7 @@ export class NetworkFlowEngine {
     const send=new Map<string,Float64Array>();
     const receive=new Map<string,Float64Array>();
     const delta=new Map<string,Float64Array>();
+    const motion=new Map<string,number>();
     for(const [id,state] of this.cells){
       const {edge,vehicles,lengthM,jamCellVehicles}=state;
       const outs=new Float64Array(vehicles.length),ins=new Float64Array(vehicles.length);
@@ -244,6 +246,7 @@ export class NetworkFlowEngine {
         capacity*=dynamic.capacityFactor*restart;
         state.operatingVph[i]=forbiddenEntry||corridor.blockedEdgeIds.has(id)||closedByEvent.has(id)?0:capacity;
         const freeTravelFraction=Math.min(1,(edge.freeSpeedKmh*dynamic.speedFactor/3.6)*dt/lengthM);
+        if(i===vehicles.length-1)motion.set(id,freeTravelFraction);
         const cap=capacity*dt/3600;
         outs[i]=Math.min(vehicles[i]!,cap,vehicles[i]!*freeTravelFraction);
         const room=Math.max(0,jamCellVehicles-vehicles[i]!);
@@ -266,7 +269,7 @@ export class NetworkFlowEngine {
     }
     // Junction transfers respect actual OSM turns, receiving storage, and
     // movement capacity. Alternatives are considered only AT a real fork.
-    const proposals=new Map<string,{fromId:string;toId:string;amount:number}[]>();
+    const proposals=new Map<string,{fromId:string;toId:string;amount:number;committed:boolean}[]>();
     for(const [id,state] of this.cells){
       const out=send.get(id)!;
       const available=out[out.length-1]!;
@@ -283,18 +286,38 @@ export class NetworkFlowEngine {
       const outsideWeight=this.openBoundarySinks.has(id)?20:0;
       if(choices.length===0&&!outsideWeight)continue;
       const weightSum=choices.reduce((a,m)=>a+m.weight,0)+outsideWeight;
+      let pending:Map<string,number>|undefined;
+      let planned=new Map<string,number>();
+      if(choices.length+Number(outsideWeight>0)>1){
+        const turns=choices.map(c=>({id:c.toId,weight:c.weight,receiving:Math.min(receive.get(c.toId)![0]!,c.capacityVph===undefined?Infinity:c.capacityVph*dt/3600)}));
+        if(outsideWeight)turns.push({id:'',weight:outsideWeight,receiving:Infinity});
+        pending=this.turnStock.get(id)??new Map();
+        const keys=new Set(turns.map(t=>t.id));
+        for(const key of pending.keys())if(!keys.has(key))pending.delete(key);
+        const old=[...pending.values()].reduce((a,b)=>a+b,0);
+        const fresh=Math.max(0,state.vehicles[state.vehicles.length-1]!-old);
+        for(const t of turns){
+          const amount=(pending.get(t.id)??0)+fresh*t.weight/weightSum;
+          pending.set(t.id,amount);
+          planned.set(t.id,Math.min(amount*(motion.get(id)??0),t.receiving));
+        }
+        this.turnStock.set(id,pending);
+        const demand=[...planned.values()].reduce((a,b)=>a+b,0);
+        if(demand>available)for(const [key,value] of planned)planned.set(key,value*available/demand);
+      }else this.turnStock.delete(id);
       if(outsideWeight){
-        const leaving=available*outsideWeight/weightSum;
+        const leaving=pending?planned.get('')??0:available*outsideWeight/weightSum;
+        if(pending)pending.set('',Math.max(0,(pending.get('')??0)-leaving));
         const change=delta.get(id)!;
         change[change.length-1]=change[change.length-1]!-leaving;
         this.exited+=leaving;
       }
       for(const choice of choices){
-        const proposed=available*choice.weight/weightSum;
+        const proposed=pending?planned.get(choice.toId)??0:available*choice.weight/weightSum;
         const limited=Math.min(proposed,
           choice.capacityVph===undefined?Infinity:choice.capacityVph*dt/3600);
         const list=proposals.get(choice.toId)??[];
-        list.push({fromId:id,toId:choice.toId,amount:limited});
+        list.push({fromId:id,toId:choice.toId,amount:limited,committed:!!pending});
         proposals.set(choice.toId,list);
       }
     }
@@ -306,6 +329,10 @@ export class NetworkFlowEngine {
       let total=0;
       for(const p of list){
         const amount=p.amount*scale;
+        if(p.committed){
+          const pending=this.turnStock.get(p.fromId)!;
+          pending.set(p.toId,Math.max(0,(pending.get(p.toId)??0)-amount));
+        }
         this.movementFlow.set(p.fromId+'=>'+toId,amount*3600/dt);
         const fromChanges=delta.get(p.fromId)!;
         fromChanges[fromChanges.length-1]=fromChanges[fromChanges.length-1]!-amount;
@@ -339,6 +366,9 @@ export class NetworkFlowEngine {
         if(state.vehicles[i]!>state.jamCellVehicles+1e-7)
           throw Error('Zellspeicher überschritten: '+id+' ['+i+']');
       }
+      const pending=this.turnStock.get(id);
+      if(pending&&[...pending.values()].reduce((a,b)=>a+b,0)>state.vehicles[state.vehicles.length-1]!+1e-6)
+        throw Error('Abbiegebestand verletzt: '+id);
     }
     this.elapsed+=dt;
     const check=this.snapshot();

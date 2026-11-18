@@ -209,6 +209,9 @@ function createLegacyTrafficScenario(data){
       // Sparse destination cohorts: a diverted motorway-transfer vehicle
       // must keep its actual exit even at later motorway/ramp forks.
       routeStock:Array(count).fill(null),
+      // Ordinary destination commitments at a physical fork. Cars waiting
+      // for a full exit do not get a new random destination every tick.
+      turnStock:Array(count).fill(null),
       bypassStock:new Float64Array(count),
       // User-defined unrestricted motorway service, not a speed threshold.
        capacityPerLane:row[1]==="ramp"?1500:2200,
@@ -226,6 +229,7 @@ function createLegacyTrafficScenario(data){
       cellFlowSpeeds:new Float64Array(count).fill(row[1]==="ramp"?75:120),
       // Two-minute actual throughput per cell, including internal merges.
       cellThroughVph:new Float64Array(count),
+      cellMotion:new Float64Array(count),
       cellCapacityVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:2200)),
       links:[],linksFrom:Array.from({length:count},()=>[]),
       enteredVph:0,departedVph:0,
@@ -578,6 +582,38 @@ function createLegacyTrafficScenario(data){
     if(edge.kind!=="mainline")return false;
     return !outgoing.some(link=>leadsToMainline(link.to));
   });
+  // Lane-aware approach chains end at the next physical mainline fork.
+  // This is a graph relation, not a named interchange or a distance cap.
+  const approachForks=edges.map(e=>Array(e.n).fill(null)),forks=[];
+  const ordinaryMoves=(e,k)=>[
+    ...(k<e.n-1?[{to:e.index,toCell:k+1,weight:20}]:[]),...e.linksFrom[k]];
+  for(const e of edges)if(e.kind==="mainline"&&e.lanes>1)for(let k=0;k<e.n;k++){
+    const moves=ordinaryMoves(e,k),through=moves.filter(t=>edges[t.to].kind==="mainline"&&edges[t.to].ref===e.ref);
+    const branches=moves.filter(t=>!through.includes(t));
+    if(through.length!==1||!branches.length)continue;
+    const widths=branches.map(t=>Math.max(1,edges[t.to].lanes));
+    const branchLanes=Math.min(e.lanes-1,widths.reduce((a,b)=>a+b,0));
+    const shares=new Map([[cellKey(through[0].to,through[0].toCell),1-branchLanes/e.lanes]]);
+    branches.forEach((t,i)=>shares.set(cellKey(t.to,t.toCell),branchLanes/e.lanes*widths[i]/widths.reduce((a,b)=>a+b,0)));
+    const fork={edge:e,k,moves,branches,shares,throughKey:cellKey(through[0].to,through[0].toCell),cells:[],active:false};
+    forks.push(fork);approachForks[e.index][k]=fork;
+  }
+  for(const fork of forks){
+    const work=[{edge:fork.edge,k:fork.k,next:null}];
+    for(let i=0;i<work.length;i++){
+      const item=work[i],e=item.edge,k=item.k;
+      if(item.next&&approachForks[e.index][k])continue;
+      approachForks[e.index][k]=fork;fork.cells.push(item);
+      const join=(from,cell)=>{
+        if(from.kind!=="mainline"||from.ref!==fork.edge.ref||approachForks[from.index][cell])return;
+        const moves=ordinaryMoves(from,cell);
+        if(moves.length===1&&moves[0].to===e.index&&moves[0].toCell===k)
+          work.push({edge:from,k:cell,next:moves[0]});
+      };
+      if(k>0)join(e,k-1);
+      for(const {from,turn} of incomingTurns[e.index])if(turn.toCell===k)join(from,turn.fromCell);
+    }
+  }
   const reachable=new Set(sources.map(edge=>edge.id));
   const frontier=[...sources];
   for(let k=0;k<frontier.length;k++){
@@ -1327,6 +1363,13 @@ function createLegacyTrafficScenario(data){
   }
   // Jam diagnostics use ONLY the density of actual model vehicles. A 20 km/h
   // roadworks limit alone must never turn an empty road red.
+  function throughOccupancy(edge,k){
+    const fork=approachForks[edge.index][k],pending=edge.turnStock[k];
+    if(!fork?.active||!pending)return {count:edge.stock[k],storage:edge.jamPerCell};
+    const fresh=Math.max(0,edge.stock[k]-[...pending.values()].reduce((n,x)=>n+x,0));
+    const share=fork.shares.get(fork.throughKey);
+    return {count:(pending.get(fork.throughKey)||0)+fresh*share,storage:edge.jamPerCell*share};
+  }
   function recomputeSpeeds(){
     updateEffects();
     for(const edge of edges){
@@ -1335,7 +1378,8 @@ function createLegacyTrafficScenario(data){
       const bands=[];
       for(let k=0;k<edge.n;k++){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
-        const fraction=Math.min(1,edge.stock[k]/Math.max(.001,edge.jamPerCell));
+        const {count,storage}=throughOccupancy(edge,k);
+        const fraction=Math.min(1,count/Math.max(.001,storage));
         const densitySpeed=edge.freeKmh*trafficOperatingState(fraction,0,edge.kind==="mainline").speedFactor*
           (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
         const measured=Math.min(densitySpeed,edge.cellFlowSpeeds[k]);
@@ -1347,13 +1391,13 @@ function createLegacyTrafficScenario(data){
         }
         // No vehicle = no measured travel speed. Capacity restrictions and
         // closures remain separately visible as event/closure overlays.
-        if(edge.stock[k]>=1)minSpeed=Math.min(minSpeed,speed);
+        if(count>=1)minSpeed=Math.min(minSpeed,speed);
         const congested=edge.kind==="ramp"?
           (fraction>.35&&edge.stock[k]>=Math.min(2,edge.jamPerCell*.35))||
           // A moving queue on a long off-ramp may occupy less than 35 %
           // of jam storage while its actual measured flow is already slow.
           (fraction>.18&&edge.stock[k]>=2&&measured<=30&&localTerminal(edge)!==null):
-          edge.stock[k]>=Math.max(2,edge.lanes*1.2)&&fraction>.23;
+          count>=Math.max(2,edge.lanes*1.2)&&fraction>.23;
         const color=congested?colourForSpeed(measured):"free";
         if(color!=="free"){
           const previous=bands.at(-1);
@@ -1556,7 +1600,7 @@ function createLegacyTrafficScenario(data){
     delayCache.clear();delayCacheMinute=-1;routeChoiceCache.clear();routeChoiceMinute=-1;
     returnWaitCache.clear();returnWaitMinute=-1;
     for(const edge of edges){
-      edge.stock.fill(0);edge.divertStock.fill(0);edge.bypassStock.fill(0);edge.routeStock.fill(null);
+      edge.stock.fill(0);edge.divertStock.fill(0);edge.bypassStock.fill(0);edge.routeStock.fill(null);edge.turnStock.fill(null);
       edge.backlog=0;edge.speed=edge.freeKmh;
       edge.cellFlowSpeeds.fill(edge.freeKmh);
       edge.cellThroughVph.fill(0);
@@ -1564,6 +1608,7 @@ function createLegacyTrafficScenario(data){
       edge.lastProfileMinute=-1;edge.profileFactor=0;
       edge.enteredVph=0;edge.departedVph=0;
     }
+    for(const fork of forks)fork.active=false;
     if(clearEvents)eventRecords.clear();
     effectsStamp=null;updateEffects();recomputeSpeeds();
     return totals();
@@ -1785,8 +1830,9 @@ function createLegacyTrafficScenario(data){
         const metres=Math.min(maxDistance-distance,
           (i+1)*current.cellLength-Math.max(from,i*current.cellLength));
         if(metres<=0)continue;
-        const occupied=current.stock[i]>=1;
-        const density=Math.min(1,current.stock[i]/Math.max(.001,current.jamPerCell));
+        const {count,storage}=throughOccupancy(current,i);
+        const occupied=count>=1;
+        const density=Math.min(1,count/Math.max(.001,storage));
         const free=current.freeKmh*trafficOperatingState(density,0,current.kind==="mainline").speedFactor;
         const densitySpeed=free*(density<=.23?1:
           Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
@@ -1826,9 +1872,44 @@ function createLegacyTrafficScenario(data){
     }
     return Infinity;
   }
+  // A missing graph path is not infinite travel time. Only a physically
+  // reached, blocked section can justify treating the original route as
+  // impassable. This also excludes congestion behind the current fork.
+  const directCostCache=new Map();let directCostStamp="";
+  function directCorridorCost(road,offset,target,targetOffset){
+    const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
+    if(stamp!==directCostStamp){directCostCache.clear();directCostStamp=stamp;}
+    const key=road.id+":"+offset+":"+target.id+":"+targetOffset;
+    if(directCostCache.has(key))return directCostCache.get(key);
+    const result=computeDirectCorridorCost(road,offset,target,targetOffset);
+    directCostCache.set(key,result);return result;
+  }
+  function computeDirectCorridorCost(road,offset,target,targetOffset){
+    let current=road,from=offset,minutes=0,blocked=false;
+    const seen=new Set();
+    while(current&&!seen.has(current.id)){
+      seen.add(current.id);
+      const end=current===target?targetOffset:current.lengthM;
+      if(end<from-.01)return NaN;
+      const effects=activeEffects.get(current.id)||NO_EFFECTS;
+      for(const item of effects)if(item.fromM<end-.001&&item.toM>from+.001&&
+        (item.event.kind==="closure"||item.event.closedLanes.length>=current.lanes&&item.event.shoulder!=="open"))blocked=true;
+      for(let k=Math.floor(from/current.cellLength);k<current.n&&k*current.cellLength<end;k++){
+        const metres=Math.max(0,Math.min(end,(k+1)*current.cellLength)-Math.max(from,k*current.cellLength));
+        minutes+=metres*.06/routingCellSpeed(current,k);
+      }
+      if(current===target)return blocked?Infinity:minutes;
+      const next=current.links.filter(t=>t.fromM>=current.lengthM-.05&&
+        edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref&&!seen.has(edges[t.to].id));
+      if(next.length!==1)return NaN;
+      current=edges[next[0].to];from=next[0].toM;
+    }
+    return NaN;
+  }
   function routingCellSpeed(edge,k){
-    if(edge.stock[k]<.8)return edge.freeKmh;
-    const density=clamp01(edge.stock[k]/Math.max(.001,edge.jamPerCell));
+    const {count,storage}=throughOccupancy(edge,k);
+    if(count<.8)return edge.freeKmh;
+    const density=clamp01(count/Math.max(.001,storage));
     const desired=edge.freeKmh*trafficOperatingState(density,0,edge.kind==="mainline").speedFactor;
     const densitySpeed=desired*(density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
     return Math.max(1,Math.min(densitySpeed,edge.cellFlowSpeeds[k]));
@@ -1884,8 +1965,13 @@ function createLegacyTrafficScenario(data){
       // Staying on the original motorway is also a legal choice. Compare
       // to the real directed merge of the bypass, not the exit's distance.
       const entrance=edges[plan.reentry];
+      let direct=Infinity;
       for(const {road:target,metre} of rampMainlineArrivals(entrance))
-        laterCost=Math.min(laterCost,corridorMinutes(road,link.fromM,target,metre));
+        direct=Math.min(direct,corridorMinutes(road,link.fromM,target,metre));
+      // A local bypass is optional only if its original route to the same
+      // return point is verified. Never infer a time saving from a graph gap.
+      if(!Number.isFinite(direct)){routeChoiceCache.set(key,0);return 0;}
+      laterCost=Math.min(laterCost,direct);
     }
     // No verified comparator: don't invent a convenient road or destination.
     const saving=Number.isFinite(laterCost)?laterCost-nowCost:0;
@@ -2425,11 +2511,12 @@ function createLegacyTrafficScenario(data){
     for(const {arrival,from,turn,plan} of localSourceCandidates.get(source.index)){
       const travel=corridorMinutes(arrival.road,arrival.metre,from,turn.fromM);
       if(!Number.isFinite(travel))continue;
+      const direct=plan.kind==="closure"?Infinity:Math.min(...rampMainlineArrivals(edges[plan.reentry]).map(a=>
+        corridorMinutes(arrival.road,arrival.metre,a.road,a.metre)));
+      if(plan.kind!=="closure"&&!Number.isFinite(direct))continue;
       const cost=source.lengthM*.06/source.freeKmh+travel+exitTravelMinutes(turn,plan);
       const candidate=candidatesByDestination.get(plan.closureId)||{viaMotorway:Infinity,best:null};
-      candidate.viaMotorway=Math.min(candidate.viaMotorway,cost);
-      if(plan.kind!=="closure")for(const a of rampMainlineArrivals(edges[plan.reentry]))
-        candidate.viaMotorway=Math.min(candidate.viaMotorway,corridorMinutes(arrival.road,arrival.metre,a.road,a.metre));
+      candidate.viaMotorway=Math.min(candidate.viaMotorway,cost,direct);
       const entries=plan.entries.map(e=>({...e,durationS:estimatedOutsideSeconds(source,edges[e.reentry],true)}));
       const durationS=entries.reduce((n,e)=>n+e.weight*e.durationS,0);
       if(!candidate.best||durationS<candidate.best.durationS)candidate.best={...plan,entries,durationS};
@@ -2520,7 +2607,15 @@ function createLegacyTrafficScenario(data){
         return Number.isFinite(rest)?exitTravelMinutes(o,plan)+rest:Infinity;
       }));
       if(localCost+5<alternative)continue;
-      const original=Math.min(...through.map(t=>costs.get(cellKey(t.to,t.toCell))??Infinity));
+      // Compare the same destination on the original directed carriageway,
+      // not an arbitrary alternative graph path or a missing path (Infinity).
+      // The last legal fork of an actual closure can have no open through turn;
+      // only in that case absence is evidence of a mandatory diversion.
+      const originalCosts=through.map(t=>directCorridorCost(edges[t.to],
+        t.toM??t.toCell*edges[t.to].cellLength,target,(target.n-1)*target.cellLength)).filter(x=>!Number.isNaN(x));
+      const original=originalCosts.length?Math.min(...originalCosts):
+        c.kind==="closure"&&Number.isFinite(closureDistanceAhead(edge,k*edge.cellLength,Infinity,c.closureId))?Infinity:NaN;
+      if(Number.isNaN(original))continue;
       // On a full closure no new through demand enters an inaccessible
       // route. When traffic can still move, drivers retain different tastes.
       const share=original===Infinity&&c.kind==="closure"?1:diversionShare(original-alternative);
@@ -2669,6 +2764,7 @@ function createLegacyTrafficScenario(data){
         const transferCapacity=evacuating?
           openIncident*edge.capacityPerLane*incidentFactor*operatingFactor*dt/3600:cap;
         edge.cellCapacityVph[k]=cap*3600/dt;
+        edge.cellMotion[k]=moving;
         s[k]=Math.min(stock[k],transferCapacity,stock[k]*moving);
         const room=Math.max(0,edge.jamPerCell-stock[k]);
         r[k]=blockedAtGate?0:Math.min(room,transferCapacity,room*wave);
@@ -2678,10 +2774,44 @@ function createLegacyTrafficScenario(data){
     // connector. Ramp merges compete with the mainline for REAL receiving
     // space, while exit splits share the originating cell's sending capacity.
     // This fixes mid-Way motorway junctions without creating new road geometry.
+    const laneReceive=new Map(),throughStart=new Map(),throughSent=new Map();
+    for(const fork of forks){
+      const {edge,k,moves,branches,cells,shares}=fork;
+      const weightSum=moves.reduce((n,t)=>n+t.weight,0);
+      const congested=branches.some(t=>receive[t.to][t.toCell]+1e-6<send[edge.index][k]*t.weight/weightSum&&
+        (receive[t.to][t.toCell]<1e-6||edges[t.to].stock[t.toCell]>.25*edges[t.to].jamPerCell));
+      if(!fork.active&&!congested)continue;
+      // Event routing has its own destination cohorts; do not superimpose
+      // ordinary lane commitments where the actual route must be replanned.
+      const rerouting=!!motorwayChoice(edge,k,moves)||branches.some(t=>{
+        const plan=exitDetours.get(t.to);
+        return blockedMovement(edge,t)||plan&&(plan.kind==="closure"||netExitSaving(edge,t,plan)>10);
+      })||
+        anyClosureActive&&(designatedApproach.has(edge.index)||Number.isFinite(closureDistanceAhead(edge,k*edge.cellLength,Infinity))||closureExposureAhead(edge,k*edge.cellLength,Infinity)>0)||
+        cells.some(c=>c.edge.divertStock[c.k]>1e-9||c.edge.routeStock[c.k]);
+      if(rerouting){if(fork.active)for(const c of cells)c.edge.turnStock[c.k]=null;fork.active=false;continue;}
+      fork.active=true;
+      const weights=moves.map(t=>({key:cellKey(t.to,t.toCell),weight:t.weight*(edges[t.to].kind==="ramp"&&localTerminal(edges[t.to])?localTurnScale(edge):1)}));
+      const sum=weights.reduce((n,t)=>n+t.weight,0);
+      for(const {edge:road,k:cell} of cells){
+        const pending=road.turnStock[cell]||new Map();
+        for(const key of pending.keys())if(!shares.has(key))pending.delete(key);
+        const fresh=Math.max(0,road.stock[cell]-[...pending.values()].reduce((n,x)=>n+x,0));
+        for(const t of weights)pending.set(t.key,(pending.get(t.key)||0)+fresh*t.weight/sum);
+        road.turnStock[cell]=pending;
+        throughStart.set(cellKey(road.index,cell),pending.get(fork.throughKey)||0);
+        const limits=new Map(),wave=Math.min(1,(22/3.6)*dt/road.cellLength);
+        for(const [key,share] of shares){
+          const room=Math.max(0,road.jamPerCell*share-(pending.get(key)||0));
+          limits.set(key,Math.min(receive[road.index][cell],room,room*wave,road.cellCapacityVph[cell]*dt/3600*share));
+        }
+        laneReceive.set(cellKey(road.index,cell),limits);
+      }
+    }
     const proposed=new Map(),splitSources=[],boundaryUsed=new Map();
-    const push=(to,toCell,from,fromCell,want,mark=false,tagShare,markFraction,protect=false,routeTerminal=null,newRouteTerminal=null,ignoreBypass=false)=>{
+    const push=(to,toCell,from,fromCell,want,mark=false,tagShare,markFraction,protect=false,routeTerminal=null,newRouteTerminal=null,ignoreBypass=false,turnKey=null,carryTurnKey=null)=>{
       const key=to+":"+toCell,arr=proposed.get(key)||[];
-      arr.push({to,toCell,from,fromCell,want,mark,tagShare,markFraction,protect,routeTerminal,newRouteTerminal,ignoreBypass});
+      arr.push({to,toCell,from,fromCell,want,mark,tagShare,markFraction,protect,routeTerminal,newRouteTerminal,ignoreBypass,turnKey,carryTurnKey});
       proposed.set(key,arr);
     };
     for(let j=0;j<edges.length;j++){
@@ -2690,6 +2820,7 @@ function createLegacyTrafficScenario(data){
         let available=out[k];
         if(available<=0)continue;
         let cohorts=edge.routeStock[k];
+        if(cohorts||edge.divertStock[k]>1e-9)edge.turnStock[k]=null;
         // A cohort returning to its original motorway is no longer a
         // bypass cohort. If a new closure invalidates a committed route,
         // release it for fresh legal routing rather than freezing forever.
@@ -2716,6 +2847,19 @@ function createLegacyTrafficScenario(data){
         const ordinaryStock=Math.max(0,edge.stock[k]-routeTotal);
         const ordinaryTagShare=ordinaryStock>1e-9?
           Math.max(0,Math.min(1,(edge.divertStock[k]-routeTotal)/ordinaryStock)):0;
+        const fork=approachForks[j][k];
+        if(fork?.active&&!(fork.edge===edge&&fork.k===k)&&!routeTotal&&ordinaryTagShare<1e-9){
+          const next=ordinaryMoves(edge,k)[0],pending=edge.turnStock[k];
+          if(next&&pending&&!internalGate(edge,k)&&(next.to===j||!blockedMovement(edge,next))){
+            const limits=laneReceive.get(cellKey(next.to,next.toCell));
+            if(limits){
+              const demands=[...pending].map(([key,n])=>[key,Math.min(n*edge.cellMotion[k],limits.get(key)||0)]);
+              const total=demands.reduce((n,t)=>n+t[1],0),scale=total>available?available/total:1;
+              for(const [key,want] of demands)if(want>0)push(next.to,next.toCell,j,k,want*scale,false,0,undefined,false,null,null,false,key,key);
+              continue;
+            }
+          }
+        }
         let options=[];
         // Never cross from an unclosed cell into a newly closed physical
         // interval of this same long OSM Way. Receiving inside the closure
@@ -2736,8 +2880,7 @@ function createLegacyTrafficScenario(data){
         // Keep the nominal destination split even when a genuine local exit
         // is full. A stopped off-ramp cannot make its assigned vehicles
         // disappear into another open route, nor vice versa.
-        if(edge.kind==="ramp"&&legalTurns.length>1||edge.kind==="mainline"&&legalTurns.some(t=>
-          edges[t.to].kind==="ramp"||edges[t.to].ref!==edge.ref)){
+        if(legalTurns.length+Number(k<edge.n-1&&!crossesClosureGate)+Number(k===edge.n-1&&boundaryExit[j])>1){
           if(k<edge.n-1&&!crossesClosureGate&&!options.some(x=>x.to===j))
             options.push({to:j,toCell:k+1,weight:20});
           for(const link of legalTurns)
@@ -2920,17 +3063,45 @@ function createLegacyTrafficScenario(data){
           }
         }
         if(!options.length&&!outsideWeight)continue;
-        if(options.length>1&&hasLegalClosureDetour&&!strictSplit&&!routeTotal)
+        if(options.length>1&&hasLegalClosureDetour&&!strictSplit&&!routeTotal&&diversionIntent>=1-1e-9)
           splitSources.push({from:j,cell:k,available,options});
         const sum=options.reduce((n,x)=>n+x.weight,0)+outsideWeight;
-        for(const opt of options)
-          push(opt.to,opt.toCell,j,k,available*opt.weight/sum,opt.mark===true,opt.tagShare??ordinaryTagShare,opt.markFraction,opt.protect,null,opt.newRouteTerminal??null,opt.ignoreBypass);
+        // Assign ordinary traffic to its intended outgoing movement once.
+        // Receiving capacity limits that movement, never its destination.
+        // Separate movement demands compete for the total physical sending
+        // capacity; a full branch does not consume unused service of an open
+        // through lane. Its waiting inventory remains in the approach cell
+        // and can propagate backpressure if the available storage fills.
+        let ordinaryTurns=null,ordinaryOutside=0;
+        if(!strictSplit&&!diversionIntent&&!routeTotal&&ordinaryTagShare<1e-9&&
+          options.length+Number(outsideWeight>0)>1&&sum>0){
+          const choices=options.map(o=>({key:cellKey(o.to,o.toCell),weight:o.weight,receiving:receive[o.to][o.toCell]}));
+          if(outsideWeight)choices.push({key:"outside",weight:outsideWeight,receiving:localDischargeRate(edge)*dt/3600});
+          const pending=edge.turnStock[k]||new Map();
+          const legalKeys=new Set(choices.map(o=>o.key));
+          for(const key of pending.keys())if(!legalKeys.has(key))pending.delete(key);
+          const committed=[...pending.values()].reduce((n,x)=>n+x,0);
+          const fresh=Math.max(0,ordinaryStock-committed);
+          for(const choice of choices)pending.set(choice.key,(pending.get(choice.key)||0)+fresh*choice.weight/sum);
+          edge.turnStock[k]=pending;
+          ordinaryTurns=new Map(choices.map(o=>[o.key,Math.min((pending.get(o.key)||0)*edge.cellMotion[k],o.receiving)]));
+          const demand=[...ordinaryTurns.values()].reduce((n,x)=>n+x,0);
+          const scale=demand>available?available/demand:1;
+          for(const [key,want] of ordinaryTurns)ordinaryTurns.set(key,want*scale);
+          ordinaryOutside=ordinaryTurns.get("outside")||0;
+        }else edge.turnStock[k]=null; // a changed route or legal gate permits replanning
+        for(const opt of options){
+          const key=cellKey(opt.to,opt.toCell);
+          const want=ordinaryTurns?ordinaryTurns.get(key)||0:available*opt.weight/sum;
+          if(want>0)push(opt.to,opt.toCell,j,k,want,opt.mark===true,opt.tagShare??ordinaryTagShare,opt.markFraction,opt.protect,null,opt.newRouteTerminal??null,opt.ignoreBypass,ordinaryTurns?key:null);
+        }
         if(outsideWeight){
           // A local public-road junction has a finite discharge rate. A
           // single lane with conflicting traffic is modelled at 700 veh/h
           // (calibration assumption), not at freeway ramp capacity.
           const localCapacity=localDischargeRate(edge)*dt/3600;
-          const leaving=Math.min(available*outsideWeight/sum,localCapacity);
+          const leaving=Math.min(ordinaryTurns?ordinaryOutside:available*outsideWeight/sum,localCapacity);
+          if(ordinaryTurns)edge.turnStock[k].set("outside",Math.max(0,(edge.turnStock[k].get("outside")||0)-leaving));
           delta[j][k]-=leaving;
           departedStep[j]+=leaving;
           // Tag accounting follows exactly the exiting subflow. No vehicle
@@ -2956,11 +3127,33 @@ function createLegacyTrafficScenario(data){
     for(const requests of proposed.values()){
       const {to,toCell}=requests[0];
       const accepting=receive[to][toCell];
+      const groupLimits=laneReceive.get(cellKey(to,toCell));
+      if(groupLimits){
+        const byGroup=new Map();
+        for(const req of requests)if(req.carryTurnKey!==null)byGroup.set(req.carryTurnKey,(byGroup.get(req.carryTurnKey)||0)+req.want);
+        for(const req of requests)if(req.carryTurnKey!==null){
+          const total=byGroup.get(req.carryTurnKey)||0,limit=groupLimits.get(req.carryTurnKey)||0;
+          if(total>limit)req.want*=limit/total;
+        }
+      }
       const required=requests.reduce((sum,x)=>sum+x.want,0);
       const ratio=required>accepting?accepting/required:1;
       for(const req of requests){
         const amount=req.want*ratio;
         const fromEdge=edges[req.from],stock=fromEdge.stock[req.fromCell];
+        if(req.turnKey!==null){
+          const pending=fromEdge.turnStock[req.fromCell];
+          pending.set(req.turnKey,Math.max(0,(pending.get(req.turnKey)||0)-amount));
+          const fork=approachForks[req.from][req.fromCell];
+          if(fork?.active&&req.turnKey===fork.throughKey){
+            const key=cellKey(req.from,req.fromCell);
+            throughSent.set(key,(throughSent.get(key)||0)+amount);
+          }
+        }
+        if(req.carryTurnKey!==null){
+          const pending=edges[to].turnStock[toCell];
+          pending.set(req.carryTurnKey,(pending.get(req.carryTurnKey)||0)+amount);
+        }
         const originallyTagged=stock>1e-9?
           amount*(req.tagShare??Math.min(1,fromEdge.divertStock[req.fromCell]/stock)):0;
         divertDelta[req.from][req.fromCell]-=originallyTagged;
@@ -3116,16 +3309,20 @@ function createLegacyTrafficScenario(data){
       for(let k=0;k<edge.n;k++){
         const before=edge.stock[k],sent=used.get(j+":"+k)||0;
         edge.cellThroughVph[k]+=alpha*(sent*3600/dt-edge.cellThroughVph[k]);
-        if(before>=.8){
+        const throughBefore=throughStart.get(cellKey(j,k))??before;
+        const throughFlow=throughStart.has(cellKey(j,k))?throughSent.get(cellKey(j,k))||0:sent;
+        if(throughBefore>=.8){
           const effectiveLength=Math.max(edge.cellLength,edge.freeKmh*dt/3.6);
           const observed=Math.min(edge.freeKmh,Math.max(0,
-            sent*effectiveLength*3.6/(dt*before)));
+            throughFlow*effectiveLength*3.6/(dt*throughBefore)));
           edge.cellFlowSpeeds[k]=.45*observed+.55*edge.cellFlowSpeeds[k];
-        }else if(before<.3)edge.cellFlowSpeeds[k]=edge.freeKmh;
+        }else if(throughBefore<.3)edge.cellFlowSpeeds[k]=edge.freeKmh;
         const after=edge.stock[k]+change[k];
         if(after < -1e-7||after>edge.jamPerCell+1e-6)
           throw Error("Ungültiger Fahrzeugbestand auf "+edge.id);
         edge.stock[k]=Math.max(0,after);
+        if(edge.turnStock[k]&&[...edge.turnStock[k].values()].reduce((a,b)=>a+b,0)>edge.stock[k]+1e-6)
+          throw Error("Abbiegebestand verletzt: "+edge.id);
         const diverted=edge.divertStock[k]+divertDelta[j][k];
         edge.divertStock[k]=Math.min(edge.stock[k],Math.max(0,diverted));
         if(edge.routeStock[k]){
@@ -3229,8 +3426,14 @@ function createLegacyTrafficScenario(data){
     const edge=byId.get(id);
     if(!edge)return null;
     const count=edge.stock.reduce((sum,x)=>sum+x,0);
+    const turnCommitments=new Map();
+    for(const cell of edge.turnStock)if(cell)for(const [target,vehicles] of cell){
+      const targetId=target==="outside"?"outside":edges[Number(target.split(":")[0])].id;
+      turnCommitments.set(targetId,(turnCommitments.get(targetId)||0)+vehicles);
+    }
     const at=Math.max(0,Math.min(edge.n-1,Math.floor((Number(offsetM)||0)/edge.cellLength)));
     return {reachable:reachable.has(id),vehicles:count,
+      turnCommitments:[...turnCommitments].map(([targetEdgeId,vehicles])=>({targetEdgeId,vehicles})),
       divertedVehiclesOnEdge:edge.divertStock.reduce((sum,x)=>sum+x,0),
       sectionVph:edge.cellThroughVph[at],boundaryExit:boundaryExit[edge.index],
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
