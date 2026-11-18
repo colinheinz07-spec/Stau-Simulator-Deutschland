@@ -264,3 +264,12 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Die Routenwahl vergleicht die geschätzte Reisezeit zum **gleichen Ziel** über das verknüpfte Netz. Frühere Ausfahrten werden erst bei wirklichem Zeitvorteil gegenüber späteren Ausfahrten genutzt. Andere offene Zielrichtungen bleiben nutzbar.
 - Allgemeine gerichtete Graphregeln statt benannter Dernbach-Korrekturen; realer A48→A3-Rampentest ohne Vollsperrung und synthetischer Autobahnende-Test sind Bestandteil der Regressionen.
 - Limitation: Das SPCK-Modell verwendet weiterhin aggregierte Fahrzeuggruppen sowie geschätzte Nebenstraßenzeiten und keine vollständigen individuellen Start-Ziel-Routen.
+
+
+## SPCK 0.10.15 – Verkehrsverlagerung aus der alten App auch vor Autobahn-Enden
+
+- **Ursachenbehebung:** Bei gerichteten OSM-Verbindungen wurden bisher nur Zielkante und Gewicht gespeichert. Der Routenalgorithmus erwartete zusätzlich Abbiegeposition, Zielposition und Zellindizes. Dadurch scheiterte die Suche beim Übergang A48 → A3, obwohl die Autobahnen graphisch verbunden waren. Alle Endpunktverbindungen behalten jetzt die vollständigen Werte.
+- **Allgemeine Weiterführung:** Hat eine Autobahn **nach einem Stau keine weitere Auffahrt auf dieselbe Autobahn**, wird das reale gerichtete Netz über die Autobahnüberleitungen verfolgt. Die Umleitung kann dadurch auf eine nachfolgende Autobahn zurückkehren, ohne eine imaginäre Auffahrt auf der beendeten Autobahn zu erfinden.
+- **Ereignisunabhängig:** Dies gilt auch bei hohem Zeitverlust durch Unfall und Stau ohne offizielle Vollsperrung. Früheres Abfahren wird anhand des Zeitgewinns bewertet; der Rückstau reduziert sich durch den tatsächlichen Abfluss und nicht durch ein reines Kartensymbol.
+- **Verifikation:** Neuer synthetischer Regressionstest: A48-artiger Zulauf mit zwei Ausfahrten, angeschlossenem A3-Ziel und einem schweren Unfall vor dem Autobahndreieck. Er prüft, dass beide Ausfahrten tatsächlich Fahrzeuge zugewiesen bekommen und die Bilanz aufgeht. Vor dieser Korrektur lieferte dasselbe Netz auch nach 180 Minuten Stauzeitverlust **keinen** Umleitungsplan. Ohne Unfall darf die Teststrecke keine künstliche Umleitung haben.
+- Die physikalischen Fahrzeuggruppen und geschätzten Umfahrungszeiten bleiben vereinfachte Modellannahmen; das alte und das neue Netzmodell sind technisch nicht identisch. Die Richtungswahl muss bei der späteren deutschlandweiten OD-Nachfrage weiter verfeinert werden.
