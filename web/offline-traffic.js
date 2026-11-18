@@ -1937,25 +1937,38 @@ function createLegacyTrafficScenario(data){
       return total;
     };
     const visit=(current,start,distance,seen,depth)=>{
-      if(depth>300||distance>maxDistance||seen.has(current.id))return Infinity;
-      if(current.id===causeId)return loss(current,start,current.lengthM);
+      if(depth>300||distance>maxDistance||seen.has(current.id))return null;
+      if(current.id===causeId){
+        const metres=Math.max(0,current.lengthM-start);
+        return {free:metres*.06/current.freeKmh,
+          delay:loss(current,start,current.lengthM)};
+      }
       const memoKey=current.id+":"+Math.round(start/10);
       if(memo.has(memoKey))return memo.get(memoKey);
       const visited=new Set(seen);visited.add(current.id);
-      let result=Infinity;
+      let result=null;
       for(const turn of current.links){
-        if(turn.fromM<start-.05||blockedMovement(current,turn))continue;
+        if(turn.fromM<start-.05||blockedMovement(current,turn)&&
+          edges[turn.to].id!==causeId)continue;
         const next=edges[turn.to];
         if(!next||next.kind==="ramp"&&localTerminal(next))continue;
-        const approach=turn.fromM-start;
+        const approach=Math.max(0,turn.fromM-start);
         if(distance+approach>maxDistance)continue;
-        const nextLoss=visit(next,turn.toM,distance+approach,visited,depth+1);
-        if(Number.isFinite(nextLoss))
-          result=Math.min(result,loss(current,start,turn.fromM)+nextLoss);
+        const downstream=visit(next,turn.toM,distance+approach,visited,depth+1);
+        if(!downstream)continue;
+        const candidate={free:approach*.06/current.freeKmh+downstream.free,
+          delay:loss(current,start,turn.fromM)+downstream.delay};
+        // First identify the normal shortest FREE-FLOW route to the
+        // obstruction. The old minimum-delay search silently chose huge
+        // loops that avoided the queue and therefore reported zero loss.
+        if(!result||candidate.free<result.free-1e-6||
+          Math.abs(candidate.free-result.free)<=1e-6&&
+          candidate.delay<result.delay)result=candidate;
       }
       memo.set(memoKey,result);return result;
     };
-    const result=visit(road,Math.max(0,offset),0,new Set(),0);
+    const path=visit(road,Math.max(0,offset),0,new Set(),0);
+    const result=path?path.delay:Infinity;
     directedDelayCache.set(key,result);return result;
   }
   // Actual travel to a downstream fork on the same directed motorway.
