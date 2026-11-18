@@ -375,7 +375,9 @@ function openDetails(edge,item){
   $("detail-length").textContent=edge.lengthM<1000?Math.round(edge.lengthM)+" m":
     (edge.lengthM/1000).toLocaleString("de-DE",{maximumFractionDigits:2})+" km";
   $("detail-speed").textContent=Math.round(item.speedKmh)+" km/h · "+(item.source==="model"?"Testwert":"Modellannahme");
-  $("detail-capacity").textContent=(edge.lanes*edge.capacityPerLaneVph).toLocaleString("de-DE")+" Kfz/h · Modell";
+  const nominal=edge.lanes*edge.capacityPerLaneVph;
+  const operating=state.scenario?.operatingCapacityVph(edge.id)??nominal;
+  $("detail-capacity").textContent=Math.round(operating).toLocaleString("de-DE")+" Kfz/h · aktuell (max. "+nominal.toLocaleString("de-DE")+")";
   $("detail-storage").textContent="—";
   $("detail-osm").textContent=edge.osmWayIds.map(String).join(", ");
   const selectedMode=state.scenario?.mode(edge.id)??"none";

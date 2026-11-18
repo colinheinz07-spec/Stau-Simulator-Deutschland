@@ -91,6 +91,16 @@ test('Nur reale Netzgrenzen erzeugen neue Nachfrage, niemals innere Autobahnabsc
   assert.equal(engine.snapshot().generatedVehicles,0);
 });
 
+test('Auch unterhalb der Nennkapazität sinken bei hoher Nachfrage Geschwindigkeit und Betriebsleistung',()=>{
+  const graph=sampleNetwork(),low=new Stauphysik.NetworkFlowEngine(graph),high=new Stauphysik.NetworkFlowEngine(graph);
+  for(let i=0;i<600;i++){
+    low.advance({'a3-west':600});high.advance({'a3-west':4300});
+  }
+  assert.ok(high.operatingCapacityVph('a3-west')<low.operatingCapacityVph('a3-west'));
+  assert.ok(high.speedSamples().find(x=>x.edgeId==='a3-west').speedKmh<low.speedSamples().find(x=>x.edgeId==='a3-west').speedKmh);
+  assert.ok(Math.abs(high.snapshot().conservationResidual)<1e-6);
+});
+
 test('Eine geplante Vollsperrung stoppt neue Einfahrten, lässt bereits eingeschlossene Fahrzeuge abfließen',()=>{
   const graph=sampleNetwork();
   const engine=new Stauphysik.NetworkFlowEngine(graph,{stepSeconds:2,targetCellLengthM:100});

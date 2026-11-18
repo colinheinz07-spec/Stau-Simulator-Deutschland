@@ -188,6 +188,7 @@ export function createTrafficScenario(network){
     stats:()=>engine.snapshot(),
     speeds:()=>engine.speedSamples(),
     speedBands:()=>engine.speedBands(),
+    operatingCapacityVph:(id,metre=0)=>engine.operatingCapacityVph(id,metre),
     sourceCount:()=>sources.length,
     sourceProfiles:()=>sources.map(x=>({id:x.id,ref:x.ref,key:x.key,peakVph:x.base})),
     clockMs:()=>simStart+engine.snapshot().simSeconds*1000
