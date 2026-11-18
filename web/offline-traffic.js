@@ -1778,6 +1778,30 @@ function createLegacyTrafficScenario(data){
     exposureCache.set(cacheKey,share);
     return share;
   }
+  // Trace the destination share through actual motorway forks, including
+  // transfers after the source motorway ends (A48 -> A3 is not special).
+  const bottleneckExposureCache=new Map();let bottleneckExposureEpoch=-1;
+  function bottleneckExposureAhead(edge,offsetM,targetId){
+    if(bottleneckExposureEpoch!==exposureEpoch){
+      bottleneckExposureCache.clear();bottleneckExposureEpoch=exposureEpoch;
+    }
+    const key=edge.id+":"+Math.floor(offsetM/100)+":"+targetId;
+    if(bottleneckExposureCache.has(key))return bottleneckExposureCache.get(key);
+    const visit=(current,seen,depth)=>{
+      if(current.id===targetId)return 1;
+      if(depth>=160||seen.has(current.id))return 0;
+      const visited=new Set(seen);visited.add(current.id);
+      const turns=current.next.filter(t=>!visited.has(edges[t.to].id));
+      const through=current.kind==="mainline"?turns.filter(t=>
+        edges[t.to].kind==="mainline"&&edges[t.to].ref===current.ref):[];
+      const choices=through.length?through:current.kind==="mainline"?
+        turns.filter(t=>edges[t.to].kind==="mainline"||edges[t.to].kind==="ramp"):turns;
+      if(!choices.length)return 0;
+      return choices.reduce((total,t)=>total+visit(edges[t.to],visited,depth+1),0)/choices.length;
+    };
+    const result=visit(edge,new Set(),0);
+    bottleneckExposureCache.set(key,result);return result;
+  }
   function blockedMovement(from,link){
     updateEffects();
     const target=edges[link.to];
@@ -2205,16 +2229,28 @@ function createLegacyTrafficScenario(data){
     const eventEdges=new Set(events.flatMap(event=>event.spans.map(span=>span.edgeId)));
     const queues=jamGroups.filter(group=>group.routingDelayMin>=20&&group.lengthM>=500&&
       group.endEdgeId&&!eventEdges.has(group.endEdgeId)&&
-      byId.get(group.endEdgeId)?.kind==="mainline"&&
-      // A closure queue already has a destination-specific bypass. Do not
-      // replace it with a short detour that rejoins BEFORE the closure.
-      !Number.isFinite(closureDistanceAhead(byId.get(group.endEdgeId),group.endOffsetM,Infinity))&&
-      closureExposureAhead(byId.get(group.endEdgeId),group.endOffsetM,Infinity)===0&&
       !designatedApproach.has(byId.get(group.endEdgeId).index))
-      .map(group=>({spec:{id:"queue:"+group.endEdgeId+":"+
-        Math.round(group.endOffsetM/100),kind:"congestion"},spans:[{
-          edgeId:group.endEdgeId,fromM:group.endOffsetM,
-          toM:group.endOffsetM}]}));
+      .flatMap(group=>{
+        const head=byId.get(group.endEdgeId),at=group.endOffsetM;
+        const spec={id:"queue:"+head.id+":"+Math.round(at/100),
+          kind:"congestion",causeEdgeId:head.id};
+        if(head.kind==="mainline"){
+          // Do not supersede a corridor's formal closure bypass.
+          if(Number.isFinite(closureDistanceAhead(head,at,Infinity))||
+            closureExposureAhead(head,at,Infinity)>0)return [];
+          return [{spec,spans:[{edgeId:head.id,fromM:at,toM:at}]}];
+        }
+        if(head.kind!=="ramp")return [];
+        // A transfer queue may feed a different motorway. Keep its physical
+        // approach on the ramp, but plan the return on the ACTUAL motorway
+        // reached after the interchange, not on the terminating feeder road.
+        return rampMainlineArrivals(head,(from,turn)=>!blockedMovement(from,turn))
+          .map(({road,metre})=>({
+            spec:{...spec,id:spec.id+":"+road.id},
+            routeSpans:[{edgeId:head.id,fromM:at,toM:at}],
+            spans:[{edgeId:road.id,fromM:metre,toM:metre}]
+          }));
+      });
     const obstacles=[...events,...queues];
     const key=exposureEpoch+":"+obstacles.map(x=>x.spec.id+":"+x.spans.map(s=>
       s.edgeId+":"+Math.round(s.fromM)+":"+Math.round(s.toM)).join(",")).join("|");
@@ -2442,7 +2478,8 @@ function createLegacyTrafficScenario(data){
               }));
               const plan={terminal:ramp.index,reentry:entries[0].reentry,
                 durationS:entries[0].durationS,entries,
-                closureId:obstacle.spec.id,kind:obstacle.spec.kind};
+                closureId:obstacle.spec.id,kind:obstacle.spec.kind,
+                causeEdgeId:obstacle.spec.causeEdgeId||null};
               const routes=routePlans.get(first.index)||new Map();
               const previous=routes.get(routeKey);
               if(!previous||plan.kind==="closure"&&previous.kind!=="closure"||
