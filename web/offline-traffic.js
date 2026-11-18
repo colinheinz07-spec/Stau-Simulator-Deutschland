@@ -2458,9 +2458,12 @@ function createLegacyTrafficScenario(data){
         for(let i=0;i<work.length;i++){
           const edge=byId.get(work[i]),until=approach.get(edge.id);
           for(const {from,turn} of incomingTurns[edge.index])
-            if(turn.toM<=until+.05&&(obstacle.spec.kind==="closure"||
-              obstacle.routeSpans?.length>0||
-              from.kind==="mainline"&&from.ref===endEdge.ref))approachAt(from.id,turn.fromM);
+            // Reachability to a bottleneck is independent of motorway
+            // reference. A3 accidents also affect A48 vehicles approaching
+            // through the Frankfurt transfer, not only A3 mainline cars.
+            // Traverse existing directed OSM turns; never join by proximity.
+            if(turn.toM<=until+.05&&!blockedMovement(from,turn))
+              approachAt(from.id,turn.fromM);
         }
       }
       // Also consider purely motorway alternatives. A transfer is a real
