@@ -1543,3 +1543,41 @@ test("A48 receiving bottleneck backs up both Dernbach transfer ramps",async()=>{
   }
   conservation(sim.totals());
 });
+
+
+test("A48-like motorway-ending transfer ramp incident offers an earlier A48 exit to the same A3 destination",async()=>{
+  const make=await engine();
+  const roads=[
+    ["feeder","mainline","A48",2,[[50,7],[50,7.025],[50,7.06],[50,7.09]],"",1],
+    ["early","ramp","A48",1,[[50,7.025],[50.006,7.026]],"AS West · Abfahrt von A48",2],
+    ["late","ramp","A48",1,[[50,7.06],[50.006,7.061]],"AS Ost · Abfahrt von A48",3],
+    ["frankfurt","ramp","A3",1,[[50,7.09],[50.003,7.105]],"AD Test · Überleitung Frankfurt",4],
+    ["towards-frankfurt","mainline","A3",3,[[50.003,7.105],[50.003,7.135],[50.003,7.18]],"",5],
+    ["return","ramp","A3",1,[[50.009,7.15],[50.003,7.15]],"AS Hinter Unfall · Auffahrt A3",6],
+    ["koeln","ramp","A3",1,[[50,7.09],[50.01,7.085]],"AD Test · Überleitung Köln",7],
+    ["towards-koeln","mainline","A3",3,[[50.01,7.085],[50.01,7.045]],"",8]
+  ];
+  const free=make({roads}),blocked=make({roads});
+  for(const s of [free,blocked]){
+    s.setSimulationStart(Date.parse("2026-11-13T11:00:00Z"));
+    s.setDemandPercent(185);s.warmStart();
+  }
+  free.advance(12);
+  assert.equal(free.totals().detouredVehicles,0,
+    "a normal motorway split must not generate a phantom diversion");
+  blocked.setEvent({id:"ramp-incident",kind:"accident",edgeId:"frankfurt",
+    offsetM:550,lengthM:100,closedLanes:[0],speedKmh:0,
+    shoulder:"normal",hasShoulder:false});
+  for(let i=0;i<40;i++)blocked.advance(12);
+  const plans=blocked.detourPlans();
+  assert.ok(plans.some(p=>["early","late"].includes(p.terminalEdgeId)&&
+    p.reentryEdgeId==="return"),
+    "ramp congestion must reach earlier A48 exits and the downstream A3 reentry: "+
+    JSON.stringify(plans.slice(0,20)));
+  assert.ok(blocked.totals().detouredVehicles>5,
+    "A48 drivers must actually take an off-ramp before an impassable A3 connector: "+
+    JSON.stringify({totals:blocked.totals(),early:blocked.edgeActivity("early"),late:blocked.edgeActivity("late")}));
+  assert.ok(blocked.edgeActivity("koeln").enteredVph>5,
+    "the still-open Köln connector must continue serving its normal destination");
+  conservation(blocked.totals());conservation(free.totals());
+});
