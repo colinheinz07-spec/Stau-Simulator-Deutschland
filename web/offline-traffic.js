@@ -1985,12 +1985,13 @@ function createLegacyTrafficScenario(data){
       if(Number.isFinite(transfer))laterCost=Math.min(laterCost,travel+transfer+fallback.plan.durationS/60+
         [...edges[fallback.plan.terminal].stock].reduce((a,b)=>a+b,0)*60/(localDischargeVph(edges[fallback.plan.terminal])||700));
     }
+    let blockedVerified=false;
     if(plan.kind!=="closure"){
       // Compare arrival at the SAME downstream merge even when the approach
       // motorway terminates in a different motorway number at an interchange.
       // No straight-line shortcut or disconnected same-ref assumption.
       const entrance=edges[plan.reentry];
-      let direct=Infinity,verified=false,blockedVerified=false;
+      let direct=Infinity,verified=false;
       for(const {road:target} of rampMainlineArrivals(entrance)){
         cohortPath(target.index);
         const costs=routePathCosts.get(target.index);
@@ -2359,6 +2360,7 @@ function createLegacyTrafficScenario(data){
           const edge=byId.get(work[i]),until=approach.get(edge.id);
           for(const {from,turn} of incomingTurns[edge.index])
             if(turn.toM<=until+.05&&(obstacle.spec.kind==="closure"||
+              obstacle.routeSpans?.length>0||
               from.kind==="mainline"&&from.ref===endEdge.ref))approachAt(from.id,turn.fromM);
         }
       }
