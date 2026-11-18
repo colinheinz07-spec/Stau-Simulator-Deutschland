@@ -1612,8 +1612,8 @@ test("real A48 ramps divert before Dernbach for an A3-transfer accident WITHOUT 
     p.kind==="congestion"&&p.reentryEdgeId==="extra-heumar-243834109");
   assert.ok(detour,"A48 traffic needs a real exit before the congested A3-Frankfurt transfer");
   const diverted=s.detourRouteAccounting().find(p=>p.terminalEdgeId===asExit);
-  assert.ok(diverted?.assigned>10&&s.edgeActivity(asExit).divertedVehiclesOnEdge>1,
-    "actual A48 cars must leave at that exit, not simply receive a route recommendation");
+  assert.ok(diverted?.assigned>10&&diverted.arrived>10&&s.edgeActivity(asExit).departedVph>300,
+    "actual A48 cars must DISCHARGE through the exit, not merely receive a recommendation or be stored there");
   assert.equal(s.closureBands("ramp-a48-to-koeln").length,0,
     "the independent Köln branch must not be administratively closed");
   conservation(s.totals());
