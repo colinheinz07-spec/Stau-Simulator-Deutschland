@@ -1669,7 +1669,8 @@ test("nationwide route choice grows from 30–45 min to ~90% at 2.5 hours of tim
     ["exit","ramp","A7",1,[[50,8.03],[50.005,8.03]],"AS Beispiel · Abfahrt von A7",2]
   ]});
   const curve=sim.diversionShare;
-  assert.equal(curve(30),0);
+  assert.ok(curve(10)===0&&curve(20)>.005&&curve(20)<.025);
+  assert.ok(curve(30)>.01&&curve(30)<.05);
   assert.ok(curve(45)>.02&&curve(45)<.08);
   assert.ok(curve(60)>=.10&&curve(60)<.2);
   assert.ok(curve(90)>=.40&&curve(90)<.60);
@@ -1733,6 +1734,9 @@ test("real interchange: complete Frankfurt closure transfers blocked cohort to K
   assert.ok(via?.assigned>100,"a blocked Frankfurt-bound cohort must take the legal Köln branch");
   assert.ok(s.closureBands("ramp-a48-to-frankfurt").length>0,
     "Frankfurt connector is physically shut");
+  assert.ok(s.visualBands("extra-heumar-26923440").some(x=>
+    x.color==="jam"||x.color==="standstill"),
+    "the congested real exit must be drawn red, not falsely green");
   assert.equal(s.closureBands("ramp-a48-to-koeln").length,0,
     "Köln connector remains physically open");
   assert.ok(s.designatedDetourRoutes("closed-after-ad").some(x=>/A48.*A3.*Ransbach-Baumbach.*Montabaur/.test(x)),
