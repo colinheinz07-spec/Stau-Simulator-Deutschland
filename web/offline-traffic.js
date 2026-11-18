@@ -2792,9 +2792,22 @@ function createLegacyTrafficScenario(data){
     for(const {arrival,from,turn,plan} of localSourceCandidates.get(source.index)){
       const travel=corridorMinutes(arrival.road,arrival.metre,from,turn.fromM);
       if(!Number.isFinite(travel))continue;
-      const direct=plan.kind==="closure"?Infinity:Math.min(...rampMainlineArrivals(edges[plan.reentry]).map(a=>
-        corridorMinutes(arrival.road,arrival.metre,a.road,a.metre)));
-      if(plan.kind!=="closure"&&!Number.isFinite(direct))continue;
+      // Local origins need a valid real downstream motorway RETURN, not a
+      // same-numbered road all the way to it. An A48 origin can legitimately
+      // use an A48 exit and later enter A3 Frankfurt. Reject no destinations
+      // merely because the original motorway number ends at an AD.
+      const returnRoads=rampMainlineArrivals(edges[plan.reentry],(a,b)=>!blockedMovement(a,b));
+      if(!returnRoads.length)continue;
+      let direct=Infinity;
+      if(plan.kind!=="closure")for(const {road:target} of returnRoads){
+        cohortPath(target.index);
+        const costs=routePathCosts.get(target.index);
+        const original=costs.get(cellKey(arrival.road.index,
+          Math.min(arrival.road.n-1,Math.floor(arrival.metre/arrival.road.cellLength))));
+        const after=costs.get(cellKey(plan.reentry,0));
+        if(Number.isFinite(original)&&Number.isFinite(after))
+          direct=Math.min(direct,Math.max(0,original-after));
+      }
       const cost=source.lengthM*.06/source.freeKmh+travel+exitTravelMinutes(turn,plan);
       const candidate=candidatesByDestination.get(plan.closureId)||{viaMotorway:Infinity,best:null};
       candidate.viaMotorway=Math.min(candidate.viaMotorway,cost,direct);
