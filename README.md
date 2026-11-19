@@ -291,3 +291,8 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Lokale Zuflüsse, die hinter der Abfahrt direkt in den weiterhin gestörten Abschnitt führen, wählen anteilig bereits außerhalb der Autobahn eine Umleitung. Ein sekundärer Rückstau vor dem ursprünglichen Ereignis erzeugt keine künstliche Wiederauffahrt vor diesem Ereignis.
 - Die physikalische Ausfahrtkapazität und Fahrzeugbilanz bleiben erhalten: Ist die Abfahrt voll, warten Fahrzeuge vor dem Abzweig, statt geradeaus in den Stau zu fahren. Bei nachlassender Verzögerung ist die normale Weiterfahrt wieder möglich.
 - Vollsperrungen behalten unabhängig von der Verzögerung die letzte rechtlich erreichbare Abfahrt als zwingenden Ausweg. Bei wachsenden Staus greifen frühere erreichbare Abfahrten.
+
+## Version 0.10.19 – Letzte freie Abfahrt vor dem Rückstau
+
+- Bei Vollsperrungen wird die Umleitungsbereitschaft erst an der letzten real erreichbaren Abfahrt vor dem tatsächlichen Rückstau angewendet. Solange eine spätere Anschlussstelle staufrei erreichbar ist, behalten frühere Ausfahrten ihren regulären Verkehrsanteil.
+- Wächst der sperrungsbedingte Rückstau über eine weitere Anschlussstelle hinaus, verschiebt sich die Umleitung entsprechend nach stromaufwärts. Unabhängige Staus auf derselben Autobahn lösen keine verfrühte Umleitung für diese Sperrung aus. Die physikalischen Rampenkapazitäten und die 45–240-Minuten-Kurve bleiben unverändert.

@@ -117,6 +117,36 @@ test('Nur reale Netzgrenzen erzeugen neue Nachfrage, niemals innere Autobahnabsc
   assert.equal(engine.snapshot().generatedVehicles,0);
 });
 
+test('Vollsperrung: eine spätere noch freie Abfahrt verhindert verfrühte Umleitung',()=>{
+  const graph=sampleNetwork();
+  graph.nodes.push({id:'f',point:[50.4,8.02]},{id:'g',point:[50.4,8.03]},
+    {id:'local',point:[50.41,7.82]});
+  const template=graph.edges.find(e=>e.id==='a3-east');
+  const edge=(id,from,to,kind='mainline')=>{
+    const geometry=[graph.nodes.find(n=>n.id===from).point,graph.nodes.find(n=>n.id===to).point];
+    return {...template,id,fromNodeId:from,toNodeId:to,kind,geometry,
+      lengthM:Strassennetz.polylineLengthM(geometry),
+      ...(kind==='ramp'?{lanes:1,freeSpeedKmh:80,capacityPerLaneVph:1500,osmClass:'motorway_link'}:{})};
+  };
+  graph.edges.push(edge('queue','c','f'),edge('closed','f','g'),edge('near-exit','c','local','ramp'));
+  for(const [incomingEdgeId,outgoingEdgeId] of [['a3-east','queue'],['a3-east','near-exit'],['queue','closed']])
+    graph.movements.push({incomingEdgeId,outgoingEdgeId,allowed:true});
+  const engine=new Stauphysik.NetworkFlowEngine(graph,{stepSeconds:5,targetCellLengthM:180});
+  const closure={id:'closure',edgeId:'closed',kind:'closure',fromM:0,
+    toM:graph.edges.find(e=>e.id==='closed').lengthM,closedLanes:[0,1,2],startMinute:0};
+  let checked=0,early=0,through=0;
+  for(let i=0;i<1000;i++){
+    const result=engine.advance({'a3-west':5800},[closure]);
+    assert.ok(Math.abs(result.conservationResidual)<1e-6);
+    if(engine.routingDelayAhead('a3-west')<60||engine.speedBands().some(b=>b.edgeId==='a3-east'))continue;
+    const flow=engine.movementVph('a3-west','a3-east');
+    if(flow<100)continue;
+    early+=engine.movementVph('a3-west','ramp');through+=flow;checked++;
+  }
+  assert.ok(checked>10,'tatsächlich lange Verzögerung bei freier späterer Abfahrt');
+  assert.ok(early/(early+through)<.15,'frühe Abfahrt behält nur ihren regulären Verkehr');
+});
+
 test('Auch unterhalb der Nennkapazität sinken bei hoher Nachfrage Geschwindigkeit und Betriebsleistung',()=>{
   const graph=sampleNetwork(),low=new Stauphysik.NetworkFlowEngine(graph),high=new Stauphysik.NetworkFlowEngine(graph);
   for(let i=0;i<600;i++){

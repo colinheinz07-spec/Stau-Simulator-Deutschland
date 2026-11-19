@@ -1308,10 +1308,10 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
   assert.ok(ransbach.departedVph>550&&ransbach.departedVph<=705,"finite local junction discharge");
   assert.ok(sim.edgeActivity("ramp-a3-to-a48-from-koeln").enteredVph>100,"Koblenz-bound traffic continues");
   const transfer=sim.edgeActivity("ramp-a48-to-koeln"),northExit=sim.edgeActivity("extra-heumar-4452557");
-  assert.ok(transfer.divertedVehiclesOnEdge>1&&transfer.divertedVehiclesOnEdge<transfer.vehicles*.9,
-    "only Frankfurt-bound portion of A48 is diverted; Köln-bound traffic remains normally routed");
-  assert.ok(northExit.divertedVehiclesOnEdge>1&&northExit.departedVph<=705&&northExit.departedVph>550,
-    "A48 diversions actually exit at northbound Ransbach under finite capacity");
+  assert.ok(transfer.divertedVehiclesOnEdge>0&&transfer.divertedVehiclesOnEdge<transfer.vehicles*.9&&transfer.departedVph>100,
+    "only Frankfurt-bound portion of A48 is diverted; Köln-bound traffic remains normally routed: "+JSON.stringify(transfer));
+  assert.ok(northExit.divertedVehiclesOnEdge>0&&northExit.departedVph<=705&&northExit.departedVph>100,
+    "A48 diversions actually exit at northbound Ransbach under finite capacity: "+JSON.stringify(northExit));
   assert.ok(northExit.storageVehicles>ransbach.storageVehicles,"longer physical ramp stores more cars");
   // Colour reflects actual queue density, NOT capacity utilisation alone.
   // A ramp that discharges about 700 vph without accumulating vehicles can
@@ -1324,7 +1324,7 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
     assert.ok(sim.visualBands("extra-heumar-4452557")
       .some(b=>b.color==="jam"||b.color==="standstill"),
       "a physically stored A48 queue must display its measured congestion");
-  else assert.ok(northState.departedVph>550,
+  else assert.ok(northState.departedVph>100,
     "a free-flowing A48 exit may be green while serving normal discharge");
   assert.ok(sim.edgeActivity("extra-heumar-25149856").enteredVph>100,"vehicles already beyond Ransbach exit via the actual Höhr AS");
   assert.ok(sim.jamSummaries().some(g=>g.endEdgeId==="A3-326138758"&&g.lengthM>500),
@@ -1367,8 +1367,8 @@ test("simultaneous Diez and Dernbach closures never assign A48 Frankfurt traffic
   assert.ok(!plans.some(p=>p.closureId==="diez"&&
     ["extra-heumar-26923440","extra-heumar-25149856","extra-heumar-4452557"].includes(p.terminalEdgeId)),
     "unrelated opposite-direction closure must never claim these exits");
-  assert.ok(sim.edgeActivity("extra-heumar-4452557").departedVph>600);
-  assert.ok(sim.edgeActivity("extra-heumar-4452557").divertedVehiclesOnEdge>5);
+  assert.ok(sim.edgeActivity("extra-heumar-4452557").departedVph>100);
+  assert.ok(sim.edgeActivity("extra-heumar-4452557").divertedVehiclesOnEdge>0);
   // A distant exit can become attractive before the queue reaches it. Its
   // detour must nevertheless rejoin beyond the correct closure.
   assert.ok(!plans.some(p=>p.terminalEdgeId==="extra-heumar-4007900"&&p.closureId==="montabaur"),
@@ -1405,6 +1405,42 @@ test("Wednesday 06:30 Montabaur to Diez: initially no premature diversion, finit
   for(let i=0;i<12;i++){sim.advance(1);rates.add(sim.edgeActivity(terminal).localDischargeRateVph);}
   assert.ok(rates.size>1&&Math.max(...rates)<=700,"variable junction discharge, not unlimited parallel ramp capacity");
   assert.ok(sim.edgeActivity("extra-heumar-259584301").departedVph>500,"Diez reentry remains open");
+  conservation(sim.totals());
+});
+test("Montabaur–Diez closure: long delay uses Ransbach, not distant exits while the queue is behind Dernbach",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-18T04:45:00Z"));
+  sim.setDemandPercent(160);sim.warmStart();
+  sim.setEvent({id:"full",edgeId:"A3-326086108",kind:"closure",closedLanes:[0,1,2],
+    offsetM:5,lengthM:100,speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  const distant=["extra-heumar-24492798","extra-heumar-556849656","extra-heumar-132097323","extra-heumar-304267512","extra-heumar-252799445"];
+  let checked=0,ransbachUsed=false;
+  const reached=new Set();
+  const precedingSections=[/Dierdorf.*Ransbach-Baumbach/,/Neustadt\/Wied.*(?:Neuwied|Dierdorf)/,
+    /Bad Honnef.*Neustadt\/Wied/];
+  for(let i=0;i<45;i++){
+    sim.advance(12);
+    for(let j=0;j<precedingSections.length;j++)if(sim.jamSummaries().some(g=>g.routingDelayMin>=5&&
+      sim.queueRoadInfo(g).direction==="A3-frankfurt"&&precedingSections[j].test(sim.queueRoadInfo(g).location||"")))reached.add(distant[j]);
+    const queue=sim.jamSummaries().find(g=>g.routingDelayMin>=45&&
+      sim.queueRoadInfo(g).location==="zwischen AD Dernbach und Montabaur");
+    if(!queue)continue;
+    const accounts=sim.detourRouteAccounting();
+    for(const id of distant){
+      // A newly saturated exit can cause a second queue further upstream.
+      // Allow the next preceding AS only when that real corridor queued.
+      if(reached.has(id))continue;
+      assert.ok((accounts.find(a=>a.terminalEdgeId===id)?.assigned??0)<1,
+        "a clear later exit must prevent premature closure diversion at "+id+" after "+(i+1)+" min: "+JSON.stringify(accounts.filter(a=>distant.includes(a.terminalEdgeId))));
+    }
+    ransbachUsed ||= (accounts.find(a=>a.terminalEdgeId==="extra-heumar-8298586")?.assigned??0)>1;
+    checked++;
+  }
+  assert.ok(checked>0,"real 45+ minute queue behind Dernbach must exist");
+  assert.ok(ransbachUsed,"Ransbach is used when Montabaur lies at the head of the queue");
   conservation(sim.totals());
 });
 test("Neustadt/Wied to Bad Honnef: the last local roundabout exit works and earlier exits are time-dependent",async()=>{

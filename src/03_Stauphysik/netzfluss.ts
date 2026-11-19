@@ -197,6 +197,32 @@ export class NetworkFlowEngine {
     this.delayCache.set(edgeId,delay);
     return delay;
   }
+  /** Keep a driver on the motorway if a later real exit before the
+   * closure can still be reached without entering the queue. */
+  private clearLaterClosureExit(edgeId:string,closed:ReadonlySet<string>,blocked:ReadonlySet<string>):boolean{
+    if(!closed.size)return false;
+    let current=this.cells.get(edgeId),queued=false,clearLater=false;
+    const seen=new Set<string>([edgeId]);
+    while(current){
+      const ref=current.edge.motorwayRef;
+      const next=(this.moves.get(current.edge.id)??[]).filter(m=>{
+        const target=this.cells.get(m.toId)!.edge;
+        return target.kind==='mainline'&&target.motorwayRef===ref;
+      });
+      if(next.length!==1||seen.has(next[0]!.toId))break;
+      const id=next[0]!.toId;
+      if(closed.has(id)||blocked.has(current.edge.id+'=>'+id))return clearLater;
+      current=this.cells.get(id)!;seen.add(id);
+      if(!queued)for(const count of current.vehicles){
+        const density=clamp01(count/Math.max(.001,current.jamCellVehicles));
+        const speed=current.edge.freeSpeedKmh*operatingState(density,0,true).speedFactor*
+          (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
+        if(count>=Math.max(2,current.edge.lanes*1.2)&&density>.23&&speed<=30){queued=true;break;}
+      }
+      if(!queued&&this.localExitMoves.get(id)?.some(m=>!closed.has(m.toId)&&!blocked.has(id+'=>'+m.toId)))clearLater=true;
+    }
+    return false; // no closure on this directed motorway
+  }
   operatingCapacityVph(edgeId:string,metre=0):number{
     const state=this.cells.get(edgeId);
     if(!state)throw Error('Unbekannter OSM-Fahrweg: '+edgeId);
@@ -271,7 +297,9 @@ export class NetworkFlowEngine {
       activeById.set(event.edgeId,entries);
     }
     const closedByEvent=new Set<string>();
+    const closureEdges=new Set(corridor.blockedEdgeIds);
     for(const [id,eventsOnEdge] of activeById){
+      if(eventsOnEdge.some(e=>e.kind==='closure'))closureEdges.add(id);
       const edge=this.cells.get(id)?.edge;
       if(edge&&eventsOnEdge.some(e=>e.kind==='closure'&&
         e.fromM<=.001&&e.toM>=edge.lengthM-.001))
@@ -357,7 +385,7 @@ export class NetworkFlowEngine {
       let outsideWeight=this.openBoundarySinks.has(id)?20:0;
       const localExits=this.localExitMoves.get(id);
       const divert=localExits?diversionShare(this.routingDelayAhead(id)):0;
-      if(localExits&&divert>0){
+      if(localExits&&divert>0&&!this.clearLaterClosureExit(id,closureEdges,corridor.blockedMovementKeys)){
         const openExits=choices.filter(m=>localExits.includes(m));
         if(openExits.length){
           const exitWeight=openExits.reduce((n,m)=>n+m.weight,0);
