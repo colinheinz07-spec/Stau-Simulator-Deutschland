@@ -296,3 +296,9 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 
 - Bei Vollsperrungen wird die Umleitungsbereitschaft erst an der letzten real erreichbaren Abfahrt vor dem tatsächlichen Rückstau angewendet. Solange eine spätere Anschlussstelle staufrei erreichbar ist, behalten frühere Ausfahrten ihren regulären Verkehrsanteil.
 - Wächst der sperrungsbedingte Rückstau über eine weitere Anschlussstelle hinaus, verschiebt sich die Umleitung entsprechend nach stromaufwärts. Unabhängige Staus auf derselben Autobahn lösen keine verfrühte Umleitung für diese Sperrung aus. Die physikalischen Rampenkapazitäten und die 45–240-Minuten-Kurve bleiben unverändert.
+
+## Version 0.10.20 – Schrittweise Ausleitung je Anschlussstelle
+
+- Für Unfälle, Baustellen, Staus und Vollsperrungen gilt die Ausweichkurve ab 45 Minuten. Bei einer früheren AS ist ausschließlich die zusätzliche Fahrzeit bis zur nächsten realen AS maßgeblich, gedeckelt durch den beobachteten Zeitverlust bis zum Ereignis. Eine einzelne sehr lange Verzögerung wird nicht gleichzeitig an alle vorherigen AS übertragen.
+- Bei Autobahndreiecken und -kreuzen bleiben die letzten lokalen Ausfahrten auf den jeweiligen Zufahrtsautobahnen sowie verfügbare Überleitungen zu realen Ausweich-AS für den betroffenen Zielverkehr nutzbar. Eine offene Überleitung kann auch dann zunehmend genutzt werden, wenn eine formal noch mögliche spätere Abfahrt auf dem betroffenen Arm selbst mindestens 45 Minuten Zeitverlust verursacht.
+- Bereits zwischen zwei Ausfahrten befindlicher Verkehr kann weiterhin die nächstgelegene geeignete Abfahrt nutzen. Physikalische Empfangskapazität und normale Abfahrtsanteile bleiben erhalten; keine künstlichen Ausleitungsgrenzen und keine erfundenen Wiederauffahrten.

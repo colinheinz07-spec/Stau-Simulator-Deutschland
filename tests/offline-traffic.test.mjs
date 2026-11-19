@@ -1792,7 +1792,7 @@ test("A48-like motorway approach: a multihour queue diverts at earlier AS onto t
   const counts=blocked.detourRouteAccounting();
   const last=counts.find(p=>p.terminalEdgeId==="last-exit");
   const first=counts.find(p=>p.terminalEdgeId==="first-exit");
-  assert.ok(last?.assigned>0&&first?.assigned>80,
+  assert.ok(last?.assigned>0&&first?.assigned>40,
     "earlier A48 exit activates after growing time loss, not merely the last exit: "+
     JSON.stringify({last,first}));
   assert.ok(blocked.edgeActivity("bad").enteredVph<free.edgeActivity("bad").enteredVph*.2,
@@ -1834,7 +1834,23 @@ test("real interchange: A3 Frankfurt accident creates A48 exits AND route over o
   s.setEvent({id:"real-incident",edgeId:"A3-31352372",kind:"accident",
     offsetM:40,lengthM:100,closedLanes:[0,1,2],speedKmh:0,
     shoulder:"normal",hasShoulder:false});
-  for(let i=0;i<40;i++)s.advance(12);
+  const far=["extra-heumar-556849656","extra-heumar-132097323","extra-heumar-304267512","extra-heumar-252799445"];
+  const regional=[["extra-heumar-24492798","A3-314097418"],["extra-heumar-4927289","A3-314180028"]];
+  const eligible=new Set();
+  for(let i=0;i<40;i++){
+    s.advance(12);
+    const accounting=s.detourRouteAccounting();
+    for(const [exit,road] of regional){
+      const delay=s.routingDelayToNextExit(road,s.edgeActivity(road).lengthM);
+      if(delay>=45)eligible.add(exit);
+      if(!eligible.has(exit))assert.ok((accounting.find(a=>a.terminalEdgeId===exit)?.assigned??0)<1,
+        "the actual delay to the next exit must justify "+exit+": "+delay);
+    }
+    if(i<15)assert.ok((accounting.find(a=>a.terminalEdgeId==="extra-heumar-24492798")?.assigned??0)<1,
+      "Dierdorf must wait until the approach to Ransbach itself is severely congested");
+    for(const exit of far)assert.ok((accounting.find(a=>a.terminalEdgeId===exit)?.assigned??0)<1,
+      "no distant accident diversion at "+exit);
+  }
   const plans=s.detourPlans();
   assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-26923440"&&
     p.reentryEdgeId==="extra-heumar-243834109"),
@@ -1842,12 +1858,16 @@ test("real interchange: A3 Frankfurt accident creates A48 exits AND route over o
   assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-4452557"&&
     p.reentryEdgeId==="extra-heumar-243834109"),
     "open Köln motorway arm must offer first usable A3 AS and Frankfurt reentry");
-  const early=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-26923440");
   const via=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-4452557");
-  assert.ok(early?.assigned>100,
-    "earlier A48 exits must be USED, not just advertised in route plans");
+  const hoehr=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-26923440");
+  const ransbach=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-8298586");
+  const dierdorf=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-24492798");
+  assert.ok(ransbach?.assigned>100&&dierdorf?.assigned>10,
+    "first Ransbach, then Dierdorf only after local spillback");
   assert.ok(via?.assigned>30,
     "cars taking open Cologne arm must actually exit and be counted as rerouted");
+  assert.ok(hoehr?.assigned>10&&hoehr.arrived>0,
+    "last local A48 exit must also carry actual Frankfurt-bound diversions: "+JSON.stringify(hoehr));
   assert.equal(s.mode("A3-31352372"),"accident");
   assert.equal(s.closureBands("ramp-a48-to-koeln").length,0);
   assert.equal(s.totals().conservationResidual,0);

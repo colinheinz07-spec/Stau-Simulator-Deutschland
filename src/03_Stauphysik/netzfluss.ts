@@ -197,11 +197,10 @@ export class NetworkFlowEngine {
     this.delayCache.set(edgeId,delay);
     return delay;
   }
-  /** Keep a driver on the motorway if a later real exit before the
-   * closure can still be reached without entering the queue. */
-  private clearLaterClosureExit(edgeId:string,closed:ReadonlySet<string>,blocked:ReadonlySet<string>):boolean{
-    if(!closed.size)return false;
-    let current=this.cells.get(edgeId),queued=false,clearLater=false;
+  /** Excess time to the next real exit, not the full distant queue.
+   * This prevents a single incident from triggering every upstream AS. */
+  private delayToNextExit(edgeId:string,closed:ReadonlySet<string>,blocked:ReadonlySet<string>):number{
+    let current=this.cells.get(edgeId),delay=0;
     const seen=new Set<string>([edgeId]);
     while(current){
       const ref=current.edge.motorwayRef;
@@ -211,17 +210,18 @@ export class NetworkFlowEngine {
       });
       if(next.length!==1||seen.has(next[0]!.toId))break;
       const id=next[0]!.toId;
-      if(closed.has(id)||blocked.has(current.edge.id+'=>'+id))return clearLater;
+      if(closed.has(id)||blocked.has(current.edge.id+'=>'+id))return Infinity;
       current=this.cells.get(id)!;seen.add(id);
-      if(!queued)for(const count of current.vehicles){
+      for(const count of current.vehicles){
         const density=clamp01(count/Math.max(.001,current.jamCellVehicles));
-        const speed=current.edge.freeSpeedKmh*operatingState(density,0,true).speedFactor*
-          (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
-        if(count>=Math.max(2,current.edge.lanes*1.2)&&density>.23&&speed<=30){queued=true;break;}
+        const free=current.edge.freeSpeedKmh;
+        const speed=count<.8?free:Math.max(1,free*operatingState(density,0,true).speedFactor*
+          (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45))));
+        delay+=Math.max(0,current.lengthM*.06*(1/speed-1/free));
       }
-      if(!queued&&this.localExitMoves.get(id)?.some(m=>!closed.has(m.toId)&&!blocked.has(id+'=>'+m.toId)))clearLater=true;
+      if(this.localExitMoves.get(id)?.some(m=>!closed.has(m.toId)&&!blocked.has(id+'=>'+m.toId)))return delay;
     }
-    return false; // no closure on this directed motorway
+    return Infinity; // no later escape on this directed motorway
   }
   operatingCapacityVph(edgeId:string,metre=0):number{
     const state=this.cells.get(edgeId);
@@ -384,8 +384,9 @@ export class NetworkFlowEngine {
       // continuation a through-lane turn weight, not the ramp's capacity.
       let outsideWeight=this.openBoundarySinks.has(id)?20:0;
       const localExits=this.localExitMoves.get(id);
-      const divert=localExits?diversionShare(this.routingDelayAhead(id)):0;
-      if(localExits&&divert>0&&!this.clearLaterClosureExit(id,closureEdges,corridor.blockedMovementKeys)){
+      const observed=localExits?this.routingDelayAhead(id):0;
+      const divert=observed>=45?diversionShare(Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0;
+      if(localExits&&divert>0){
         const openExits=choices.filter(m=>localExits.includes(m));
         if(openExits.length){
           const exitWeight=openExits.reduce((n,m)=>n+m.weight,0);

@@ -113,13 +113,20 @@ test("full closure: LAST lawful exit initially, earlier exit as delay grows beyo
     "prior exit only carries ordinary destinations before a severe queue");
   assert.ok(model.edgeActivity("last").enteredVph>model.edgeActivity("early").enteredVph,
     "initially the last lawful exit receives the rerouted flow");
-  const initialEarly=model.edgeActivity("early").enteredVph;
-  for(let i=1;i<40;i++)model.advance(12);
+  let activated=false,hadLongApproach=false,maxApproach=0;
+  for(let i=1;i<85;i++){
+    model.advance(12);
+    const localDelay=model.routingDelayToNextExit("approach",715);
+    maxApproach=Math.max(maxApproach,localDelay);
+    hadLongApproach ||= localDelay>=45;
+    const early=model.edgeActivity("early");
+    if(!hadLongApproach)assert.equal(early.diversionDemandFraction,0,"no early diversion while the next exit is still within 45 min of excess travel");
+    activated ||= early.diversionDemandFraction>0&&early.departedVph>0;
+  }
   assert.ok(model.edgeActivity("last").departedVph>500,
     "the last open exit actually discharges vehicles");
-  assert.ok(model.edgeActivity("early").departedVph>initialEarly,
-    "when delay grows, the earlier exit discharges more than the initial ordinary exit flow: "+
-    JSON.stringify({initialEarly,early:model.edgeActivity("early").departedVph,delay:model.routingDelayAhead("approach",715)}));
+  assert.ok(hadLongApproach&&activated,
+    "earlier exit activates only after the approach to the next exit incurs 45 min of excess delay: "+JSON.stringify({maxApproach,hadLongApproach,activated,plans:model.detourPlans(),accounts:model.detourRouteAccounting()}));
   assert.ok(model.edgeActivity("early").departedVph<=705&&model.edgeActivity("last").departedVph<=705,
     "each real exit retains its physical capacity");
   assert.ok(model.edgeActivity("closed").enteredVph<1,

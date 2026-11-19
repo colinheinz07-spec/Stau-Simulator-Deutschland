@@ -667,6 +667,7 @@ function createLegacyTrafficScenario(data){
   // Remember the actual forks serving a closure. A separate recurrent jam
   // near a distant AS must not be mistaken for the tail of this closure.
   const closureDiversionForks=new Set();let closureForkEpoch=-1;
+  const diversionDecisions=new Map();
   function totals(){
     let inside=0,backlog=0;
     for(const edge of edges){
@@ -1619,7 +1620,9 @@ function createLegacyTrafficScenario(data){
     delayCache.clear();delayCacheMinute=-1;directedDelayCache.clear();directedDelayStamp="";
     entranceDelayCache.clear();entranceDelayStamp="";
     clearExitMemo.clear();clearExitStamp="";
+    nextDecisionMemo.clear();nextDecisionStamp="";
     closureDiversionForks.clear();closureForkEpoch=-1;
+    diversionDecisions.clear();
     enteredStep.fill(0);departedStep.fill(0);
     routeChoiceCache.clear();routeChoiceMinute=-1;
     returnWaitCache.clear();returnWaitMinute=-1;
@@ -1957,7 +1960,7 @@ function createLegacyTrafficScenario(data){
     if(entranceDelayCache.has(entrance.index))return entranceDelayCache.get(entrance.index);
     const arrivals=rampMainlineArrivals(entrance,(a,b)=>!blockedMovement(a,b));
     const result=arrivals.length?Math.min(...arrivals.map(a=>
-      closureExitEligible(a.road,a.metre)?diversionShare(measuredDelayAhead(a.road,a.metre,Infinity)):0)):0;
+      localDiversionShare(a.road,a.metre,measuredDelayAhead(a.road,a.metre,Infinity),null))):0;
     entranceDelayCache.set(entrance.index,result);return result;
   }
   // Sum the delays over the actual directed journey toward a bottleneck.
@@ -1965,10 +1968,10 @@ function createLegacyTrafficScenario(data){
   // than stopping at a motorway-number boundary as measuredDelayAhead does.
   // An unrelated destination branch is NEVER charged this delay.
   const directedDelayCache=new Map();let directedDelayStamp="";
-  function directedDelayToCause(road,offset,causeId){
+  function directedDelayToCause(road,offset,causeId,targetOffset=null){
     const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
     if(directedDelayStamp!==stamp){directedDelayCache.clear();directedDelayStamp=stamp;}
-    const key=road.id+":"+Math.round(offset*100)+":"+causeId;
+    const key=road.id+":"+Math.round(offset*100)+":"+causeId+":"+(targetOffset??"end");
     if(directedDelayCache.has(key))return directedDelayCache.get(key);
     const maxDistance=180000,memo=new Map();
     const loss=(edge,start,end)=>{
@@ -1985,9 +1988,11 @@ function createLegacyTrafficScenario(data){
     const visit=(current,start,distance,seen,depth)=>{
       if(depth>300||distance>maxDistance||seen.has(current.id))return null;
       if(current.id===causeId){
-        const metres=Math.max(0,current.lengthM-start);
+        const end=targetOffset===null?current.lengthM:Math.min(current.lengthM,targetOffset);
+        if(end<start-.05)return null;
+        const metres=Math.max(0,end-start);
         return {free:metres*.06/current.freeKmh,
-          delay:loss(current,start,current.lengthM)};
+          delay:loss(current,start,end)};
       }
       const memoKey=current.id+":"+Math.round(start/10);
       if(memo.has(memoKey))return memo.get(memoKey);
@@ -2187,7 +2192,7 @@ function createLegacyTrafficScenario(data){
     return 0;
   }
   function exitChoiceShare(road,link,plan){
-    return diversionShare(observedPlanDelay(road,link.fromM,plan));
+    return localDiversionShare(road,link.fromM,observedPlanDelay(road,link.fromM,plan),plan);
   }
   // A ramp is a usable diversion only if its genuine OSM turns do not lead
   // exclusively into the closed sector. Existing open motorway branches or an
@@ -2385,6 +2390,42 @@ function createLegacyTrafficScenario(data){
   function closureExitEligible(road,offset,plan){
     const affected=plan?.kind==="closure"||!!closureFingerprint&&Number.isFinite(closureDistanceAhead(road,offset,Infinity));
     return !affected||!hasClearLaterExit(road,offset);
+  }
+  const nextDecisionMemo=new Map();let nextDecisionStamp="";
+  function corridorDelayBetween(road,offset,target,targetOffset){
+    let current=road,start=offset,total=0;const seen=new Set();
+    while(current&&!seen.has(current.id)){
+      seen.add(current.id);
+      const end=current===target?targetOffset:current.lengthM;
+      if(end<start-.05)return Infinity;
+      for(let k=Math.floor(start/current.cellLength);k<current.n&&k*current.cellLength<end;k++){
+        const m=Math.max(0,Math.min(end,(k+1)*current.cellLength)-Math.max(start,k*current.cellLength));
+        total+=Math.max(0,m*.06*(1/routingCellSpeed(current,k)-1/current.freeKmh));
+      }
+      if(current===target)return total;
+      const next=current.next.filter(t=>edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref&&!blockedMovement(current,t));
+      if(next.length!==1)break;
+      current=edges[next[0].to];start=next[0].toM;
+    }
+    return Infinity;
+  }
+  // Never copy the distant incident's entire delay to every upstream exit.
+  // The next local exit on THIS directed approach is the competing decision.
+  // A different motorway arm remains an additional escape at the interchange
+  // for vehicles still continuing; it is not a later AS on the original road.
+  // Only excess time TO the next local exit can justify shifting upstream.
+  function nextDecisionDelay(road,offset){
+    const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
+    if(nextDecisionStamp!==stamp){nextDecisionMemo.clear();nextDecisionStamp=stamp;}
+    const key=road.id+":"+Math.round(offset*100);
+    if(nextDecisionMemo.has(key))return nextDecisionMemo.get(key);
+    const later=firstLocalExit(road,offset+.06);
+    const delay=later?corridorDelayBetween(road,offset,later.road,later.metre):Infinity;
+    nextDecisionMemo.set(key,delay);return delay;
+  }
+  function localDiversionShare(road,offset,observed,plan){
+    if(observed<45||!Number.isFinite(observed)||!closureExitEligible(road,offset,plan))return 0;
+    return diversionShare(Math.min(observed,nextDecisionDelay(road,offset)));
   }
   const downstreamExitMemo=new Map();
   let downstreamExitEpoch=-1;
@@ -2897,8 +2938,7 @@ function createLegacyTrafficScenario(data){
       const returnRoads=rampMainlineArrivals(edges[plan.reentry],(a,b)=>!blockedMovement(a,b));
       if(!returnRoads.length)continue;
       const candidate=candidatesByDestination.get(plan.closureId)||{best:null,share:0};
-      const willingness=closureExitEligible(arrival.road,arrival.metre,plan)?
-        diversionShare(observedPlanDelay(arrival.road,arrival.metre,plan)):0;
+      const willingness=localDiversionShare(arrival.road,arrival.metre,observedPlanDelay(arrival.road,arrival.metre,plan),plan);
       if(willingness>0){
         const affected=plan.kind==="closure"?
           closureExposureAhead(arrival.road,arrival.metre,Infinity,plan.closureId):
@@ -3014,8 +3054,12 @@ function createLegacyTrafficScenario(data){
         if(!laterExit){
           best={...option,fraction:1,saving:Infinity};continue;
         }
-        // A later usable exit exists: do not label every Frankfurt-bound
-        // traveller as forced to take the alternative arm at this junction.
+        // Only the real time loss up to the nearest legal exit on the
+        // affected arm justifies using the open alternate motorway arm.
+        const delays=arrivals.map(a=>firstLocalExit(a.road,a.metre)).filter(Boolean).map(exit=>
+          directedDelayToCause(branch,bad.toM,exit.road.id,exit.metre)).filter(Number.isFinite);
+        const fraction=diversionShare(delays.length?Math.min(...delays):0);
+        if(fraction>0&&(!best||fraction>best.fraction))best={...option,fraction,saving:Math.min(...delays)};
         continue;
       }
       if(!affected||affected.weight<=0)continue;
@@ -3146,6 +3190,7 @@ function createLegacyTrafficScenario(data){
     const anyClosureActive=[...activeEffects.values()].some(items=>
       items.some(item=>item.event.kind==="closure"));
     if(closureForkEpoch!==exposureEpoch){closureDiversionForks.clear();closureForkEpoch=exposureEpoch;}
+    diversionDecisions.clear();
     enteredStep.fill(0);departedStep.fill(0);routeChanges.clear();
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],n=edge.n,stock=edge.stock;
@@ -3371,12 +3416,13 @@ function createLegacyTrafficScenario(data){
         let hasLegalClosureDetour=false,diversionIntent=0,strictSplit=false;
         // A real local exit at this very fork is an option as delay grows.
         // The local exit remains eligible even when its receiving room is 0.
+        const localDelayChoice=link=>localDiversionShare(edge,link.fromM,
+          measuredDelayAhead(edge,link.fromM,Infinity),exitDetours.get(link.to));
         const localDelayTurns=edge.kind==="mainline"?legalTurns.filter(link=>
           localTerminal(edges[link.to])&&isUsableEscape(edge,link)&&
-          diversionShare(measuredDelayAhead(edge,link.fromM,Infinity))>0&&
-          closureExitEligible(edge,link.fromM,exitDetours.get(link.to))):[];
+          localDelayChoice(link)>0):[];
         const localDelayShare=localDelayTurns.length?Math.max(...localDelayTurns.map(link=>
-          diversionShare(measuredDelayAhead(edge,link.fromM,Infinity)))):0;
+          localDelayChoice(link))):0;
         const dynamic=!localDelayShare&&edge.kind==="mainline"?interchangeTransferChoice(edge,k,options):null;
         const motorway=!localDelayShare&&!dynamic&&edge.kind==="mainline"?motorwayChoice(edge,k,options):null;
         if(dynamic){
@@ -3384,6 +3430,7 @@ function createLegacyTrafficScenario(data){
           const blocked=options.find(o=>o.to===bad.to&&o.toCell===bad.toCell);
           const alternate=options.find(o=>o.to===good.to&&o.toCell===good.toCell);
           if(alternate&&(blocked||blockedMovement(edge,bad))){
+            diversionDecisions.set(plan.terminal,Math.max(diversionDecisions.get(plan.terminal)||0,fraction));
             const shifted=(blocked?.weight??bad.weight)*fraction;
             if(blocked)blocked.weight-=shifted;
             alternate.weight+=shifted;
@@ -3483,6 +3530,10 @@ function createLegacyTrafficScenario(data){
           if(alternatives.length){
             hasLegalClosureDetour=Number.isFinite(distance);
             diversionIntent=share;
+            for(const turn of alternatives){
+              const terminal=localTerminal(edges[turn.to]);
+              if(terminal)diversionDecisions.set(terminal.index,Math.max(diversionDecisions.get(terminal.index)||0,share));
+            }
             if(anyClosureActive&&(closureShare>0||alternatives.some(t=>exitDetours.get(t.to)?.kind==="closure")))
               closureDiversionForks.add(cellKey(j,k));
             // A mandatory exit retains its assigned traffic when saturated.
@@ -3976,6 +4027,7 @@ function createLegacyTrafficScenario(data){
       localDischargeRateVph:finite(localDischargeRate(edge))?localDischargeRate(edge):null,
       localAdmissionVph:finite(localAdmissionVph(edge))?localAdmissionVph(edge):null,
       localSourceDetourFraction:localSourceChoice(edge)?.fraction??0,
+      diversionDemandFraction:diversionDecisions.get(localTerminal(edge)?.index??edge.index)??0,
       lengthM:edge.lengthM,storageVehicles:edge.n*edge.jamPerCell,
       source:edge.source,sourcePeakVph:edge.referencePeakVph,
       sourceDirection:edge.directionKey,connections:edge.links.length};
@@ -3999,6 +4051,7 @@ function createLegacyTrafficScenario(data){
     migrateLegacyEvent,restoreEvent,
     diversionShare,
     routingDelayAhead:(id,offsetM=0)=>byId.has(id)?measuredDelayAhead(byId.get(id),offsetM):null,
+    routingDelayToNextExit:(id,offsetM=0)=>byId.has(id)?nextDecisionDelay(byId.get(id),offsetM):null,
     detourPlans:()=>[...exitDetours.values(),...fallbackExits.values()].map(plan=>({
       terminalEdgeId:edges[plan.terminal].id,
       reentryEdgeId:edges[plan.reentry].id,
