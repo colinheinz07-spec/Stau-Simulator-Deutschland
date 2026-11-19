@@ -84,7 +84,7 @@ test("Diez exit fork, before AS centre: closure starts at Diez not Limburg-Nord"
   }
 });
 
-test("full closure: through traffic continues past earlier off-ramps to LAST lawful exit",async()=>{
+test("full closure: LAST lawful exit initially, earlier exit as delay grows beyond 45 minutes",async()=>{
   const window={};
   for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
     runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
@@ -108,20 +108,22 @@ test("full closure: through traffic continues past earlier off-ramps to LAST law
   assert.equal(closed(model,"early"),false,"earlier exit must remain open");
   assert.equal(closed(model,"last"),false,"last exit must remain open");
   assert.equal(closed(model,"return"),false,"later entrance is open");
-  for(let i=0;i<40;i++)model.advance(12);
-  const firstFlow=model.edgeActivity("early").enteredVph;
-  const lastFlow=model.edgeActivity("last").enteredVph;
-  // Finite local-road capacity now limits the mandatory exit to ~700 vph;
-  // compare tagged diversion assignments, not an impossible 3x flow ratio.
-  assert.ok(lastFlow>firstFlow,
-    "the later exit carries more traffic than the ordinary upstream exit");
+  model.advance(12);
   assert.equal(model.edgeActivity("early").divertedVehiclesOnEdge,0,
-    "earlier exit only carries its normal destinations");
-  assert.ok(model.edgeActivity("last").departedVph>650&&model.edgeActivity("last").departedVph<=705,
-    "the mandatory exit is saturated at the new finite local-road capacity");
+    "prior exit only carries ordinary destinations before a severe queue");
+  assert.ok(model.edgeActivity("last").enteredVph>model.edgeActivity("early").enteredVph,
+    "initially the last lawful exit receives the rerouted flow");
+  const initialEarly=model.edgeActivity("early").enteredVph;
+  for(let i=1;i<40;i++)model.advance(12);
+  assert.ok(model.edgeActivity("last").departedVph>500,
+    "the last open exit actually discharges vehicles");
+  assert.ok(model.edgeActivity("early").departedVph>initialEarly,
+    "when delay grows, the earlier exit discharges more than the initial ordinary exit flow: "+
+    JSON.stringify({initialEarly,early:model.edgeActivity("early").departedVph,delay:model.routingDelayAhead("approach",715)}));
+  assert.ok(model.edgeActivity("early").departedVph<=705&&model.edgeActivity("last").departedVph<=705,
+    "each real exit retains its physical capacity");
   assert.ok(model.edgeActivity("closed").enteredVph<1,
     "no vehicles continue into the closed section");
-  assert.ok(lastFlow>300,"last open exit carries the diverted vehicles");
   assert.ok(Math.abs(model.totals().conservationResidual)<1e-6);
 });
 

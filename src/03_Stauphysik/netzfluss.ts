@@ -30,6 +30,17 @@ interface Move {toId:string;capacityVph?:number;weight:number}
 const approximately=(x:number)=>Math.abs(x)<1e-9?0:x;
 const safeNonnegative=(v:number)=>Number.isFinite(v)&&v>=0;
 const clamp01=(x:number)=>Math.max(0,Math.min(1,x));
+/** Same nationwide response curve as the offline engine. */
+export function diversionShare(delay:number):number{
+  if(delay>=240)return 1;
+  if(!Number.isFinite(delay)||delay<45)return 0;
+  const anchors=[[45,.02],[60,.15],[90,.45],[120,.75],[150,.90],[180,.98],[240,1]] as const;
+  for(let i=1;i<anchors.length;i++){
+    const [end,upper]=anchors[i]!,[start,lower]=anchors[i-1]!;
+    if(delay<=end)return lower+(upper-lower)*(delay-start)/(end-start);
+  }
+  return 1;
+}
 // Same aggregate traffic-interaction coefficients as the offline SPCK
 // solver. Nominal lane capacity is an upper bound, not a free-flow test.
 function operatingState(density:number,merge:number,mainline:boolean){
@@ -48,6 +59,9 @@ export class NetworkFlowEngine {
   private readonly incomingMoves=new Map<string,string[]>();
   private readonly movementFlow=new Map<string,number>();
   private readonly turnStock=new Map<string,Map<string,number>>();
+  private readonly localExitMoves=new Map<string,Move[]>();
+  private readonly delayCache=new Map<string,number>();
+  private delayMinute=-1;
   private readonly openBoundarySinks=new Set<string>();
   private readonly sourceIds:string[]=[];
   private readonly sourceBacklog=new Map<string,number>();
@@ -109,6 +123,29 @@ export class NetworkFlowEngine {
         !downstream.some(move=>leadsToMainline(move.toId)))
         this.openBoundarySinks.add(id);
     }
+    // Identify genuine local exits using directed connectivity, not a ramp's
+    // name or the distance to a junction. Motorway connectors are not local
+    // off-ramps, even when they happen to lie near an AS.
+    const isLocalExit=(id:string):boolean=>{
+      const pending=[id],seen=new Set<string>();
+      let local=false;
+      while(pending.length){
+        const next=pending.pop()!;
+        if(seen.has(next))continue;
+        seen.add(next);
+        const edge=this.cells.get(next)!.edge;
+        if(edge.kind==='mainline')return false;
+        if(edge.kind==='public'){local=true;continue;}
+        const successors=this.moves.get(next)??[];
+        if(!successors.length)local=true;
+        for(const m of successors)pending.push(m.toId);
+      }
+      return local;
+    };
+    for(const [id,state] of this.cells)if(state.edge.kind==='mainline'){
+      const exits=(this.moves.get(id)??[]).filter(m=>isLocalExit(m.toId));
+      if(exits.length)this.localExitMoves.set(id,exits);
+    }
     for(const id of this.cells.keys()){
       if(!incoming.has(id)){
         this.sourceIds.push(id);
@@ -125,6 +162,40 @@ export class NetworkFlowEngine {
     const state=this.cells.get(edgeId);
     if(!state)throw Error('Unbekannter OSM-Fahrweg: '+edgeId);
     return [...state.vehicles].reduce((total,n)=>total+n,0);
+  }
+  /** Actual accepted movement, in vehicles/hour, during the last step. */
+  movementVph(fromId:string,toId:string):number{
+    return this.movementFlow.get(fromId+'=>'+toId)??0;
+  }
+  /** Excess travel time along the directed continuation AFTER this junction.
+   * Do not count a queue behind the exit or on an unrelated motorway arm. */
+  routingDelayAhead(edgeId:string):number{
+    const minute=Math.floor(this.elapsed/60);
+    if(this.delayMinute!==minute){this.delayMinute=minute;this.delayCache.clear();}
+    const cached=this.delayCache.get(edgeId);
+    if(cached!==undefined)return cached;
+    let current=this.cells.get(edgeId),delay=0;
+    const seen=new Set<string>([edgeId]);
+    while(current){
+      const ref=current.edge.motorwayRef;
+      const next=(this.moves.get(current.edge.id)??[]).filter(m=>{
+        const target=this.cells.get(m.toId)!.edge;
+        return target.kind==='mainline'&&target.motorwayRef===ref;
+      });
+      if(next.length!==1||seen.has(next[0]!.toId))break;
+      current=this.cells.get(next[0]!.toId)!;
+      seen.add(current.edge.id);
+      for(const count of current.vehicles){
+        const density=clamp01(count/Math.max(.001,current.jamCellVehicles));
+        const free=current.edge.freeSpeedKmh;
+        const speed=count<.8?free:Math.max(1,free*operatingState(density,0,true).speedFactor*
+          (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45))));
+        delay+=Math.max(0,current.lengthM*.06*(1/speed-1/free));
+      }
+      if(delay>=240)break; // willingness is saturated; no distance/hop limit
+    }
+    this.delayCache.set(edgeId,delay);
+    return delay;
   }
   operatingCapacityVph(edgeId:string,metre=0):number{
     const state=this.cells.get(edgeId);
@@ -274,7 +345,7 @@ export class NetworkFlowEngine {
       const out=send.get(id)!;
       const available=out[out.length-1]!;
       if(available<=0)continue;
-      const choices=(this.moves.get(id)??[]).filter(m=>
+      let choices=(this.moves.get(id)??[]).filter(m=>
         (!corridor.blockedEdgeIds.has(m.toId)||
           corridor.blockedEdgeIds.has(id))&&
         (!closedByEvent.has(m.toId)||closedByEvent.has(id))&&
@@ -283,7 +354,22 @@ export class NetworkFlowEngine {
       // A real motorway may continue outside the mapped network even when
       // the extract retains its last one-lane off-ramp. Give the external
       // continuation a through-lane turn weight, not the ramp's capacity.
-      const outsideWeight=this.openBoundarySinks.has(id)?20:0;
+      let outsideWeight=this.openBoundarySinks.has(id)?20:0;
+      const localExits=this.localExitMoves.get(id);
+      const divert=localExits?diversionShare(this.routingDelayAhead(id)):0;
+      if(localExits&&divert>0){
+        const openExits=choices.filter(m=>localExits.includes(m));
+        if(openExits.length){
+          const exitWeight=openExits.reduce((n,m)=>n+m.weight,0);
+          const throughWeight=choices.reduce((n,m)=>n+(openExits.includes(m)?0:m.weight),outsideWeight);
+          if(divert===1){choices=openExits;outsideWeight=0;this.turnStock.delete(id);}
+          else{
+            choices=choices.map(m=>({...m,weight:m.weight*(openExits.includes(m)?
+              1+throughWeight*divert/Math.max(.001,exitWeight):1-divert)}));
+            outsideWeight*=1-divert;
+          }
+        }
+      }
       if(choices.length===0&&!outsideWeight)continue;
       const weightSum=choices.reduce((a,m)=>a+m.weight,0)+outsideWeight;
       let pending:Map<string,number>|undefined;

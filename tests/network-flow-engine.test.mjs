@@ -83,6 +83,32 @@ test('Kartenende mit letzter Abfahrtsrampe bleibt offener Autobahnabfluss',()=>{
   assert.ok(Math.abs(stats.conservationResidual)<1e-6);
 });
 
+test('Importierte Deutschlandkarte: schrittweise Ausleitung an einer echten offenen Abfahrt',()=>{
+  const graph=sampleNetwork();
+  const edge=graph.edges.find(e=>e.id==='a3-east');
+  const end=[50.4,7.98];
+  graph.nodes.find(n=>n.id==='c').point=end;
+  edge.geometry=[edge.geometry[0],end];
+  edge.lengthM=Strassennetz.polylineLengthM(edge.geometry);
+  const engine=new Stauphysik.NetworkFlowEngine(graph,{stepSeconds:5,targetCellLengthM:180});
+  const accident={id:'all-lanes',edgeId:edge.id,kind:'accident',
+    fromM:edge.lengthM-180,toM:edge.lengthM,closedLanes:[0,1,2],startMinute:0};
+  let tested=0,exitFlow=0,throughFlow=0;
+  for(let i=0;i<720;i++){
+    const delay=engine.routingDelayAhead('a3-west');
+    const stats=engine.advance({'a3-west':5800},[accident]);
+    if(delay>=45&&delay<180){
+      throughFlow+=engine.movementVph('a3-west','a3-east');
+      exitFlow+=engine.movementVph('a3-west','ramp');
+      tested++;
+    }
+    assert.ok(Math.abs(stats.conservationResidual)<1e-6);
+  }
+  assert.ok(tested>100,'mit tatsächlich vorhandenem langem Stau testen');
+  assert.ok(exitFlow>1000,'Fahrzeuge fahren durch die existierende Abfahrt');
+  assert.ok(throughFlow>0,'Ein Teil fährt trotz Verzögerung weiter, soweit Platz vorhanden');
+});
+
 test('Nur reale Netzgrenzen erzeugen neue Nachfrage, niemals innere Autobahnabschnitte',()=>{
   const graph=sampleNetwork();
   const engine=new Stauphysik.NetworkFlowEngine(graph);

@@ -283,3 +283,11 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - **Physische Grenzen bleiben:** Ausfahrten und Ortsstraßen sind keine unbegrenzten Abflusskanäle. Übersteigt die umgeleitete Nachfrage deren Durchlass, verlagert sich der Rückstau an die Ausfahrt. Bestehende Staus lösen sich nur durch tatsächliche Fahrzeugbewegungen auf.
 - **Sicherung:** neue regressionsfeste Tests für die 30–240-Minuten-Kurve und reale A48→A3-Routen über die Köln-Verbindung bei Unfall bzw. Sperrung; ergänzt um bestehende Tests für Rampen, freie Verkehrsführung, Kapazitäten, Fahrzeugbilanz und Stauabbau.
 - **Grenze:** Die Fahrzeugnachfrage ist weiterhin aggregiert, ohne individuelle Start-Ziel-Matrix. Lokale Umleitungsstraßen sind zeitlich geschätzt, nicht vollständig als lokales Straßennetz modelliert. Die genauen 80–99-%-Anteile sind gewünschte Simulatorannahmen, keine empirischen BASt-Messwerte.
+
+## Version 0.10.18 – Stufenlose bundesweite Umleitungsbereitschaft
+
+- Die freiwillige Umleitungsbereitschaft steigt kontinuierlich mit der beobachteten Verzögerung: 45 min 2 %, 60 min 15 %, 88 min 43 %, 120 min 75 %, 180 min 98 %, 240 min 100 %. Die Quote betrifft den betroffenen Durchgangsverkehr, zusätzlich zu normalen Abfahrten. Sie ist eine Modellannahme und wird nicht durch die Empfangskapazität der Abfahrt gekappt.
+- Die Regel berücksichtigt die tatsächliche Autobahnverzögerung auch dann, wenn die geschätzte Umleitungsfahrt selbst lange dauert. Wenn keine Wiederauffahrt im Kartenausschnitt bekannt ist, können Fahrzeuge trotzdem über eine echte öffentliche Abfahrt das Netz verlassen.
+- Lokale Zuflüsse, die hinter der Abfahrt direkt in den weiterhin gestörten Abschnitt führen, wählen anteilig bereits außerhalb der Autobahn eine Umleitung. Ein sekundärer Rückstau vor dem ursprünglichen Ereignis erzeugt keine künstliche Wiederauffahrt vor diesem Ereignis.
+- Die physikalische Ausfahrtkapazität und Fahrzeugbilanz bleiben erhalten: Ist die Abfahrt voll, warten Fahrzeuge vor dem Abzweig, statt geradeaus in den Stau zu fahren. Bei nachlassender Verzögerung ist die normale Weiterfahrt wieder möglich.
+- Vollsperrungen behalten unabhängig von der Verzögerung die letzte rechtlich erreichbare Abfahrt als zwingenden Ausweg. Bei wachsenden Staus greifen frühere erreichbare Abfahrten.
