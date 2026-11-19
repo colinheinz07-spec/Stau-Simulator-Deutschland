@@ -34,7 +34,7 @@ const clamp01=(x:number)=>Math.max(0,Math.min(1,x));
 export function diversionShare(delay:number):number{
   if(delay>=240)return 1;
   if(!Number.isFinite(delay)||delay<45)return 0;
-  const anchors=[[45,.02],[60,.15],[90,.45],[120,.75],[150,.90],[180,.98],[240,1]] as const;
+  const anchors=[[45,.02],[60,.15],[90,.45],[120,.65],[150,.80],[180,.90],[240,1]] as const;
   for(let i=1;i<anchors.length;i++){
     const [end,upper]=anchors[i]!,[start,lower]=anchors[i-1]!;
     if(delay<=end)return lower+(upper-lower)*(delay-start)/(end-start);
@@ -106,6 +106,29 @@ export class NetworkFlowEngine {
       const parents=this.incomingMoves.get(to.edge.id)??[];
       parents.push(from.edge.id);this.incomingMoves.set(to.edge.id,parents);
     }
+    // Never allocate traffic to a sealed ramp component with no mapped
+    // motorway continuation or open boundary. Keep the original geometry;
+    // only remove invalid destination choices from the flow graph.
+    const viable=new Set<string>(),pending:string[]=[];
+    for(const [id,state] of this.cells){
+      if(state.edge.kind==='mainline'||!(this.moves.get(id)??[]).length){
+        viable.add(id);pending.push(id);
+      }
+    }
+    for(let i=0;i<pending.length;i++)for(const parent of this.incomingMoves.get(pending[i]!)??[]){
+      if(viable.has(parent))continue;
+      viable.add(parent);pending.push(parent);
+    }
+    incoming.clear();this.incomingMoves.clear();
+    for(const [id,moves] of this.moves){
+      const allowed=viable.has(id)?moves.filter(m=>viable.has(m.toId)):moves;
+      this.moves.set(id,allowed);
+      for(const move of allowed){
+        incoming.add(move.toId);
+        const parents=this.incomingMoves.get(move.toId)??[];
+        parents.push(id);this.incomingMoves.set(move.toId,parents);
+      }
+    }
     // The OSM extract is a WINDOW into the motorway network, not a
     // motorway termination. If only an off-ramp remains at its downstream
     // cut, unrestricted through traffic must still leave the simulated map.
@@ -147,7 +170,7 @@ export class NetworkFlowEngine {
       if(exits.length)this.localExitMoves.set(id,exits);
     }
     for(const id of this.cells.keys()){
-      if(!incoming.has(id)){
+      if(viable.has(id)&&!incoming.has(id)){
         this.sourceIds.push(id);
         this.sourceBacklog.set(id,0);
       }

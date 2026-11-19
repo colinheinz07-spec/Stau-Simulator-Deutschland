@@ -83,6 +83,24 @@ test('Kartenende mit letzter Abfahrtsrampe bleibt offener Autobahnabfluss',()=>{
   assert.ok(Math.abs(stats.conservationResidual)<1e-6);
 });
 
+test('Geschlossene Rampenschleife ohne Ausfahrt erhält keinen Verkehr aus dem offenen Netz',()=>{
+  const graph=sampleNetwork();
+  graph.nodes.push({id:'f',point:[50.405,7.81]},{id:'g',point:[50.406,7.813]});
+  const lookup=new Map(graph.nodes.map(n=>[n.id,n.point]));
+  const template=graph.edges.find(e=>e.id==='ramp');
+  for(const [id,fromNodeId,toNodeId] of [['trap','b','f'],['loop-a','f','g'],['loop-b','g','f']]){
+    const geometry=[lookup.get(fromNodeId),lookup.get(toNodeId)];
+    graph.edges.push({...template,id,fromNodeId,toNodeId,geometry,lengthM:Strassennetz.polylineLengthM(geometry)});
+  }
+  for(const [incomingEdgeId,outgoingEdgeId] of [['a3-west','trap'],['trap','loop-a'],['loop-a','loop-b'],['loop-b','loop-a']])
+    graph.movements.push({incomingEdgeId,outgoingEdgeId,allowed:true});
+  const engine=new Stauphysik.NetworkFlowEngine(graph);
+  for(let i=0;i<2000;i++)engine.advance({'a3-west':3800});
+  for(const id of ['trap','loop-a','loop-b'])assert.equal(engine.vehiclesOnEdge(id),0);
+  assert.ok(engine.movementVph('a3-west','a3-east')>1000);
+  assert.ok(Math.abs(engine.snapshot().conservationResidual)<1e-6);
+});
+
 test('Importierte Deutschlandkarte: schrittweise Ausleitung an einer echten offenen Abfahrt',()=>{
   const graph=sampleNetwork();
   const edge=graph.edges.find(e=>e.id==='a3-east');

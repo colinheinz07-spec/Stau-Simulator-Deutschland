@@ -400,6 +400,38 @@ function createLegacyTrafficScenario(data){
     }
     if(!invalid&&boundaries.size)for(const e of boundaries)terminateLocalApproach(e);
   }
+  // Some imported motorway_link fragments form closed, non-motorway
+  // components (e.g. two-way connector stubs at a motorway cross). They
+  // are neither public-road exits nor viable motorway destinations.
+  // Find every ramp with a directed path to an actual downstream motorway
+  // or open map boundary. A positive turn weight into a sealed component
+  // would eventually fill it, then block otherwise unobstructed motorways.
+  // Preserve the geometry and legitimate AS roundabout boundaries above.
+  const rampPredecessors=edges.map(()=>[]),viableRampPath=new Set(),rampWork=[];
+  for(const e of edges){
+    if(e.kind==="mainline"||!e.links.some(t=>t.fromM>=e.lengthM-.1)){
+      viableRampPath.add(e.index);rampWork.push(e);
+    }
+    for(const t of e.links)if(e.kind==="ramp")rampPredecessors[t.to].push(e);
+  }
+  for(let i=0;i<rampWork.length;i++)for(const e of rampPredecessors[rampWork[i].index]){
+    if(viableRampPath.has(e.index))continue;
+    viableRampPath.add(e.index);rampWork.push(e);
+  }
+  let excludedTrapMovements=0;
+  for(const e of edges){
+    if(!viableRampPath.has(e.index))continue;
+    const rejected=e.links.filter(t=>!viableRampPath.has(t.to));
+    if(!rejected.length)continue;
+    excludedTrapMovements+=rejected.length;
+    for(const t of rejected){
+      const target=edges[t.to];target.incoming--;
+      if(t.toM<.01)target.incomingAtStart--;
+    }
+    const allowed=t=>viableRampPath.has(t.to);
+    e.links=e.links.filter(allowed);e.next=e.next.filter(allowed);
+    for(let k=0;k<e.n;k++)e.linksFrom[k]=e.linksFrom[k].filter(allowed);
+  }
   // Uniform baseline for motorway transfers: distinguish actual directed
   // motorway connections from local exits, using their narrowest lane count.
   // These are fallback destination estimates, not prescribed diversion shares
@@ -1884,7 +1916,7 @@ function createLegacyTrafficScenario(data){
   function diversionShare(delayMin){
     if(delayMin>=FULL_DIVERSION_MIN)return 1;
     if(!Number.isFinite(delayMin)||delayMin<45)return 0;
-    const anchors=[[45,.02],[60,.15],[90,.45],[120,.75],[150,.90],[180,.98],[240,1]];
+    const anchors=[[45,.02],[60,.15],[90,.45],[120,.65],[150,.80],[180,.90],[240,1]];
     for(let i=1;i<anchors.length;i++){
       const [end,upper]=anchors[i], [start,lower]=anchors[i-1];
       if(delayMin<=end){
@@ -4038,6 +4070,7 @@ function createLegacyTrafficScenario(data){
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,queueRoadInfo,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,hasEdge:id=>byId.has(id),reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
+    excludedTrapMovements:()=>excludedTrapMovements,
     recommendedClosureLength,closureAccessPoints,closureGatePoints,
     movementBlocked:(fromId,toId)=>{
       const from=byId.get(fromId);

@@ -491,8 +491,8 @@ test("route choice grows gradually with actual delay",async()=>{
   assert.equal(scenario.diversionShare(45),.02);
   assert.equal(scenario.diversionShare(60),.15);
   assert.ok(Math.abs(scenario.diversionShare(88)-.43)<1e-9);
-  assert.equal(scenario.diversionShare(120),.75);
-  assert.equal(scenario.diversionShare(180),.98);
+  assert.equal(scenario.diversionShare(120),.65);
+  assert.equal(scenario.diversionShare(180),.90);
   for(const minutes of [240,360,Infinity])
     assert.equal(scenario.diversionShare(minutes),1);
 });
@@ -818,6 +818,52 @@ test("generic local roundabout with omitted public road is a usable exit, not an
   // never become invented local exits merely because they are cyclic.
   const motorway=(await engine())({roads:roads.map(r=>[...r.slice(0,5),r[5].replace("AS 2","AK 2"),...r.slice(6)])});
   assert.equal(motorway.edgeActivity("entry").boundaryExit,false);
+});
+
+test("sealed motorway ramp branches never receive destination traffic while their valid sibling stays open",async()=>{
+  const s=(await engine())({roads:[
+    ["up","mainline","A3",3,[[50,8],[50,8.05]],"",1],
+    ["transfer","ramp","A3",2,[[50,8.05],[50.005,8.06],[50.01,8.07]],"AK Transfer",2],
+    ["continuation","mainline","A4",2,[[50.01,8.07],[50.01,8.11]],"",3],
+    ["branch","ramp","A3",1,[[50.005,8.06],[50.006,8.06]],"AK Fragment",4],
+    ["loop-a","ramp","A3",1,[[50.006,8.06],[50.007,8.061]],"AK Fragment",5],
+    ["loop-b","ramp","A3",1,[[50.007,8.061],[50.006,8.06]],"AK Fragment",6]
+  ]});
+  assert.equal(s.excludedTrapMovements(),1);
+  assert.equal(s.reachable("branch"),false);
+  assert.equal(s.reachable("continuation"),true);
+  s.setSimulationStart(Date.parse("2026-11-19T15:00:00Z"));
+  for(let i=0;i<150;i++)s.advance(12);
+  assert.equal(s.edgeActivity("branch").vehicles,0);
+  assert.equal(s.edgeActivity("loop-a").vehicles,0);
+  assert.ok(s.edgeActivity("transfer").departedVph>100);
+  conservation(s.totals());
+});
+
+test("real NRW after 212 minutes: Bonn-Ost connector trap cannot paralyse A59, A565 or Königsforst",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-19T15:00:00Z"));s.warmStart();
+  const trap="extra-osm-link-38250569",legalRamp="extra-turn-extra-a59-bonn-to-extra-a562-bonn-4829190";
+  assert.equal(s.reachable(trap),false);
+  assert.equal(s.reachable(legalRamp),true);
+  let maxDelay=0,maxRampFlow=0;
+  for(let i=0;i<212;i++){
+    s.advance(12);
+    assert.equal(s.edgeActivity(trap).vehicles,0);
+    assert.equal(s.edgeActivity("extra-heumar-252799445").diversionDemandFraction,0);
+    maxRampFlow=Math.max(maxRampFlow,s.edgeActivity(legalRamp).departedVph);
+    for(const g of s.jamSummaries()){
+      const p=s.queueRoadInfo(g);
+      if(["A59","A565"].includes(p.ref)||/Königsforst|Köln-Heumar|Bonn-Ost/.test(p.location||""))
+        maxDelay=Math.max(maxDelay,g.delayMin??Infinity);
+    }
+  }
+  assert.ok(maxRampFlow>100,"the legal A59 to A562 connection is still used");
+  assert.ok(maxDelay<30,"ordinary rush-hour bottlenecks are allowed, but not gridlock: "+maxDelay);
+  conservation(s.totals());
 });
 
 test("A3 Heumar–Köln-Ost closes the A59 exactly from AD Porz, including the whole trapped feeder",async()=>{
@@ -1809,7 +1855,7 @@ test("nationwide route choice has no arbitrary cap and reaches 100% only after f
   ]});
   const curve=sim.diversionShare;
   for(const minutes of [0,10,20,30,40,44])assert.equal(curve(minutes),0);
-  for(const [minutes,expected] of [[45,.02],[60,.15],[88,.43],[90,.45],[120,.75],[150,.90],[180,.98]])
+  for(const [minutes,expected] of [[45,.02],[60,.15],[88,.43],[90,.45],[120,.65],[150,.80],[180,.90]])
     assert.ok(Math.abs(curve(minutes)-expected)<1e-9);
   for(const minutes of [240,360])assert.equal(curve(minutes),1);
   let prev=0;
