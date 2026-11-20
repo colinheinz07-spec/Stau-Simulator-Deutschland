@@ -1018,6 +1018,63 @@ test("cars already inside a road closure evacuate, but a separate three-lane cra
   conservation(evacuated.totals());conservation(crashed.totals());
 });
 
+test("a closure present at startup has zero internal stock and accepts no new vehicles",async()=>{
+  const model=(await engine())({roads:[
+    ["a","mainline","A3",3,[[50,7],[50,7.018]],"",11],
+    ["b","mainline","A3",3,[[50,7.018],[50,7.05]],"",12],
+    ["on","ramp","A3",1,[[50.006,7.018],[50,7.018]],"AS 1 Beispiel · Auffahrt auf A3",13]
+  ]});
+  model.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
+  model.setEvent({id:"closed",edgeId:"b",kind:"closure",offsetM:0,lengthM:3000,
+    closedLanes:[0,1,2],speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  model.warmStart();
+  assert.equal(model.movementBlocked("a","b"),true);
+  assert.ok(model.closureBands("on").length>0,"the ramp is gated at its public-road entrance");
+  assert.equal(model.edgeActivity("b").vehicles,0);
+  for(let i=0;i<15;i++){
+    model.advance(12);
+    assert.equal(model.edgeActivity("b").enteredLastStep,0);
+    assert.equal(model.edgeActivity("b").vehicles,0);
+    assert.equal(model.edgeActivity("on").enteredLastStep,0);
+  }
+  conservation(model.totals());
+});
+
+test("real AS entrance branches supply model traffic, not a placeholder flow",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-18T04:45:00Z"));sim.warmStart();
+  for(const [id,kind,,,,name] of w.STAU_LEGACY_GEOMETRY.roads)
+    if(kind==="ramp"&&/\bAS\b.*· Auffahrt/.test(name)&&sim.hasEdge(id))
+      assert.ok(sim.reachable(id),"every active signed AS entrance is connected: "+name);
+  for(let i=0;i<12;i++)sim.advance(12);
+  for(const way of [1205439413,1214314273,243583895,807709861]){
+    const a=sim.edgeActivity("extra-heumar-"+way);
+    assert.ok(a.reachable&&a.enteredVph>40,"actual local ramp flow: "+way+" "+JSON.stringify(a));
+  }
+  conservation(sim.totals());
+});
+
+test("Ransbach to Dernbach closure empties the motorway without admitting new traffic",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  sim.setSimulationStart(Date.parse("2026-11-18T04:45:00Z"));sim.warmStart();
+  sim.setEvent({id:"ransbach",edgeId:"A3-326138769",kind:"closure",closedLanes:[0,1,2],
+    offsetM:150,lengthM:100,speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  for(let i=0;i<18;i++)sim.advance(12);
+  for(const id of ["A3-326138765","A3-326138769","extra-heumar-807709863"]){
+    assert.ok(sim.closureBands(id).length>0);
+    assert.equal(sim.edgeActivity(id).enteredLastStep,0);
+    assert.ok(sim.edgeActivity(id).vehicles<1e-6,"the closed section is empty: "+id);
+  }
+  assert.ok(sim.edgeActivity("extra-heumar-8298586").departedVph>100,"the real Ransbach exit serves the diverted traffic");
+  conservation(sim.totals());
+});
+
 test("a pre-existing car on an administratively blocked feeder ramp clears the corridor instead of staying at its red-white gate",async()=>{
   const model=(await engine())({roads:[
     ["a","mainline","A3",3,[[50,7],[50,7.02]],"",11],
@@ -1525,8 +1582,16 @@ test("Wednesday 06:30 Montabaur to Diez: initially no premature diversion, finit
   assert.ok(sim.edgeActivity("ramp-a48-to-frankfurt").departedVph>500,"A48 remains connected to Montabaur");
   assert.ok(sawPhysicalQueue,
     "there must be actual spillback; as earlier diversions activate it need not persist at the original 2.5km location");
-  const route=sim.detourRouteAccounting().find(r=>r.terminalEdgeId==="extra-heumar-30449934");
-  assert.ok(route&&route.arrived>300&&Math.abs(route.residual)<1e-6);
+  const terminals=["extra-heumar-30449934","extra-heumar-689876996","extra-heumar-785021080"];
+  const routes=sim.detourRouteAccounting().filter(r=>terminals.includes(r.terminalEdgeId));
+  assert.equal(routes.length,3,"all mapped B255 exit branches receive assigned traffic");
+  assert.ok(routes.every(r=>r.arrived>50&&Math.abs(r.residual)<1e-6));
+  assert.ok(routes.reduce((sum,r)=>sum+r.arrived,0)>300);
+  assert.ok(terminals.reduce((sum,id)=>sum+sim.edgeActivity(id).departedVph,0)<=705,
+    "all three branches share finite exit capacity");
+  assert.ok(sim.edgeActivity("extra-heumar-15024193").vehicles>sim.edgeActivity("extra-heumar-15024193").storageVehicles*.5,
+    "the common off-ramp fills when the local junction cannot receive all traffic");
+  const route=routes.find(r=>r.terminalEdgeId==="extra-heumar-30449934");
   const terminal=route.terminalEdgeId,rates=new Set();
   for(let i=0;i<12;i++){sim.advance(1);rates.add(sim.edgeActivity(terminal).localDischargeRateVph);}
   assert.ok(rates.size>1&&Math.max(...rates)<=700,"variable junction discharge, not unlimited parallel ramp capacity");
