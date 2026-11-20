@@ -909,6 +909,42 @@ test("A48 closure diversion saturates northbound Ransbach and queues back toward
   conservation(s.totals());
 });
 
+test("Montabaur–Diez accident with open shoulder: no motorway reversal via Koblenz; nearby A3 and A48 exits keep draining",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-13T14:00:00Z"));s.setDemandPercent(160);s.warmStart();
+  s.setEvent({id:"crash",edgeId:"A3-35902835",kind:"accident",offsetM:300,lengthM:100,
+    closedLanes:[0,1,2],speedKmh:40,shoulder:"open",hasShoulder:true});
+  let maxDelay=0,spillback=false,westArmPeak=0;
+  for(let i=0;i<90;i++){
+    s.advance(12);
+    const ac=s.detourRouteAccounting();
+    assert.ok(ac.every(a=>!a.terminalEdgeId.startsWith("A3-")||a.assigned<1),
+      "no purported motorway bypass can rejoin the A3 before the crash: "+JSON.stringify(ac));
+    if(i>=25)westArmPeak=Math.max(westArmPeak,s.edgeActivity("ramp-a3-to-a48-from-koeln").enteredVph);
+    const jams=s.jamSummaries();
+    for(const g of jams)if(s.queueRoadInfo(g).direction==="A3-frankfurt")
+      maxDelay=Math.max(maxDelay,g.delayMin??0);
+    spillback ||= jams.some(g=>/Ransbach-Baumbach/.test(s.queueRoadInfo(g).bottleneck||"")&&g.lengthM>350);
+  }
+  const ac=s.detourRouteAccounting();
+  const assigned=id=>ac.find(a=>a.terminalEdgeId===id)?.arrived??0;
+  assert.ok(maxDelay>=60,"the accident still creates a substantial queue on the original motorway: "+maxDelay);
+  assert.ok(westArmPeak<1100,"normal Koblenz destinations remain, no false bypass stream: "+westArmPeak);
+  assert.ok(assigned("extra-heumar-8298586")>100&&s.edgeActivity("extra-heumar-8298586").departedVph>350,
+    "Ransbach Frankfurt keeps serving diversions even when the mainline backs up");
+  assert.ok(assigned("extra-heumar-26923440")>30&&assigned("extra-heumar-4452557")>30,
+    "A48 Frankfurt-bound drivers really leave at Höhr or on the Köln arm at Ransbach: "+JSON.stringify(ac));
+  assert.ok(spillback,"the overloaded physical exit must queue back onto A3");
+  for(const id of ["extra-heumar-9055085","extra-heumar-132622449","extra-osm-link-132610113",
+    "extra-heumar-556849656","extra-heumar-132097323","extra-heumar-304267512",
+    "extra-heumar-29238748","extra-heumar-29242223","extra-heumar-146242812"])
+    assert.ok(assigned(id)<1,"distant feeder has a later uncongested exit: "+id);
+  conservation(s.totals());
+});
+
 test("A3 Heumar–Köln-Ost closes the A59 exactly from AD Porz, including the whole trapped feeder",async()=>{
   const w={};
   for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
