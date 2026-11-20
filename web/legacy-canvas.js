@@ -99,6 +99,8 @@ async function startLegacyCanvas(existingMap=null){
   function jamRoadInfo(id,offset,group){
     const row=roadRows.get(id);
     if(!row)return {};
+    const modelInfo=group?scenario.queueRoadInfo?.(group):null;
+    if(modelInfo?.location)return modelInfo;
     const ref=row[2],direction=window.StauTrafficReference?.referenceForRoad(row)?.key;
     const segment=segmentById.get(id);
     let p=row[4][Math.floor(row[4].length/2)];
@@ -113,7 +115,7 @@ async function startLegacyCanvas(existingMap=null){
       .map(j=>({name:j[2],metres:distance(p,j[3])})).sort((a,b)=>a.metres-b.metres)[0];
     return {ref,kind:row[1],direction,name:row[5],
       location:row[5]||(nearby&&nearby.metres<14000?"bei "+nearby.name:"Autobahnabschnitt"),
-      ...(group?scenario.queueRoadInfo?.(group):{})};
+      ...(modelInfo||{})};
   }
   function focusJam(id,offset){
     const road=segmentById.get(id);if(!road)return;
@@ -123,7 +125,7 @@ async function startLegacyCanvas(existingMap=null){
   }
   let eventTargets=[];
   let eventEditor=null;
-  let timer=null,simRunning=false;
+  let timer=null,simRunning=false,sliceTimer=null,sliceRemaining=0;
   const mainlines=segments.filter(x=>x.kind!=="ramp");
   const ramps=segments.filter(x=>x.kind==="ramp");
   $("chip-roads").textContent=format(segments.length)+" Fahrwege";
@@ -527,9 +529,14 @@ async function startLegacyCanvas(existingMap=null){
       context.fillText(name,xy[0],xy[1]-7,Math.max(20,textWidth-8));
     }
   }
+  let renderedJamGroups=null;
   function draw(){
     if(!width||!height)return;
-    window.StauDashboard?.renderJams(scenario.jamSummaries(),jamRoadInfo,focusJam);
+    const groups=scenario.jamSummaries();
+    if(groups!==renderedJamGroups){
+      window.StauDashboard?.renderJams(groups,jamRoadInfo,focusJam);
+      renderedJamGroups=groups;
+    }
     // Show how many distinct saved closures are ACTIVE. Otherwise several
     // old locally stored incidents can look like one ghost closure spreading
     // into distant roads when the user creates another SPCK test event.
@@ -599,8 +606,8 @@ async function startLegacyCanvas(existingMap=null){
     $("detail-length").textContent=s.meters>=1000?
       (s.meters/1000).toLocaleString("de-DE",{maximumFractionDigits:2})+" km":
       Math.round(s.meters)+" m";
-    const modelSpeed=scenario.speed(s.id);
     const activity=scenario.edgeActivity?.(s.id,offsetM);
+    const modelSpeed=activity?.sectionSpeedKmh??scenario.speed(s.id);
     updateCapacityDetails(activity);
     const flowInfo=$("detail-flow");
     if(flowInfo)flowInfo.textContent=!activity?.reachable?
@@ -739,30 +746,48 @@ async function startLegacyCanvas(existingMap=null){
       if(flow&&$("detail-flow"))$("detail-flow").textContent=flow.reachable?
         "~"+Math.round(flow.sectionVph).toLocaleString("de-DE")+" Kfz/h · hier (2-Min.-Mittel, Modell)":
         "Nicht mit Modellquellen verbunden";
-      const modelSpeed=scenario.speed(selected.id);
+      const modelSpeed=flow?.sectionSpeedKmh??scenario.speed(selected.id);
       if(modelSpeed!==null&&scenario.reachable(selected.id))
         $("detail-speed").textContent=Math.round(modelSpeed)+" km/h · berechnet";
     }
   }
   function pauseSimulation(){
     if(timer!==null)clearInterval(timer);
+    cancelSlice();
     timer=null;simRunning=false;
     $("sim-toggle").textContent="▶ Simulation starten";
     $("sim-toggle").classList.remove("running");
     window.StauDashboard?.setRunning(false);
   }
-  function tick(){
-    if(!simRunning)return;
+  function cancelSlice(){
+    if(sliceTimer!==null)clearTimeout(sliceTimer);
+    sliceTimer=null;
+    if(sliceRemaining>0){
+      sliceRemaining=0;scenario.refresh();displayStats();requestDraw();
+    }
+  }
+  function runSlice(){
+    sliceTimer=null;
+    if(!simRunning||!sliceRemaining)return;
     try{
-      // Twelve 5-second conservative steps per real second.
-      scenario.advance(12);
-      displayStats();
-      requestDraw();
+      // Yield to touch, drawing and browser painting between short physics
+      // tasks. A slow phone never accumulates overlapping minute batches.
+      const started=Date.now();
+      do{
+        scenario.step(5,sliceRemaining===1);sliceRemaining--;
+      }while(sliceRemaining>0&&Date.now()-started<8);
+      if(sliceRemaining>0)sliceTimer=setTimeout(runSlice,0);
+      else{displayStats();requestDraw();}
     }catch(error){
+      sliceRemaining=0;
       pauseSimulation();
       $("map-status").textContent="Simulation angehalten: "+error.message;
       console.error(error);
     }
+  }
+  function tick(){
+    if(!simRunning||sliceRemaining||document.hidden)return;
+    sliceRemaining=12;runSlice();
   }
   function startSimulation(){
     if(simRunning)return;
@@ -774,7 +799,7 @@ async function startLegacyCanvas(existingMap=null){
     $("sim-toggle").classList.add("running");
     window.StauDashboard?.setRunning(true);
     tick();
-    timer=setInterval(tick,1000);
+    if(simRunning)timer=setInterval(tick,1000);
   }
   $("sim-toggle").addEventListener("click",()=>{
     if(simRunning)pauseSimulation();else startSimulation();
@@ -829,10 +854,11 @@ async function startLegacyCanvas(existingMap=null){
   function suspendTimer(){
     if(timer!==null)clearInterval(timer);
     timer=null;
+    cancelSlice();
   }
   function resumeTimer(){
     if(!simRunning||timer!==null||document.hidden)return;
-    tick();timer=setInterval(tick,1000);
+    tick();if(simRunning)timer=setInterval(tick,1000);
   }
   document.addEventListener("visibilitychange",()=>{
     if(document.hidden)suspendTimer();else resumeTimer();

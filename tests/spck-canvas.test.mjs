@@ -10,7 +10,8 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   const flow=await readFile("web/offline-traffic.js","utf8");
   const dashboard=await readFile("web/mobile-controls.js","utf8");
   const profile=await readFile("web/traffic-reference.js","utf8");
-  const frames=[],listeners=new Map(),elements=new Map();
+  const frames=[],timeouts=new Map(),listeners=new Map(),elements=new Map();
+  let timerId=0,wallClock=0,intervalCallback=null;
   const window={devicePixelRatio:2,addEventListener(){}};
   runInNewContext(geometry,{window});
   runInNewContext(scheduleModule,{window});
@@ -62,12 +63,17 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   }
   class ResizeObserverStub{observe(){}}
   const schedule=callback=>{frames.push(callback);return frames.length};
+  const later=callback=>{const id=++timerId;timeouts.set(id,callback);return id;};
+  const flushTimers=()=>{while(timeouts.size){const [id,callback]=timeouts.entries().next().value;timeouts.delete(id);callback();}};
+  class TestDate extends Date{static now(){return wallClock+=10;}}
   runInNewContext(renderer,{
     window,document,Image:ImageWithoutNetwork,ResizeObserver:ResizeObserverStub,
-    requestAnimationFrame:schedule,setTimeout(){},setInterval(){return 1},clearInterval(){},console,
+    requestAnimationFrame:schedule,setTimeout:later,clearTimeout:id=>timeouts.delete(id),
+    setInterval(callback){intervalCallback=callback;return 1},clearInterval(){intervalCallback=null;},Date:TestDate,console,
   });
   runInNewContext(dashboard,{window,document});
   await window.startLegacyCanvas();
+  flushTimers();
   while(frames.length)frames.shift()();
   const model=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
   assert.equal(element("chip-roads").textContent,model.edgeCount().toLocaleString("de-DE")+" Fahrwege");
@@ -88,10 +94,20 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   assert.ok(listeners.has("btn-test-region:click"));
   assert.ok(listeners.has("sim-toggle:click"));
   listeners.get("sim-toggle:click")();
+  assert.notEqual(element("sim-clock").textContent,"1:00","first task yields before completing a minute");
+  assert.ok(timeouts.size>0,"remaining physics is scheduled in separate tasks");
+  flushTimers();
   assert.equal(element("sim-clock").textContent,"1:00");
   assert.ok(Number(element("sim-vehicles").textContent.replaceAll(".",""))>0);
   assert.match(element("sim-toggle").textContent,/anhalten/);
   assert.equal(element("sim-run-state").textContent,"Läuft");
+  intervalCallback();
+  const queued=timeouts.size;
+  intervalCallback();
+  assert.equal(timeouts.size,queued,"a slow minute cannot schedule overlapping batches");
+  listeners.get("sim-toggle:click")();
+  assert.equal(timeouts.size,0,"pausing cancels remaining physics tasks");
+  assert.equal(element("sim-clock").textContent,"1:05","pause preserves only completed physics steps");
 
   // Tap a real A3 point and set a full closure through the actual mobile UI.
   // The closure has its own red-white overlay, not fake traffic-speed coloring.

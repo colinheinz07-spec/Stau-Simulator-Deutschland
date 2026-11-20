@@ -17,8 +17,10 @@
     "extra-a565-nord":"Norden","extra-a565-sued":"Süden"
   };
   function describeJam(group,road={}){
-    const worst=Number(group.worstKmh),speed=Number(group.meanKmh??group.worstKmh),known=Number.isFinite(speed);
-    const severity=!known?"jam":worst<=10?"standstill":worst<=30?"jam":"slow";
+    const speed=Number(group.meanKmh??group.worstKmh),known=Number.isFinite(speed);
+    // A queue can contain one stopped cell and kilometres of moving traffic.
+    // The overall label matches its displayed average, not its minimum.
+    const severity=!known?"jam":speed<=10?"standstill":speed<=30?"jam":"slow";
     const states={slow:["Stockender Verkehr","#efae47"],jam:["Stau / Stop-and-Go","#e34f56"],standstill:["Stillstand / Kriechverkehr","#a85169"]};
     const [state,color]=states[severity];
     const signedDestination=road.kind==="ramp"&&road.name?.includes("→")?road.name.split("→").at(-1).trim():null;

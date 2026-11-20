@@ -79,6 +79,7 @@ test("Staukarten verwenden gemessene Modellwerte, Fahrtrichtung und verknüpfen 
  assert.equal(view.delay,"+12 min");assert.equal(view.severity,"standstill");assert.equal(view.speed,"8 km/h");
  assert.equal(ui.describeJam(group,{ref:"A3",kind:"ramp",name:"AS Ransbach-Baumbach · Abfahrt von A3 → Köln"}).title,"A3 Richtung Köln");
  assert.equal(ui.describeJam({...group,meanKmh:18,delayMin:null},road).speed,"18 km/h");
+ assert.equal(ui.describeJam({...group,meanKmh:18},road).severity,"jam","severity agrees with complete queue mean, not worst cell");
  assert.equal(ui.describeJam({...group,meanKmh:18,delayMin:null},road).delay,"Nicht berechenbar");
  assert.equal(ui.describeJam({...group,meanKmh:1,delayMin:275,delayLowerBound:true},road).delay,"≥ +4 h 35 min");
  assert.equal(ui.describeJam({...group,worstKmh:45},road).severity,"slow");

@@ -490,9 +490,9 @@ test("route choice grows gradually with actual delay",async()=>{
   assert.equal(scenario.diversionShare(40),0);
   assert.equal(scenario.diversionShare(45),.02);
   assert.equal(scenario.diversionShare(60),.15);
-  assert.ok(Math.abs(scenario.diversionShare(88)-.43)<1e-9);
-  assert.equal(scenario.diversionShare(120),.65);
-  assert.equal(scenario.diversionShare(180),.90);
+  assert.ok(Math.abs(scenario.diversionShare(88)-(.15+.25*28/30))<1e-9);
+  assert.equal(scenario.diversionShare(120),.58);
+  assert.equal(scenario.diversionShare(180),.85);
   for(const minutes of [240,360,Infinity])
     assert.equal(scenario.diversionShare(minutes),1);
 });
@@ -832,6 +832,7 @@ test("sealed motorway ramp branches never receive destination traffic while thei
   assert.equal(s.excludedTrapMovements(),1);
   assert.equal(s.reachable("branch"),false);
   assert.equal(s.reachable("continuation"),true);
+  assert.equal(s.edgeActivity("continuation").source,false,"interchange-fed motorway is not a second origin");
   s.setSimulationStart(Date.parse("2026-11-19T15:00:00Z"));
   for(let i=0;i<150;i++)s.advance(12);
   assert.equal(s.edgeActivity("branch").vehicles,0);
@@ -863,6 +864,48 @@ test("real NRW after 212 minutes: Bonn-Ost connector trap cannot paralyse A59, A
   }
   assert.ok(maxRampFlow>100,"the legal A59 to A562 connection is still used");
   assert.ok(maxDelay<30,"ordinary rush-hour bottlenecks are allowed, but not gridlock: "+maxDelay);
+  conservation(s.totals());
+});
+
+test("Friday Bonn rush-hour demand has no duplicated interchange origins or artificial extreme delay",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  for(const id of ["A48-1308398832","extra-a560-hennef","extra-a562-bonn","extra-a565-koblenz","extra-a555-koeln"]){
+    assert.equal(s.edgeActivity(id).source,false,id+" fed by actual interchange, not a duplicate source");
+    assert.equal(s.reachable(id),true,id+" must still carry arriving traffic");
+  }
+  s.setSimulationStart(Date.parse("2026-11-20T12:00:00Z"));s.warmStart();
+  for(let i=0;i<100;i++){
+    s.advance(12);
+    for(const g of s.jamSummaries())if(["A59","A562","A565","A560"].includes(s.queueRoadInfo(g).ref))
+      assert.ok(g.delayMin!==null&&g.delayMin<20,"no extraordinary Bonn jam at normal demand: "+JSON.stringify(g));
+  }
+  assert.ok(s.edgeActivity("extra-a562-bonn").sectionVph>100,"actual motorway transfer supplies A562");
+  conservation(s.totals());
+});
+
+test("A48 closure diversion saturates northbound Ransbach and queues back toward Dernbach",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-20T12:00:00Z"));s.setDemandPercent(160);s.warmStart();
+  s.setEvent({id:"full",edgeId:"A3-232272183",kind:"closure",closedLanes:[0,1,2],offsetM:50,lengthM:200,
+    speedKmh:0,hasShoulder:false,shoulder:"normal"});
+  let overloaded=false,queue=false;
+  for(let i=0;i<25;i++){
+    s.advance(12);
+    const e=s.edgeActivity("extra-heumar-4452557");
+    overloaded ||= e.vehicles>e.storageVehicles*.6&&e.departedVph>550;
+    queue ||= s.jamSummaries().some(g=>{
+      const road=s.queueRoadInfo(g);return road.kind==="mainline"&&road.direction==="A3-koeln"&&
+        /Dernbach.*Ransbach/.test(road.location||"")&&g.lengthM>=350;
+    });
+    assert.ok(e.departedVph<=705,"Ransbach northbound cannot magically discharge unlimited A48 traffic");
+  }
+  assert.ok(overloaded&&queue,"excess A48 diversion must fill the actual ramp and then the A3 approach");
   conservation(s.totals());
 });
 
@@ -1255,7 +1298,7 @@ test("48 reversed A3/A48 OSM Ways are normalized into continuous directed motorw
   assert.equal(main.length,970);
   assert.equal(main.filter(r=>scenario.reachable(r[0])).length,970,
     "real A3 and A48 OSM carriageways must not become dead-end subgraphs");
-  assert.ok(scenario.sourceProfiles().some(p=>p.direction==="A48-koblenz"));
+  assert.equal(scenario.edgeActivity("A48-1308398832").source,false,"A48 starts at the A3 transfer, not a new map boundary");
   assert.ok(scenario.sourceProfiles().some(p=>p.direction==="A48-dernbach"));
 });
 test("Saturday afternoon has no widespread phantom jams; real 2-of-3-lane accident creates an upstream queue",async()=>{
@@ -1372,7 +1415,6 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
       "a physically stored A48 queue must display its measured congestion");
   else assert.ok(northState.departedVph>100,
     "a free-flowing A48 exit may be green while serving normal discharge");
-  assert.ok(sim.edgeActivity("extra-heumar-25149856").enteredVph>100,"vehicles already beyond Ransbach exit via the actual Höhr AS");
   assert.ok(sim.jamSummaries().some(g=>g.endEdgeId==="A3-326138758"&&g.lengthM>500),
     "saturated local exit spills back onto A3");
   const queue=sim.jamSummaries().find(g=>g.endEdgeId==="A3-326138758");
@@ -1388,6 +1430,8 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
   for(const route of accounting)assert.ok(Math.abs(route.residual)<1e-6,
     "assigned vehicles must reach their own exit or remain visibly in the corridor");
   const fallback=accounting.find(x=>x.terminalEdgeId==="extra-heumar-25149856");
+  assert.ok(fallback&&fallback.arrived>50&&fallback.arrived>=fallback.assigned-1e-5,
+    "vehicles already beyond Ransbach have evacuated via the actual Höhr AS; no artificial sustained influx required");
   assert.ok(initialFallbackAssigned>0&&fallback&&Math.abs(fallback.assigned-initialFallbackAssigned)<1e-6,
     "once traffic already beyond Ransbach has evacuated, no new Frankfurt traffic may be sent to Höhr");
   assert.ok(sim.edgeActivity("extra-heumar-807709863").localSourceDetourFraction>0,
@@ -1855,7 +1899,7 @@ test("nationwide route choice has no arbitrary cap and reaches 100% only after f
   ]});
   const curve=sim.diversionShare;
   for(const minutes of [0,10,20,30,40,44])assert.equal(curve(minutes),0);
-  for(const [minutes,expected] of [[45,.02],[60,.15],[88,.43],[90,.45],[120,.65],[150,.80],[180,.90]])
+  for(const [minutes,expected] of [[45,.02],[60,.15],[88,.15+.25*28/30],[90,.40],[120,.58],[150,.73],[180,.85]])
     assert.ok(Math.abs(curve(minutes)-expected)<1e-9);
   for(const minutes of [240,360])assert.equal(curve(minutes),1);
   let prev=0;

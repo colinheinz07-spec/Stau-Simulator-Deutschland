@@ -34,7 +34,7 @@ const clamp01=(x:number)=>Math.max(0,Math.min(1,x));
 export function diversionShare(delay:number):number{
   if(delay>=240)return 1;
   if(!Number.isFinite(delay)||delay<45)return 0;
-  const anchors=[[45,.02],[60,.15],[90,.45],[120,.65],[150,.80],[180,.90],[240,1]] as const;
+  const anchors=[[45,.02],[60,.15],[90,.40],[120,.58],[150,.73],[180,.85],[240,1]] as const;
   for(let i=1;i<anchors.length;i++){
     const [end,upper]=anchors[i]!,[start,lower]=anchors[i-1]!;
     if(delay<=end)return lower+(upper-lower)*(delay-start)/(end-start);

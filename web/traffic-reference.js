@@ -55,17 +55,19 @@ const REFERENCE_PEAKS = {
     'extra-a1-dortmund': 2900, 'extra-a1-koblenz': 2850,
     // Regional scenario calibration, not official traffic-counter data.
     'A3-koeln': 5000, 'A3-frankfurt': 5000, 'A48-dernbach': 3200, 'A48-koblenz': 2500,
-    'extra-a59-koeln': 3600, 'extra-a59-bonn': 3600,
+    // Southern B42 boundary feeds A59 in addition to the A562/A565/A560
+    // interchanges. Do not use the combined downstream peak at this source.
+    'extra-a59-koeln': 3000, 'extra-a59-bonn': 3600,
     'extra-a4-aachen': 4200, 'extra-a4-olpe': 4300,
     // These retained A555 corridors include one-lane AK Köln-Süd turning arms.
     // Calibrate only traffic committed to each arm, not entire three-lane A555.
     'extra-a555-koeln': 1250, 'extra-a555-bonn': 1200,
     'extra-a559-gremberg': 3100, 'extra-a559-porz': 3000,
-    'extra-a560-hennef': 2900, 'extra-a560-bonn': 3200,
-    'extra-a562-bonn': 2800, 'extra-a562-bonn-ost': 2700,
+    'extra-a560-hennef': 2900, 'extra-a560-bonn': 2800,
+    'extra-a562-bonn': 2800, 'extra-a562-bonn-ost': 2400,
     // Explicit scenario assumptions (not measured BASt data).
     'extra-a61-nord': 2800, 'extra-a61-sued': 2700,
-    'extra-a565-nord': 2600, 'extra-a565-sued': 2600
+    'extra-a565-nord': 2300, 'extra-a565-sued': 2600
 };
 
 const LOCAL_JUNCTION_PROFILES = [

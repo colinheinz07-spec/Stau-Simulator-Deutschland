@@ -180,6 +180,7 @@ function createLegacyTrafficScenario(data){
   const edges=[],outByNode=new Map(),inByNode=new Map(),byId=new Map();
   const rowById=new Map(data.roads.map(row=>[String(row[0]),row]));
   const NO_EFFECTS=Object.freeze([]);
+  const NO_LANES=new Set(); // read-only shared empty set for unrestricted cells
   const traffic=global.StauTrafficReference;
   if(!traffic)throw Error("traffic-reference.js fehlt vor offline-traffic.js");
   let excludedRest=0;
@@ -516,6 +517,19 @@ function createLegacyTrafficScenario(data){
   }
   const sources=[],componentSeen=new Set();
   let sourceComponents=0,unservedComponents=0;
+  // An interchange-fed motorway start is not an external demand boundary.
+  // Trace real motorway traffic through ramp chains (not local AS origins).
+  // Otherwise a full reference peak is added on top of every feeder flow.
+  const motorwayFedRamps=new Set(),transferWork=edges.filter(e=>e.kind==="mainline");
+  for(let i=0;i<transferWork.length;i++)for(const t of transferWork[i].links){
+    const target=edges[t.to];
+    if(target.kind!=="ramp"||motorwayFedRamps.has(target.index)||
+      /\bAS\b.*· (?:Abfahrt|Auffahrt)/i.test(target.name))continue;
+    motorwayFedRamps.add(target.index);transferWork.push(target);
+  }
+  const transferFedStarts=new Set();
+  for(const i of motorwayFedRamps)for(const t of edges[i].links)
+    if(edges[t.to].kind==="mainline"&&t.toM<.01)transferFedStarts.add(t.to);
   for(const first of edges){
     if(first.kind!=="mainline"||componentSeen.has(first.index))continue;
     const component=[],stack=[first.index];
@@ -530,10 +544,13 @@ function createLegacyTrafficScenario(data){
     // A short disconnected ramp/Way fragment must NOT get a full motorway
     // source. But a real map-cut motorway >= 1.5 km must receive arrivals.
     if(totalLength<1500)continue;
-    const possible=component.filter(edge=>!edge.mainlineIncomingAtStart)
+    const possible=component.filter(edge=>!edge.mainlineIncomingAtStart&&!transferFedStarts.has(edge.index))
       .map(edge=>({edge,profile:traffic.referenceForRoad(rowById.get(edge.id))}))
       .filter(x=>x.profile.peakVph>0);
-    if(!possible.length){unservedComponents++;continue;}
+    if(!possible.length){
+      if(!component.some(edge=>transferFedStarts.has(edge.index)))unservedComponents++;
+      continue;
+    }
     possible.sort((a,b)=>upstreamRank(b.edge,b.profile.key)-upstreamRank(a.edge,a.profile.key)
       ||b.edge.lengthM-a.edge.lengthM);
     const {edge,profile}=possible[0];
@@ -1916,7 +1933,7 @@ function createLegacyTrafficScenario(data){
   function diversionShare(delayMin){
     if(delayMin>=FULL_DIVERSION_MIN)return 1;
     if(!Number.isFinite(delayMin)||delayMin<45)return 0;
-    const anchors=[[45,.02],[60,.15],[90,.45],[120,.65],[150,.80],[180,.90],[240,1]];
+    const anchors=[[45,.02],[60,.15],[90,.40],[120,.58],[150,.73],[180,.85],[240,1]];
     for(let i=1;i<anchors.length;i++){
       const [end,upper]=anchors[i], [start,lower]=anchors[i-1];
       if(delayMin<=end){
@@ -3235,7 +3252,7 @@ function createLegacyTrafficScenario(data){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
         const local=effects.length?
           effects.filter(e=>e.fromM<b-.001&&e.toM>a+.001):NO_EFFECTS;
-        const closed=new Set(),incidentClosed=new Set();
+        const closed=local.length?new Set():NO_LANES,incidentClosed=local.length?new Set():NO_LANES;
         let shoulderOpen=false,shoulderBlocked=false,blockedAtGate=false;
         let permitted=edge.freeKmh;
         for(const item of local){
@@ -4046,10 +4063,14 @@ function createLegacyTrafficScenario(data){
       turnCommitments.set(targetId,(turnCommitments.get(targetId)||0)+vehicles);
     }
     const at=Math.max(0,Math.min(edge.n-1,Math.floor((Number(offsetM)||0)/edge.cellLength)));
+    let sectionSpeedKmh=routingCellSpeed(edge,at);
+    for(const effect of activeEffects.get(id)||NO_EFFECTS)
+      if(effect.fromM<(at+1)*edge.cellLength&&effect.toM>at*edge.cellLength&&effect.event.speedKmh>0)
+        sectionSpeedKmh=Math.min(sectionSpeedKmh,effect.event.speedKmh);
     return {reachable:reachable.has(id),vehicles:count,
       turnCommitments:[...turnCommitments].map(([targetEdgeId,vehicles])=>({targetEdgeId,vehicles})),
       divertedVehiclesOnEdge:edge.divertStock.reduce((sum,x)=>sum+x,0),
-      sectionVph:edge.cellThroughVph[at],boundaryExit:boundaryExit[edge.index],
+      sectionVph:edge.cellThroughVph[at],sectionSpeedKmh,boundaryExit:boundaryExit[edge.index],
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
       enteredLastStep:enteredStep[edge.index],departedLastStep:departedStep[edge.index],
       capacityVph:edge.lanes*edge.capacityPerLane,
@@ -4066,7 +4087,7 @@ function createLegacyTrafficScenario(data){
   }
   function speed(id){return byId.get(id)?.speed??null;}
   function color(id){const edge=byId.get(id);return edge?colourForSpeed(edge.speed):"free";}
-  return {advance,step,reset,warmStart,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
+  return {advance,step,refresh:()=>{recomputeSpeeds();return totals();},reset,warmStart,setMode,setEvent,removeEvent,listEvents,visualBands,closureBands,
     setSimulationStart,clockMs,eventStatus,setDemandPercent,totals,speed,color,mode,
     activeEvents,jamSummaries:()=>jamGroups,queueRoadInfo,sourceCount:()=>sources.length,edgeCount:()=>edges.length,
     edgeActivity,hasEdge:id=>byId.has(id),reachable:id=>reachable.has(id),reachableCount:()=>reachable.size,
