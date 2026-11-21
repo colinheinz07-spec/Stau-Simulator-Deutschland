@@ -3,6 +3,27 @@
 (function(){
   "use strict";
   const $=id=>document.getElementById(id);
+  // Safari/WKWebView may otherwise display its text or link menu over the map.
+  // Do not cancel touchstart/move: taps, native page scrolling and pinch stay intact.
+  const appUI=".app-shell,.detail-drawer";
+  const editable="input,textarea,select,[contenteditable]:not([contenteditable='false'])";
+  const targetElement=e=>e.target?.nodeType===1?e.target:e.target?.parentElement;
+  const isAppControl=e=>{
+    const target=targetElement(e);
+    return target?.closest(appUI)&&!target.closest(editable);
+  };
+  document.addEventListener("selectstart",e=>{
+    if(isAppControl(e))e.preventDefault();
+  },true);
+  document.addEventListener("contextmenu",e=>{
+    if(isAppControl(e)&&(e.pointerType==="touch"||window.matchMedia("(any-pointer: coarse)").matches))
+      e.preventDefault();
+  },true);
+  document.addEventListener("pointerdown",e=>{
+    if(e.pointerType!=="touch"||!targetElement(e)?.closest(".map-pane,.map-command"))return;
+    const selection=window.getSelection();
+    if(selection&&!selection.isCollapsed)selection.removeAllRanges();
+  },true);
   const directionNames={
     "A3-koeln":"Köln","A3-frankfurt":"Frankfurt",
     "A48-dernbach":"Dernbach","A48-koblenz":"Koblenz",
