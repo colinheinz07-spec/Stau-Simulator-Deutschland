@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Strassennetz,Stauphysik,Ereignisse} from '../dist/index.js';
 import {sampleNetwork} from './fixture.mjs';
+import {diversionShare} from '../dist/03_Stauphysik/netzfluss.js';
+
+test('Freiwillige Abfahrten beginnen nach 60 Minuten, selbst bei vier Stunden bleibt Durchgangsverkehr',()=>{
+  for(const [delay,share] of [[59.99,0],[60,.02],[90,.15],[120,.32],[180,.55],[240,.70],[360,.82],[480,.90],[720,.90]])
+    assert.ok(Math.abs(diversionShare(delay)-share)<1e-9);
+});
 
 test('Jede echte Rampe erhält explizite gerichtete Ein- und Ausgänge, keine imaginären Fahrbeziehungen',()=>{
   const graph=sampleNetwork();

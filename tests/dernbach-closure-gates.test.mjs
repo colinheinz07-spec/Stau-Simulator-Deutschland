@@ -84,20 +84,20 @@ test("Diez exit fork, before AS centre: closure starts at Diez not Limburg-Nord"
   }
 });
 
-test("full closure: LAST lawful exit initially, earlier exit as delay grows beyond 45 minutes",async()=>{
+test("full closure: LAST lawful exit initially, earlier exit as delay grows beyond 60 minutes",async()=>{
   const window={};
   for(const file of ["web/traffic-reference.js","web/offline-traffic.js"])
     runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
   const model=window.createLegacyTrafficScenario({roads:[
     ["approach","mainline","A3",3,
-      [[50,7],[50,7.010],[50,7.025],[50,7.032],[50,7.038]],"",1],
-    ["closed","mainline","A3",3,[[50,7.038],[50,7.055]],"",2],
-    ["after","mainline","A3",3,[[50,7.055],[50,7.070]],"",3],
+      [[50,7],[50,7.010],[50,7.025],[50,7.048],[50,7.054]],"",1],
+    ["closed","mainline","A3",3,[[50,7.054],[50,7.071]],"",2],
+    ["after","mainline","A3",3,[[50,7.071],[50,7.086]],"",3],
     ["early","ramp","A3",1,[[50,7.010],[50.007,7.010]],
       "AS 1 Früh · Abfahrt von A3",4],
-    ["last","ramp","A3",1,[[50,7.032],[50.008,7.032]],
+    ["last","ramp","A3",1,[[50,7.048],[50.008,7.048]],
       "AS 2 Letzte · Abfahrt von A3",5],
-    ["return","ramp","A3",1,[[50.008,7.060],[50,7.060]],
+    ["return","ramp","A3",1,[[50.008,7.076],[50,7.076]],
       "AS 3 Hinter der Sperre · Auffahrt auf A3",6]
   ]});
   model.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
@@ -114,19 +114,19 @@ test("full closure: LAST lawful exit initially, earlier exit as delay grows beyo
   assert.ok(model.edgeActivity("last").enteredVph>model.edgeActivity("early").enteredVph,
     "initially the last lawful exit receives the rerouted flow");
   let activated=false,hadLongApproach=false,maxApproach=0;
-  for(let i=1;i<85;i++){
+  for(let i=1;i<120;i++){
     model.advance(12);
     const localDelay=model.routingDelayToNextExit("approach",715);
     maxApproach=Math.max(maxApproach,localDelay);
-    hadLongApproach ||= localDelay>=45;
+    hadLongApproach ||= localDelay>=60;
     const early=model.edgeActivity("early");
-    if(!hadLongApproach)assert.equal(early.diversionDemandFraction,0,"no early diversion while the next exit is still within 45 min of excess travel");
+    if(!hadLongApproach)assert.equal(early.diversionDemandFraction,0,"no early diversion while the next exit is still within 60 min of excess travel");
     activated ||= early.diversionDemandFraction>0&&early.departedVph>0;
   }
   assert.ok(model.edgeActivity("last").departedVph>500,
     "the last open exit actually discharges vehicles");
   assert.ok(hadLongApproach&&activated,
-    "earlier exit activates only after the approach to the next exit incurs 45 min of excess delay: "+JSON.stringify({maxApproach,hadLongApproach,activated,plans:model.detourPlans(),accounts:model.detourRouteAccounting()}));
+    "earlier exit activates only after the approach to the next exit incurs 60 min of excess delay: "+JSON.stringify({maxApproach,hadLongApproach,activated,plans:model.detourPlans(),accounts:model.detourRouteAccounting()}));
   assert.ok(model.edgeActivity("early").departedVph<=705&&model.edgeActivity("last").departedVph<=705,
     "each real exit retains its physical capacity");
   assert.ok(model.edgeActivity("closed").enteredVph<1,

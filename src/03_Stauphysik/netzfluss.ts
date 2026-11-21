@@ -32,14 +32,14 @@ const safeNonnegative=(v:number)=>Number.isFinite(v)&&v>=0;
 const clamp01=(x:number)=>Math.max(0,Math.min(1,x));
 /** Same nationwide response curve as the offline engine. */
 export function diversionShare(delay:number):number{
-  if(delay>=240)return 1;
-  if(!Number.isFinite(delay)||delay<45)return 0;
-  const anchors=[[45,.02],[60,.15],[90,.40],[120,.58],[150,.73],[180,.85],[240,1]] as const;
+  if(delay>=480)return .90;
+  if(!Number.isFinite(delay)||delay<60)return 0;
+  const anchors=[[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[240,.70],[360,.82],[480,.90]] as const;
   for(let i=1;i<anchors.length;i++){
     const [end,upper]=anchors[i]!,[start,lower]=anchors[i-1]!;
     if(delay<=end)return lower+(upper-lower)*(delay-start)/(end-start);
   }
-  return 1;
+  return .90;
 }
 // Same aggregate traffic-interaction coefficients as the offline SPCK
 // solver. Nominal lane capacity is an upper bound, not a free-flow test.
@@ -408,7 +408,7 @@ export class NetworkFlowEngine {
       let outsideWeight=this.openBoundarySinks.has(id)?20:0;
       const localExits=this.localExitMoves.get(id);
       const observed=localExits?this.routingDelayAhead(id):0;
-      const divert=observed>=45?diversionShare(Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0;
+      const divert=observed>=60?diversionShare(Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0;
       if(localExits&&divert>0){
         const openExits=choices.filter(m=>localExits.includes(m));
         if(openExits.length){
