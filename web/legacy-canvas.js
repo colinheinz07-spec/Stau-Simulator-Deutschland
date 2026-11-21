@@ -377,6 +377,9 @@ async function startLegacyCanvas(existingMap=null){
       if(!road||!inView(road,scale))continue;
       const [x,y]=pointAt(pointAlong(road,group.offsetM));
       if(x<8||x>width-8||y<10||y>height-30)continue;
+      // Very short approach queues remain in the detailed traffic list,
+      // but don't obscure nearby closure/access symbols on a phone.
+      if(width<480&&group.lengthM<750&&eventTargets.some(e=>e.closure&&Math.hypot(e.x-x,e.y-y)<65))continue;
       const info=window.StauDashboard?.describeJam(group,jamRoadInfo(group.edgeId,group.offsetM,group))??{
         ref:road.ref||"Autobahn",state:"Stau",color:"#e34f56",
         length:(group.lengthM/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1})+" km",
@@ -443,7 +446,7 @@ async function startLegacyCanvas(existingMap=null){
       }
       context.fillStyle="#fff";
       context.fillText(symbols[event.kind]||"⚠️",x,y+6,25);
-      eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,offsetM:event.offsetM});
+      eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,offsetM:event.offsetM,closure:event.kind==="closure"});
     }
     // Two endpoint markers per FULL motorway closure make the actual
     // physical closed interval unmistakable: RED start at the last fork
@@ -471,7 +474,7 @@ async function startLegacyCanvas(existingMap=null){
         context.font="bold 13px system-ui,Apple Color Emoji,sans-serif";
         context.fillStyle="#fff";
         context.fillText(begin?"⛔":"↗",x,y+5,20);
-        eventTargets.push({x,y,id:pin.eventId,edgeId:pin.edgeId,
+        eventTargets.push({x,y,id:pin.eventId,edgeId:pin.edgeId,closure:true,
           offsetM:pin.offsetM});
       }
     }
@@ -503,7 +506,7 @@ async function startLegacyCanvas(existingMap=null){
         }
         context.font="13px system-ui,Apple Color Emoji,sans-serif";
         context.fillStyle="#fff";context.fillText("⛔",x,y+5,20);
-        eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,
+        eventTargets.push({x,y,id:event.id,edgeId:event.edgeId,closure:true,
           offsetM:event.offsetM});
       }
     }

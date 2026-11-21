@@ -50,6 +50,13 @@ function trafficOperatingState(density,merge=0,mainline=true){
   return {speedFactor:1-.24*interactions,
     capacityFactor:1-.10*interactions-.08*pressure-.20*merge*interactions};
 }
+// Delayed recovery of discharge headway after real braking. Driven by the
+// measured traffic state, not a clock/random pattern painted on the map.
+function brakingMemory(previous,density,speed,free,dt){
+  const pressure=clamp01((density-.28)/.35)*clamp01((.70-speed/free)/.55);
+  const tau=pressure>previous?12:45;
+  return previous+(pressure-previous)*(1-Math.exp(-dt/tau));
+}
 // Verified OSM tags and local-road entrance nodes (2026-11-15).
 // The coordinate-only legacy snapshot discarded oneway=no and entry labels.
 // These are data corrections, not junction-specific closure rules.
@@ -229,6 +236,7 @@ function createLegacyTrafficScenario(data){
       next:[],incoming:0,incomingAtStart:0,mainlineIncomingAtStart:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
       cellFlowSpeeds:new Float64Array(count).fill(row[1]==="ramp"?75:120),
+      brakeMemory:new Float64Array(count),
       // Two-minute actual throughput per cell, including internal merges.
       cellThroughVph:new Float64Array(count),
       cellMotion:new Float64Array(count),
@@ -1530,6 +1538,8 @@ function createLegacyTrafficScenario(data){
     updateEffects();
     for(const edge of edges){
       const effectList=activeEffects.get(edge.id)||NO_EFFECTS;
+      const closed=effectList.filter(x=>x.event.kind==="closure"||
+        x.event.closedLanes.length===edge.lanes&&x.event.shoulder!=="open");
       let minSpeed=edge.freeKmh;
       const bands=[];
       for(let k=0;k<edge.n;k++){
@@ -1556,16 +1566,26 @@ function createLegacyTrafficScenario(data){
           count>=Math.max(2,edge.lanes*1.2)&&fraction>.23;
         const color=congested?colourForSpeed(measured):"free";
         if(color!=="free"){
+          // Evacuating/trapped stock still exists physically, but the
+          // closed part has no publicly traversable queue or travel ETA.
+          let open=[[a,b]];
+          for(const x of closed)if(x.fromM<b&&x.toM>a)open=open.flatMap(([lo,hi])=>{
+            if(x.fromM>=hi||x.toM<=lo)return [[lo,hi]];
+            return [[lo,Math.min(hi,x.fromM)],[Math.max(lo,x.toM),hi]].filter(([s,e])=>e-s>.05);
+          });
+          for(const [lo,hi] of open){
+          const length=hi-lo,travel=length*.06/Math.max(1,measured);
           const previous=bands.at(-1);
-          if(previous&&previous.color===color&&Math.abs(previous.toM-a)<.001){
+          if(previous&&previous.color===color&&Math.abs(previous.toM-lo)<.001){
             const oldLength=previous.toM-previous.fromM;
-            previous.travelMin+=edge.cellLength*60/1000/Math.max(1,measured);
-            previous.toM=b;
-            previous.speedKmh=(oldLength+edge.cellLength)*60/1000/previous.travelMin;
+            previous.travelMin+=travel;
+            previous.toM=hi;
+            previous.speedKmh=(oldLength+length)*60/1000/previous.travelMin;
             previous.worstKmh=Math.min(previous.worstKmh,measured);
             previous.delayLowerBound ||= measured<1;
-          }else bands.push({fromM:a,toM:b,color,speedKmh:Math.max(1,measured),
-            worstKmh:measured,travelMin:edge.cellLength*60/1000/Math.max(1,measured),delayLowerBound:measured<1});
+          }else bands.push({fromM:lo,toM:hi,color,speedKmh:Math.max(1,measured),
+            worstKmh:measured,travelMin:travel,delayLowerBound:measured<1});
+          }
         }
       }
       edge.speed=minSpeed;
@@ -1776,7 +1796,7 @@ function createLegacyTrafficScenario(data){
     for(const edge of edges){
       edge.stock.fill(0);edge.entryStock.fill(0);edge.divertStock.fill(0);edge.bypassStock.fill(0);edge.routeStock.fill(null);edge.turnStock.fill(null);
       edge.backlog=0;edge.speed=edge.freeKmh;
-      edge.cellFlowSpeeds.fill(edge.freeKmh);
+      edge.cellFlowSpeeds.fill(edge.freeKmh);edge.brakeMemory.fill(0);
       edge.cellThroughVph.fill(0);
       edge.cellCapacityVph.fill(edge.capacityPerLane*edge.lanes);
       edge.lastProfileMinute=-1;edge.profileFactor=0;
@@ -2054,6 +2074,17 @@ function createLegacyTrafficScenario(data){
       }
     }
     return .90;
+  }
+  // Distance is an independent, moderate navigation signal; a long
+  // moving queue need not already add an hour. Neither signal forces 100%.
+  function lengthDiversionShare(metres){
+    if(!Number.isFinite(metres)||metres<3000)return 0;
+    const points=[[3000,.02],[5000,.07],[10000,.22],[20000,.45],[30000,.65]];
+    for(let i=1;i<points.length;i++){
+      const [a,lo]=points[i-1],[b,hi]=points[i];
+      if(metres<=b)return lo+(hi-lo)*(metres-a)/(b-a);
+    }
+    return .65;
   }
   // Long-distance navigation is a separate decision from a local AS exit.
   // Four hours do NOT force every car off; with 10 hours of delay most
@@ -2642,13 +2673,13 @@ function createLegacyTrafficScenario(data){
   // a valid decision even if the NEXT exit is only a short drive away.
   function queueAtExit(road,offset){
     const tolerance=Math.min(road.cellLength,230);
-    if((routingQueueBands.get(road.id)||[]).some(b=>
+    if(road.visualBands.some(b=>
       b.fromM<=offset+.05&&b.toM>=offset-tolerance))return true;
     // A fork exactly at a Way boundary can be at the head of the next
     // numerical cell. Check that real continuation, not a distant AS.
     return road.links.some(t=>Math.abs(t.fromM-offset)<.1&&
       edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref&&
-      (routingQueueBands.get(edges[t.to].id)||[]).some(b=>b.fromM<=t.toM+.05&&b.toM>t.toM));
+      edges[t.to].visualBands.some(b=>b.fromM<=t.toM+.05&&b.toM>t.toM));
   }
   const nextDecisionMemo=new Map();let nextDecisionStamp="";
   function corridorDelayBetween(road,offset,target,targetOffset){
@@ -2682,24 +2713,67 @@ function createLegacyTrafficScenario(data){
     const delay=later?corridorDelayBetween(road,offset,later.road,later.metre):Infinity;
     nextDecisionMemo.set(key,delay);return delay;
   }
+  const lengthMemo=new Map();let lengthStamp="";
+  // Observe the relevant congestion complexes on the actual carriageway. Small
+  // moving gaps in a stop-and-go wave do not reset the navigation signal.
+  // If there is a still freely reachable later AS before the first queue,
+  // let drivers keep going to that AS, rather than divert at every exit.
+  function routingQueueLength(road,offset){
+    if(road.kind!=="mainline"||!jamGroups.length)return 0;
+    const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
+    if(stamp!==lengthStamp){lengthMemo.clear();lengthStamp=stamp;}
+    const key=road.id+":"+Math.round(offset*100);
+    if(lengthMemo.has(key))return lengthMemo.get(key);
+    const later=firstLocalExit(road,offset+.06);
+    let current=road,start=offset,distance=0,lastEnd=-1,length=0,best=0,passedExit=false;
+    const seen=new Set();
+    outer:while(current&&!seen.has(current.id)&&distance<100000){
+      seen.add(current.id);
+      const gate=(activeEffects.get(current.id)||NO_EFFECTS).filter(x=>
+        (x.event.kind==="closure"||x.event.closedLanes.length===current.lanes&&x.event.shoulder!=="open")&&x.toM>start+.05)
+        .reduce((m,x)=>Math.min(m,Math.max(start,x.fromM)),current.lengthM);
+      for(const band of current.visualBands){
+        const lo=Math.max(start,band.fromM),hi=Math.min(gate,band.toM);
+        if(hi<=lo+.05)continue;
+        const at=distance+lo-start;
+        if(lastEnd>=0&&at-lastEnd>500){lastEnd=-1;length=0;}
+        if(lastEnd<0&&(passedExit||later?.road===current&&lo>later.metre+.05))break outer;
+        length+=hi-lo;best=Math.max(best,length);lastEnd=distance+hi-start;
+        if(length>=30000)break outer;
+      }
+      if(gate<current.lengthM-.05)break;
+      if(lastEnd<0&&later?.road===current)break;
+      if(later?.road===current)passedExit=true;
+      distance+=current.lengthM-start;
+      if(lastEnd>=0&&distance-lastEnd>500){
+        if(passedExit)break;
+        lastEnd=-1;length=0;
+      }
+      const next=current.next.filter(t=>edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref&&!blockedMovement(current,t));
+      if(next.length!==1)break;
+      current=edges[next[0].to];start=next[0].toM;
+    }
+    lengthMemo.set(key,best);return best;
+  }
   function localDiversionShare(road,offset,observed,plan){
     const preferred=preferredTransferDelay(road,offset,plan);
+    const distanceShare=lengthDiversionShare(routingQueueLength(road,offset));
     // Once the queue covers this AS, waiting motorists continue making
     // local escape decisions based on the remaining trip delay. Never
     // turn the off-ramp off because the queue has advanced past it.
     if(queueAtExit(road,offset)){
       const remaining=Math.max(Number.isFinite(observed)?observed:0,preferred??0);
-      if(remaining>=VOLUNTARY_START_MIN)return diversionShare(remaining);
+      if(remaining>=VOLUNTARY_START_MIN||distanceShare>0)return Math.max(diversionShare(remaining),distanceShare);
     }
-    if(preferred!==null)return diversionShare(Math.min(preferred,nextDecisionDelay(road,offset)));
-    if(observed<VOLUNTARY_START_MIN||!Number.isFinite(observed)||!closureExitEligible(road,offset,plan))return 0;
+    if(preferred!==null)return Math.max(distanceShare,diversionShare(Math.min(preferred,nextDecisionDelay(road,offset))));
+    if(observed<VOLUNTARY_START_MIN||!Number.isFinite(observed)||!closureExitEligible(road,offset,plan))return distanceShare;
     // At a motorway end (e.g. a feeder joining A3), the next usable exit
     // is often on the receiving motorway. A free approach to that exit
     // cannot justify leaving the feeder 80 km before the actual accident.
     const sameRoad=nextDecisionDelay(road,offset);
     const next=plan?.causeEdgeId&&plan.kind!=="closure"?
       Math.min(sameRoad,directedDelayToCause(road,offset,plan.causeEdgeId,null,true)):sameRoad;
-    return diversionShare(Math.min(observed,next));
+    return Math.max(distanceShare,diversionShare(Math.min(observed,next)));
   }
   // An open signed motorway arm is the primary route to the last useful
   // exit (e.g. A48 -> A3 north -> Ransbach). Only the excess travel time TO
@@ -3730,6 +3804,10 @@ function createLegacyTrafficScenario(data){
         // 5–10% loss is a model assumption, not a measured regional factor.
         const density=stock[k]/Math.max(.001,edge.jamPerCell);
         const restartFactor=density>.60?.90:density>.42?.95:1;
+        // Actual speed/occupancy trigger a transient headway penalty. Low
+        // density clears it; no periodic arbitrary speed oscillations.
+        edge.brakeMemory[k]=edge.kind==="mainline"?brakingMemory(edge.brakeMemory[k],density,
+          edge.cellFlowSpeeds[k],edge.freeKmh,dt):0;
         const inputs=mergeInputs[j][k];
         let entering=k>0?edge.cellThroughVph[k-1]:0,largest=entering;
         for(const input of inputs){
@@ -3743,7 +3821,7 @@ function createLegacyTrafficScenario(data){
         // At very low legal speeds vehicle length consumes more of the
         // available headway. 80 km/h does not halve capacity versus 160.
         const lowSpeed=permitted<60?(permitted/(7+1.45*permitted/3.6))/(60/(7+1.45*60/3.6)):1;
-        const operatingFactor=state.capacityFactor*restartFactor*lowSpeed;
+        const operatingFactor=state.capacityFactor*restartFactor*lowSpeed*(1-.07*edge.brakeMemory[k]);
         const cap=open*edge.capacityPerLane*restriction*operatingFactor*dt/3600;
         const moving=Math.min(1,(permitted*state.speedFactor/3.6)*dt/edge.cellLength);
         // Block receiving at the first closure cell, but let already-present
@@ -4619,7 +4697,8 @@ function createLegacyTrafficScenario(data){
     sourceIds:()=>sources.map(x=>x.id),
     normalizedReversedWays:()=>[...reversedWays],
     migrateLegacyEvent,restoreEvent,
-    diversionShare,wideDiversionShare,
+    diversionShare,wideDiversionShare,lengthDiversionShare,
+    routingQueueLength:(id,offsetM=0)=>byId.has(id)?routingQueueLength(byId.get(id),offsetM):0,
     queueAtExit:(id,offsetM=0)=>byId.has(id)&&queueAtExit(byId.get(id),offsetM),
     routingDelayAhead:(id,offsetM=0,maxDistance=50000)=>byId.has(id)?measuredDelayAhead(byId.get(id),offsetM,maxDistance):null,
     routingDelayToNextExit:(id,offsetM=0)=>byId.has(id)?nextDecisionDelay(byId.get(id),offsetM):null,

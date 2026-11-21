@@ -118,7 +118,7 @@ test("full closure: LAST lawful exit initially, earlier exit as delay grows beyo
     model.advance(12);
     const localDelay=model.routingDelayToNextExit("approach",715);
     maxApproach=Math.max(maxApproach,localDelay);
-    eligible ||= localDelay>=60||model.queueAtExit("approach",715)&&model.routingDelayAhead("approach",715)>=60;
+    eligible ||= localDelay>=60||model.queueAtExit("approach",715)&&model.routingDelayAhead("approach",715)>=60||model.routingQueueLength("approach",715)>=3000;
     const early=model.edgeActivity("early");
     if(!eligible)assert.equal(early.diversionDemandFraction,0,"no early diversion before substantial delay or a queue at the exit");
     activated ||= early.diversionDemandFraction>0&&early.departedVph>0;

@@ -46,17 +46,22 @@ export function motorwayMapEdges(
   return network.edges.filter(e => e.kind !== 'public').map(edge => {
     const measured = known.get(edge.id);
     const speedKmh = measured ?? edge.freeSpeedKmh;
+    const closures=events.filter(e => e.edgeId === edge.id && (e.kind === 'closure'||e.closedLanes.length===edge.lanes) &&
+      activeEvent(e,minute)).map(e => ({fromM:e.fromM,toM:e.toM})).concat(closedByEdge.get(edge.id)??[]);
     return {edgeId:edge.id,kind:edge.kind,geometry:edge.geometry,
       colour:colourAtSpeed(speedKmh),speedKmh,
       source: measured === undefined ? 'initial-free' as const : 'model' as const,
       trafficBands:(slowByEdge.get(edge.id)??[])
         .filter(s=>Number.isFinite(s.fromM)&&Number.isFinite(s.toM)&&
           s.fromM>=0&&s.toM>s.fromM&&s.toM<=edge.lengthM+.01)
-        .map(s=>({fromM:s.fromM,toM:Math.min(edge.lengthM,s.toM),
-          colour:colourAtSpeed(s.speedKmh),speedKmh:s.speedKmh})),
-      closures:events.filter(e => e.edgeId === edge.id && e.kind === 'closure' &&
-        activeEvent(e,minute)).map(e => ({fromM:e.fromM,toM:e.toM}))
-        .concat(closedByEdge.get(edge.id)??[])};
+        .flatMap(s=>{
+          let open=[{fromM:s.fromM,toM:Math.min(edge.lengthM,s.toM)}];
+          for(const block of closures)open=open.flatMap(b=>
+            block.fromM>=b.toM||block.toM<=b.fromM?[b]:[
+              {fromM:b.fromM,toM:Math.min(b.toM,block.fromM)},
+              {fromM:Math.max(b.fromM,block.toM),toM:b.toM}].filter(x=>x.toM-x.fromM>.05));
+          return open.map(b=>({...b,colour:colourAtSpeed(s.speedKmh),speedKmh:s.speedKmh}));
+        }),closures};
   });
 }
 

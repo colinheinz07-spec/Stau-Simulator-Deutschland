@@ -631,15 +631,17 @@ test("prolonged full closure starts at the last exit and moves diversion upstrea
   s.advance(12);
   assert.equal(s.edgeActivity("early").divertedVehiclesOnEdge,0);
   let middleEligible=false,earlyEligible=false;
+  const approachLength=s.edgeActivity("approach").lengthM;
+  const earlyOffset=approachLength*.03/.145,middleOffset=approachLength*.08/.145;
   for(let i=0;i<120;i++){
     s.advance(12);
     const early=s.detourRouteAccounting().find(a=>a.terminalEdgeId==="early");
-    earlyEligible ||= s.routingDelayToNextExit("approach",2144)>=60||s.queueAtExit("approach",2144)&&s.routingDelayAhead("approach",2144)>=60;
-    middleEligible ||= s.routingDelayToNextExit("approach",5718)>=60||s.queueAtExit("approach",5718)&&s.routingDelayAhead("approach",5718)>=60;
+    earlyEligible ||= s.routingDelayToNextExit("approach",earlyOffset)>=60||s.queueAtExit("approach",earlyOffset)&&s.routingDelayAhead("approach",earlyOffset)>=60||s.routingQueueLength("approach",earlyOffset)>=3000;
+    middleEligible ||= s.routingDelayToNextExit("approach",middleOffset)>=60||s.queueAtExit("approach",middleOffset)&&s.routingDelayAhead("approach",middleOffset)>=60||s.routingQueueLength("approach",middleOffset)>=3000;
     if(!earlyEligible)assert.ok((early?.assigned??0)<1,
       "an uncongested approach to the middle exit must not create an early diversion queue");
   }
-  assert.ok(middleEligible,"the queue reached the middle exit or the next approach exceeded 60 minutes");
+  assert.ok(middleEligible,"the queue length or delay justified a diversion at the middle exit");
   for(const id of ["middle","last"]){
     const a=s.edgeActivity(id);
     const account=s.detourRouteAccounting().find(x=>x.terminalEdgeId===id);
@@ -2001,7 +2003,7 @@ test("A48-like motorway approach: a multihour queue diverts at earlier AS onto t
   // The last exit is close enough to the bottleneck that its remaining
   // measured delay stays below the new voluntary threshold.
   assert.ok(blocked.routingDelayAhead("up",length*.875)<60);
-  assert.equal(last?.assigned??0,0);
+  if(blocked.routingQueueLength("up",length*.875)<3000)assert.equal(last?.assigned??0,0);
   assert.ok(blocked.edgeActivity("bad").enteredVph<free.edgeActivity("bad").enteredVph*.2,
     "the physical queue and progressively increasing diversions reduce traffic feeding the incident");
   conservation(free.totals());conservation(blocked.totals());
@@ -2050,7 +2052,7 @@ test("real interchange: A3 Frankfurt accident creates A48 exits AND route over o
     for(const [exit,road] of regional){
       const delay=s.routingDelayToNextExit(road,s.edgeActivity(road).lengthM);
       const offset=s.edgeActivity(road).lengthM;
-      if(delay>=60||s.queueAtExit(road,offset)&&s.routingDelayAhead(road,offset)>=60)eligible.add(exit);
+      if(delay>=60||s.queueAtExit(road,offset)&&s.routingDelayAhead(road,offset)>=60||s.routingQueueLength(road,offset)>=3000)eligible.add(exit);
       if(!eligible.has(exit))assert.ok((accounting.find(a=>a.terminalEdgeId===exit)?.assigned??0)<1,
         "the actual delay to the next exit must justify "+exit+": "+delay);
     }
@@ -2097,7 +2099,7 @@ test("real interchange: complete Frankfurt closure transfers blocked cohort to K
     s.advance(12);
     const delay=s.routingDelayToPreferredTransferExit(feeder,fork);
     assert.ok(delay!==null,"the real open Köln arm is a signed alternative");
-    reachedThreshold ||= delay>=60;
+    reachedThreshold ||= delay>=60||s.routingQueueLength(feeder,fork)>=3000;
     const early=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-26923440");
     if(!reachedThreshold)assert.ok((early?.assigned??0)<1,
       "no Frankfurt diversion at Höhr until delay TO Ransbach reaches one hour: "+delay);

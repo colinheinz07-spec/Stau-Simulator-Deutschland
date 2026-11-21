@@ -10,7 +10,7 @@ import type {RoadEdge,RoadNetwork,SpeedSample,TrafficCellBand} from '../model.js
 import {activeEvent,activeNetworkClosures,type SimEvent,type CorridorClosure}
   from '../04_Ereignisse.js';
 
-type CellEdge={edge:RoadEdge;lengthM:number;vehicles:Float64Array;jamCellVehicles:number;operatingVph:Float64Array};
+type CellEdge={edge:RoadEdge;lengthM:number;vehicles:Float64Array;jamCellVehicles:number;operatingVph:Float64Array;brakeMemory:Float64Array};
 export interface FlowSettings {
   /** Spatial granularity; every original directed OSM edge remains separate. */
   targetCellLengthM?:number;
@@ -41,6 +41,15 @@ export function diversionShare(delay:number):number{
   }
   return .90;
 }
+export function lengthDiversionShare(metres:number):number{
+  if(!Number.isFinite(metres)||metres<3000)return 0;
+  const anchors=[[3000,.02],[5000,.07],[10000,.22],[20000,.45],[30000,.65]] as const;
+  for(let i=1;i<anchors.length;i++){
+    const [start,lo]=anchors[i-1]!,[end,hi]=anchors[i]!;
+    if(metres<=end)return lo+(hi-lo)*(metres-start)/(end-start);
+  }
+  return .65;
+}
 // Same aggregate traffic-interaction coefficients as the offline SPCK
 // solver. Nominal lane capacity is an upper bound, not a free-flow test.
 function operatingState(density:number,merge:number,mainline:boolean){
@@ -61,6 +70,8 @@ export class NetworkFlowEngine {
   private readonly turnStock=new Map<string,Map<string,number>>();
   private readonly localExitMoves=new Map<string,Move[]>();
   private readonly delayCache=new Map<string,number>();
+  private readonly lengthCache=new Map<string,number>();
+  private readonly closedDisplay=new Map<string,Array<{fromM:number;toM:number}>>();
   private delayMinute=-1;
   private readonly openBoundarySinks=new Set<string>();
   private readonly sourceIds:string[]=[];
@@ -86,7 +97,7 @@ export class NetworkFlowEngine {
       const cellLength=edge.lengthM/count;
       this.cells.set(edge.id,{
         edge,lengthM:cellLength,vehicles:new Float64Array(count),
-        operatingVph:new Float64Array(count).fill(edge.lanes*edge.capacityPerLaneVph),
+        operatingVph:new Float64Array(count).fill(edge.lanes*edge.capacityPerLaneVph),brakeMemory:new Float64Array(count),
         jamCellVehicles:130*edge.lanes*cellLength/1000
       });
     }
@@ -194,7 +205,7 @@ export class NetworkFlowEngine {
    * Do not count a queue behind the exit or on an unrelated motorway arm. */
   routingDelayAhead(edgeId:string):number{
     const minute=Math.floor(this.elapsed/60);
-    if(this.delayMinute!==minute){this.delayMinute=minute;this.delayCache.clear();}
+    if(this.delayMinute!==minute){this.delayMinute=minute;this.delayCache.clear();this.lengthCache.clear();}
     const cached=this.delayCache.get(edgeId);
     if(cached!==undefined)return cached;
     let current=this.cells.get(edgeId),delay=0;
@@ -219,6 +230,42 @@ export class NetworkFlowEngine {
     }
     this.delayCache.set(edgeId,delay);
     return delay;
+  }
+  /** Length of the largest relevant congestion complex on the directed approach
+   * to the next AS. Short flowing gaps do not break stop-and-go recognition. */
+  private routingQueueLength(edgeId:string,closed:ReadonlySet<string>,blocked:ReadonlySet<string>):number{
+    const cached=this.lengthCache.get(edgeId);if(cached!==undefined)return cached;
+    let current=this.cells.get(edgeId),length=0,best=0,distance=0,lastEnd=-1,passedExit=false;
+    const seen=new Set<string>([edgeId]);
+    outer:while(current){
+      const next=(this.moves.get(current.edge.id)??[]).filter(m=>{
+        const e=this.cells.get(m.toId)!.edge;
+        return e.kind==='mainline'&&e.motorwayRef===current!.edge.motorwayRef;
+      });
+      if(next.length!==1||seen.has(next[0]!.toId)||blocked.has(current.edge.id+'=>'+next[0]!.toId))break;
+      current=this.cells.get(next[0]!.toId)!;seen.add(current.edge.id);
+      const gate=(this.closedDisplay.get(current.edge.id)??[]).reduce((m,x)=>Math.min(m,x.fromM),current.edge.lengthM);
+      for(let k=0;k<current.vehicles.length;k++){
+        const count=current.vehicles[k]!,metres=Math.min(current.lengthM,gate-k*current.lengthM);
+        if(metres<=0)break outer;
+        const density=clamp01(count/Math.max(.001,current.jamCellVehicles));
+        const speed=current.edge.freeSpeedKmh*operatingState(density,0,true).speedFactor*
+          (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
+        if(count>=Math.max(2,current.edge.lanes*1.2)&&density>.23&&speed<=65){
+          if(lastEnd>=0&&distance-lastEnd>500){lastEnd=-1;length=0;}
+          if(lastEnd<0&&passedExit)break outer;
+          length+=metres;best=Math.max(best,length);lastEnd=distance+metres;
+          if(length>=30000)break outer;
+        }
+        distance+=metres;
+        if(lastEnd>=0&&distance-lastEnd>500){if(passedExit)break outer;lastEnd=-1;length=0;}
+      }
+      if(gate<current.edge.lengthM-.05)break;
+      if(this.localExitMoves.get(current.edge.id)?.some(m=>!closed.has(m.toId)&&!blocked.has(current!.edge.id+'=>'+m.toId))){
+        if(lastEnd<0)break;passedExit=true;
+      }
+    }
+    this.lengthCache.set(edgeId,best);return best;
   }
   /** Excess time to the next real exit, not the full distant queue.
    * This prevents a single incident from triggering every upstream AS. */
@@ -296,9 +343,12 @@ export class NetworkFlowEngine {
           (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
         if(count<Math.max(2,state.edge.lanes*1.2) ||
            fraction<=.23 || speedKmh>65)continue;
-        samples.push({edgeId:state.edge.id,
-          fromM:i*state.lengthM,toM:(i+1)*state.lengthM,
-          speedKmh,atMinute:this.elapsed/60});
+        let open=[{fromM:i*state.lengthM,toM:(i+1)*state.lengthM}];
+        for(const span of this.closedDisplay.get(state.edge.id)??[])open=open.flatMap(b=>
+          span.fromM>=b.toM||span.toM<=b.fromM?[b]:[
+            {fromM:b.fromM,toM:Math.min(b.toM,span.fromM)},
+            {fromM:Math.max(b.fromM,span.toM),toM:b.toM}].filter(x=>x.toM-x.fromM>.05));
+        for(const band of open)samples.push({edgeId:state.edge.id,...band,speedKmh,atMinute:this.elapsed/60});
       }
     }
     return samples;
@@ -321,9 +371,13 @@ export class NetworkFlowEngine {
     }
     const closedByEvent=new Set<string>();
     const closureEdges=new Set(corridor.blockedEdgeIds);
+    this.closedDisplay.clear();
+    for(const span of corridor.spans)this.closedDisplay.set(span.edgeId,[...(this.closedDisplay.get(span.edgeId)??[]),span]);
     for(const [id,eventsOnEdge] of activeById){
       if(eventsOnEdge.some(e=>e.kind==='closure'))closureEdges.add(id);
       const edge=this.cells.get(id)?.edge;
+      if(edge){const spans=eventsOnEdge.filter(e=>e.kind==='closure'||e.closedLanes.length===edge.lanes);
+        if(spans.length)this.closedDisplay.set(id,[...(this.closedDisplay.get(id)??[]),...spans]);}
       if(edge&&eventsOnEdge.some(e=>e.kind==='closure'&&
         e.fromM<=.001&&e.toM>=edge.lengthM-.001))
         closedByEvent.add(id);
@@ -365,7 +419,11 @@ export class NetworkFlowEngine {
         const density=vehicles[i]!/Math.max(.001,jamCellVehicles);
         const dynamic=operatingState(density,i===0?merge:0,edge.kind==='mainline');
         const restart=density>.60?.90:density>.42?.95:1;
-        capacity*=dynamic.capacityFactor*restart;
+        const relativeSpeed=dynamic.speedFactor*(density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
+        const pressure=edge.kind==='mainline'?clamp01((density-.28)/.35)*clamp01((.70-relativeSpeed)/.55):0;
+        const previous=state.brakeMemory[i]!,tau=pressure>previous?12:45;
+        state.brakeMemory[i]=previous+(pressure-previous)*(1-Math.exp(-dt/tau));
+        capacity*=dynamic.capacityFactor*restart*(1-.07*state.brakeMemory[i]!);
         state.operatingVph[i]=forbiddenEntry||corridor.blockedEdgeIds.has(id)||closedByEvent.has(id)?0:capacity;
         const freeTravelFraction=Math.min(1,(edge.freeSpeedKmh*dynamic.speedFactor/3.6)*dt/lengthM);
         if(i===vehicles.length-1)motion.set(id,freeTravelFraction);
@@ -416,8 +474,9 @@ export class NetworkFlowEngine {
           target.vehicles[0]!/Math.max(.001,target.jamCellVehicles)>.65;
       });
       const queueAtExit=lastDensity>.65||nextQueued;
-      const divert=observed>=60?diversionShare(queueAtExit?observed:
-        Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0;
+      const lengthShare=localExits?lengthDiversionShare(this.routingQueueLength(id,closureEdges,corridor.blockedMovementKeys)):0;
+      const divert=Math.max(lengthShare,observed>=60?diversionShare(queueAtExit?observed:
+        Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0);
       if(localExits&&divert>0){
         const openExits=choices.filter(m=>localExits.includes(m));
         if(openExits.length){

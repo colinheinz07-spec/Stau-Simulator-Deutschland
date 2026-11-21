@@ -329,10 +329,10 @@ function drawNetwork(){
       lineCap:"round",lineJoin:"round",interactive:false,smoothFactor:0})
       .addTo(roadsLayer);
   for(const band of closureOverlays){
-    const style={weight:band.line,dashArray:"12 10",lineCap:"butt",
+    const style={weight:band.line,lineCap:"butt",
       interactive:false,smoothFactor:0};
     L.polyline(band.geometry,{...style,color:"#d83c49"}).addTo(closedLayer);
-    L.polyline(band.geometry,{...style,color:"#fff",dashOffset:"11"}).addTo(closedLayer);
+    L.polyline(band.geometry,{...style,weight:band.line*.68,color:"#fff",dashArray:"6 5"}).addTo(closedLayer);
   }
   // Explicit event icons remain distinct from congestion colors.
   drawIncidentPins(rendered,byId);
