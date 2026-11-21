@@ -670,6 +670,7 @@ async function startLegacyCanvas(existingMap=null){
     return [e.clientX-r.left,e.clientY-r.top];
   };
   canvas.addEventListener("pointerdown",e=>{
+    if(e.pointerType==="mouse"&&e.button!==0)return;
     canvas.setPointerCapture(e.pointerId);
     const p=local(e);
     pointers.set(e.pointerId,p);
@@ -715,7 +716,16 @@ async function startLegacyCanvas(existingMap=null){
     if(!pointers.size){tap=null;wasPinching=false;}
   }
   canvas.addEventListener("pointerup",endPointer);
-  canvas.addEventListener("pointercancel",endPointer);
+  // A native gesture interruption is never a tap. Drop stale captures so
+  // the next drag can begin normally even if Safari interrupted a pinch.
+  function cancelPointer(e){
+    if(!pointers.delete(e.pointerId))return;
+    tap=null;
+    wasPinching=pointers.size>0;
+  }
+  canvas.addEventListener("pointercancel",cancelPointer);
+  canvas.addEventListener("lostpointercapture",cancelPointer);
+  window.addEventListener("blur",()=>{pointers.clear();tap=null;wasPinching=false;});
   canvas.addEventListener("wheel",e=>{e.preventDefault();const p=local(e);
     zoomAt(p[0],p[1],e.deltaY<0?.45:-.45);
   },{passive:false});
