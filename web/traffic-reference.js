@@ -78,13 +78,13 @@ const LOCAL_JUNCTION_PROFILES = [
     { road: 'A3', ref: '36', name: 'Neuwied', entryPercent: 7.5, exitPercent: 7, reason: 'Regionale Ziel- und Quellverkehre' },
     { road: 'A3', ref: '37', name: 'Dierdorf', entryPercent: 5, exitPercent: 5, reason: 'Kleinerer ländlicher Anschluss' },
     { road: 'A3', ref: '38', name: 'Ransbach-Baumbach', entryPercent: 8, exitPercent: 8, reason: 'Regional- und Gewerbeverkehr' },
-    { road: 'A3', ref: '40', name: 'Montabaur', entryPercent: 12, exitPercent: 12, reason: 'Größerer regionaler Verteiler' },
+    { road: 'A3', ref: '40', name: 'Montabaur', entryPercent: 17, exitPercent: 17, exitCapacity: 1050, entryCapacity: 1000, reason: 'Größerer regionaler Verteiler' },
     { road: 'A3', ref: '41', name: 'Diez', entryPercent: 6, exitPercent: 5.5, reason: 'Regionale Pendlerzufahrt' },
-    { road: 'A3', ref: '42', name: 'Limburg-Nord', entryPercent: 11, exitPercent: 10, reason: 'Städtischer Anschluss und Bundesstraßen' },
+    { road: 'A3', ref: '42', name: 'Limburg-Nord', entryPercent: 16, exitPercent: 16, exitCapacity: 1100, entryCapacity: 1050, reason: 'Städtischer Anschluss und Bundesstraßen' },
     { road: 'A3', ref: '43', name: 'Limburg-Süd', entryPercent: 7, exitPercent: 8, reason: 'Bahnhof und lokales Einzugsgebiet' },
     // A48: westliche Anschlüsse und Rheinbrücke sind kein einheitlicher Korridor.
-    { road: 'A48', ref: '10', name: 'Koblenz-Nord', entryPercent: 12, exitPercent: 12, reason: 'Großer regionaler Verteiler' },
-    { road: 'A48', ref: '11', name: 'Bendorf/Neuwied', entryPercent: 11, exitPercent: 11, reason: 'Rheinquerung und Umland' },
+    { road: 'A48', ref: '10', name: 'Koblenz-Nord', entryPercent: 23, exitPercent: 23, exitCapacity: 1150, entryCapacity: 1050, reason: 'Großer regionaler Verteiler' },
+    { road: 'A48', ref: '11', name: 'Bendorf/Neuwied', entryPercent: 19, exitPercent: 19, exitCapacity: 1000, entryCapacity: 950, reason: 'Rheinquerung und Umland' },
     { road: 'A48', ref: '12', name: 'Höhr-Grenzhausen', entryPercent: 10, exitPercent: 10, reason: 'Westerwald und Gewerbe' },
     // Köln/Bonn: Flughafen, Pendler und städtische Anschlüsse erhalten eigene Ansätze.
     { road: 'A59', ref: '32', name: 'Rath', entryPercent: 8, exitPercent: 8, reason: 'Städtischer Verteiler' },
@@ -121,6 +121,27 @@ const familyByRef={
   A562:"urban",A565:"urban",A61:"transit"
 };
 const siteProfiles=new Map(LOCAL_JUNCTION_PROFILES.map(p=>[p.road+":"+p.ref,p]));
+// Off-map motorway corridors: verified endpoints in the existing OSM
+// extract, coarse geographic waypoints outside it. Travel times and spare
+// capacity are model assumptions, NOT an imported A61 road geometry.
+const WIDE_CORRIDORS=[
+  {id:"a61-nord",ref:"A3",direction:"A3-koeln",label:"A61 → A4 Richtung Köln",
+    reentryId:"extra-a4-olpe",targetId:"A3-206716768",
+    via:[[50.3555867,7.4793613],[50.88,6.68]],capacityVph:1800},
+  {id:"a61-sued",ref:"A3",direction:"A3-frankfurt",label:"A61 → Raum Wiesbaden Richtung Frankfurt",
+    reentryId:"extra-heumar-4208710",targetId:"A3-3994279",
+    via:[[50.3555867,7.4793613],[49.96,7.90]],capacityVph:1800}
+];
+function junctionProfile(ref,name){
+  const match=String(name||"").match(/\bAS\s*(\d+[a-z]?)\b/i);
+  return match?siteProfiles.get(ref+":"+match[1]):undefined;
+}
+// Model calibration, not measured signal timings: fewer conflicts with
+// cross traffic after the evening peak. Keep the transition continuous.
+function junctionCapacityFactor(hour,entry=false){
+  const relief=smoothInterpolate([[0,1],[4,1],[6,0],[19,0],[21,.45],[23,1],[24,1]],hour);
+  return 1+relief*(entry?.18:.35);
+}
 const legacyShares={"A3:40":12,"A3:43":7,"A3:37":5,"A3:36":7,"A3:38":8,
   "A48:12":10,"A48:11":11,"A48:10":12};
 function smoothInterpolate(points,hour){
@@ -284,13 +305,13 @@ function junctionEntryPeak(row){
   // Apply original AS entrance percentage to the corresponding motorway
   // directional peak; do not insert one whole motorway flow at each ramp.
   const match=(row[5]||"").match(/\bAS\s*(\d+[a-z]?)\b/i);
-  const site=match?siteProfiles.get(descriptor.ref+":"+match[1]):null;
+  const site=junctionProfile(descriptor.ref,row[5]);
   const percentage=site?.entryPercent??legacyShares[descriptor.ref+":"+(match?.[1]||"")]??
     (descriptor.ref==="A59"||descriptor.ref==="A559"?9:6);
   return Math.max(0,descriptor.peakVph*percentage/100);
 }
 const api=Object.freeze({REFERENCE_PEAKS,LOCAL_JUNCTION_PROFILES,
-  referenceForRoad,junctionEntryPeak,profileFactor,motorwayDirection,localClock,
+  referenceForRoad,junctionEntryPeak,junctionProfile,junctionCapacityFactor,profileFactor,motorwayDirection,localClock,WIDE_CORRIDORS,
   calendarStatus,isPublicHoliday,schoolBreaks});
 root.StauTrafficReference=api;
 })(typeof window!=="undefined"?window:globalThis);

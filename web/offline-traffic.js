@@ -434,6 +434,13 @@ function createLegacyTrafficScenario(data){
     e.links=e.links.filter(allowed);e.next=e.next.filter(allowed);
     for(let k=0;k<e.n;k++)e.linksFrom[k]=e.linksFrom[k].filter(allowed);
   }
+  // The current extract cuts the A61 at AK Koblenz: these are existing
+  // directed OSM ramp ends at the network boundary, NOT local AS ramps.
+  const externalA61Inputs=new Set([28527065,28527071,4854594]);
+  const externalA61Outputs=new Set([312834616,210611616,210612014]);
+  const isA61Boundary=edge=>edge?.ref==="A61"&&/AK Koblenz/.test(edge.name);
+  for(const edge of edges)if(isA61Boundary(edge)&&externalA61Outputs.has(edge.osm)&&!edge.links.length)
+    edge.externalDetourDestination=true;
   // Uniform baseline for motorway transfers: distinguish actual directed
   // motorway connections from local exits, using their narrowest lane count.
   // These are fallback destination estimates, not prescribed diversion shares
@@ -445,6 +452,8 @@ function createLegacyTrafficScenario(data){
       const {edge,width:available}=queue[i];
       if((seen.get(edge.index)||0)>=available)continue;
       seen.set(edge.index,available);
+      if(edge.externalDetourDestination&&edge.ref!==originRef)
+        width=Math.max(width,available);
       for(const turn of edge.links){
         const next=edges[turn.to],lanes=Math.min(available,next.lanes);
         if(next.kind==="mainline"){
@@ -459,7 +468,7 @@ function createLegacyTrafficScenario(data){
     if(target.kind!=="ramp")continue;
     const width=transferWidth(target,road.ref);
     if(!width)continue;
-    link.weight=3.5*width;
+    link.weight=(isA61Boundary(target)&&road.ref==="A48"?8:3.5)*width;
     const successor=road.next.find(x=>x.to===link.to);
     if(successor)successor.weight=link.weight;
   }
@@ -676,6 +685,23 @@ function createLegacyTrafficScenario(data){
     // a ref tag, allowing the correct time-of-day demand profile.
     if(!edge.ref)edge.ref=profile.ref;
   }
+  // Disaggregate the existing A48 western boundary demand into physically
+  // mapped A61 feeder ramps. Do not count the same through vehicles twice.
+  const westernBoundary=sources.find(e=>e.kind==="mainline"&&e.directionKey==="A48-dernbach");
+  if(westernBoundary){
+    const feeders=edges.filter(e=>isA61Boundary(e)&&externalA61Inputs.has(e.osm)&&
+      !e.incomingAtStart&&rampMainlineArrivals(e).some(a=>a.road.ref==="A48"&&
+        directedCorridorIds.get(a.road.index)===directedCorridorIds.get(westernBoundary.index)));
+    for(const edge of feeders){
+      // The three mapped feeders converge into the same one-lane 1,500
+      // veh/h ramp. Reserve headroom for the Friday peak multiplier.
+      const peak=Math.min(1300,westernBoundary.referencePeakVph*.55)/Math.max(1,feeders.length);
+      edge.source=true;edge.externalTransferOrigin=true;edge.referencePeakVph=peak;
+      edge.directionKey="A48-dernbach";sources.push(edge);
+    }
+    westernBoundary.referencePeakVph-=feeders.reduce((n,e)=>n+e.referencePeakVph,0);
+    if(feeders.length)westernBoundary.externalTransferOrigin=true;
+  }
   // A motorway does not terminate merely because our displayed OSM extract
   // stops. Keep genuine modelled interchanges internal, but allow an external
   // sink when no mainline can be reached through its final ramps.
@@ -773,6 +799,9 @@ function createLegacyTrafficScenario(data){
   const transferFallbackByApproach=new Map();
   const localSourceDetours=new Map();
   const localSourceCandidates=new Map(),localSourceChoiceCache=new Map();
+  const wideSourceOptions=new Map(),wideRoutesByEvent=new Map(),wideBookings=new Map();
+  const wideAccounting=new Map(),wideDecisionCache=new Map();
+  let wideDecisionStamp="";
   let localSourceChoiceMinute=-1;
   let detourPlansKey=null;
   let warmedUp=false;
@@ -1732,6 +1761,8 @@ function createLegacyTrafficScenario(data){
     terminalDetours.clear();exitDetours.clear();fallbackExits.clear();fallbackTransfers.clear();dynamicTransferChoices.clear();
     designatedApproach.clear();designatedTransfers.clear();detourPlansKey=null;
     localSourceDetours.clear();transferFallbackByApproach.clear();localSourceCandidates.clear();localSourceChoiceCache.clear();localSourceChoiceMinute=-1;
+    wideSourceOptions.clear();wideRoutesByEvent.clear();wideBookings.clear();wideAccounting.clear();
+    wideDecisionCache.clear();wideDecisionStamp="";
     routeChanges.clear();routeAccounting.clear();routePaths.clear();routePathCosts.clear();motorwayAlternatives.clear();
     delayCache.clear();delayCacheMinute=-1;directedDelayCache.clear();directedDelayStamp="";
     entranceDelayCache.clear();entranceDelayStamp="";
@@ -1815,7 +1846,8 @@ function createLegacyTrafficScenario(data){
   function sourceFactor(edge,time){
     const minute=Math.floor(time/60000);
     if(edge.lastProfileMinute!==minute){
-      const factor=key=>traffic.profileFactor(key,edge.ref,time,rowById.get(edge.id)[4],edge.kind);
+      const factor=key=>traffic.profileFactor(key,edge.externalTransferOrigin?"A48":edge.ref,
+        time,rowById.get(edge.id)[4],edge.externalTransferOrigin?"mainline":edge.kind);
       edge.profileFactor=edge.localProfiles?.length>1?edge.localProfiles.reduce((sum,p)=>
         sum+p.peak*factor(p.key),0)/edge.referencePeakVph:factor(edge.directionKey);
       edge.lastProfileMinute=minute;
@@ -2020,6 +2052,18 @@ function createLegacyTrafficScenario(data){
         const t=(delayMin-start)/(end-start);
         return lower+(upper-lower)*t;
       }
+    }
+    return .90;
+  }
+  // Long-distance navigation is a separate decision from a local AS exit.
+  // Four hours do NOT force every car off; with 10 hours of delay most
+  // through traffic prefers a genuinely available regional alternative.
+  function wideDiversionShare(delay){
+    if(!(delay>=180))return 0;
+    const anchors=[[180,.08],[240,.25],[360,.55],[480,.78],[600,.90]];
+    for(let i=1;i<anchors.length;i++){
+      const [lo,a]=anchors[i-1],[hi,b]=anchors[i];
+      if(delay<=hi)return a+(b-a)*(delay-lo)/(hi-lo);
     }
     return .90;
   }
@@ -2239,7 +2283,7 @@ function createLegacyTrafficScenario(data){
   }
   function exitTravelMinutes(link,plan){
     const first=edges[link.to],terminal=edges[plan.terminal];
-    const service=localDischargeVph(terminal)||700;
+    const service=localDischargeRate(terminal);
     const waiting=[...terminal.stock].reduce((a,b)=>a+b,0)*60/service;
     const approach=first===terminal?0:[...first.stock].reduce((a,b)=>a+b,0)*60/service;
     return plan.durationS/60+waiting+approach+returnWaitMinutes(plan.reentry)+
@@ -2258,7 +2302,9 @@ function createLegacyTrafficScenario(data){
       }
     }
     const ramp=edges[reentry];
-    return ((returnWaitCache.get(reentry)||0)+ramp.backlog)*60/(localAdmissionVph(ramp)||700);
+    if(ramp.externalDetourDestination)return 0;
+    const service=Math.min(localAdmissionRate(ramp),ramp.capacityPerLane*ramp.lanes);
+    return ((returnWaitCache.get(reentry)||0)+ramp.backlog)*60/service;
   }
   // The threshold uses actual motorway delay, not net savings after
   // subtracting the local journey time or waiting at the return ramp.
@@ -2354,6 +2400,64 @@ function createLegacyTrafficScenario(data){
       Math.sin(dlon/2)**2)));
     return Math.max(300,180+straight*1.55/(40/3.6));
   }
+  function wideTravelSeconds(origin,route,atOrigin=false){
+    const start=rowById.get(origin.id)[4].at(atOrigin?0:-1);
+    const end=rowById.get(route.reentry.id)[4][0];
+    // Coarse motorway corridor estimate: not a drawn or audited local road
+    // itinerary. The real mapped destination is independently validated.
+    return Math.max(1800,600+lengthM([start,...route.via,end])*1.25/(85/3.6));
+  }
+  function wideRouteOpen(route){
+    if((activeEffects.get(route.reentry.id)||NO_EFFECTS).some(x=>x.event.kind==="closure"))return false;
+    if((activeEffects.get(route.target.id)||NO_EFFECTS).some(x=>x.event.kind==="closure"))return false;
+    const path=cohortPath(route.target.index);
+    const stamp=routePathEpoch+":"+routePathMinute;
+    if(route.validStamp===stamp)return route.valid;
+    const seen=new Set(),used=new Map();let edge=route.reentry.index,k=0,valid=false,rejoined=false;
+    while(true){
+      const segment=edges[edge],key=cellKey(edge,k);
+      if(seen.has(key))break;seen.add(key);
+      if(segment.kind==="mainline"){
+        const corridor=directedCorridorIds.get(edge);
+        if(used.has(segment.ref)&&used.get(segment.ref)!==corridor||rejoined&&segment.ref!==route.ref)break;
+        used.set(segment.ref,corridor);
+        if(segment.ref===route.ref){
+          if(corridor!==directedCorridorIds.get(route.target.index)||!route.downstream.has(segment.id)||
+            segment.id===route.endEdgeId&&k*segment.cellLength<route.endOffset-.05)break;
+          rejoined=true;
+        }
+      }
+      const next=path.get(key);
+      if(!next){valid=rejoined&&edge===route.target.index&&k===route.target.n-1;break;}
+      edge=next.to;k=next.toCell;
+    }
+    route.validStamp=stamp;route.valid=valid;return valid;
+  }
+  function wideSourceChoice(source){
+    const options=wideSourceOptions.get(source.index);
+    if(!options?.length)return null;
+    const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
+    if(wideDecisionStamp!==stamp){wideDecisionCache.clear();wideDecisionStamp=stamp;}
+    if(wideDecisionCache.has(source.index))return wideDecisionCache.get(source.index);
+    let best=null;
+    for(const {route,road,metre} of options){
+      const delay=measuredDelayAhead(road,metre,Infinity),willing=wideDiversionShare(delay);
+      if(!willing||!wideRouteOpen(route))continue;
+      const durationS=wideTravelSeconds(source,route,true);
+      const waiting=Math.max(0,(wideBookings.get(route.id)||0)-elapsed)/60;
+      const cost=durationS/60+waiting+returnWaitMinutes(route.reentry.index);
+      if(cost+30>=delay)continue;
+      // Not every arrival is a long-distance trip. Existing local trips
+      // and drivers preferring the original road remain represented.
+      const fraction=willing*(source.kind==="mainline"?.85:.55);
+      if(best&&best.saving>=delay-cost)continue;
+      best={fraction,saving:delay-cost,plan:{terminal:source.index,
+        reentry:route.reentry.index,durationS,kind:"wide",closureId:route.closureId,
+        entries:[{reentry:route.reentry.index,distanceM:0,weight:1,durationS,
+          closureId:route.closureId,wideRoute:route}]}};
+    }
+    wideDecisionCache.set(source.index,best);return best;
+  }
   // The aggregate cell-flow engine does not yet know individual OD pairs.
   // Without that information, ALL vehicles continuing on this motorway must
   // return at the FIRST lawful on-ramp after the obstruction. Later ramps are
@@ -2373,7 +2477,7 @@ function createLegacyTrafficScenario(data){
       if(ramp.kind!=="ramp"||seen.has(ramp.id))continue;
       seen.add(ramp.id);
       if(!ramp.links.length&&boundaryExit[ramp.index]&&
-        !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(junctionLabel(ramp))){
+        !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(ramp.name)){
         end=ramp;break;
       }
       for(const turn of ramp.links)
@@ -2383,15 +2487,34 @@ function createLegacyTrafficScenario(data){
   }
   function localDischargeVph(edge){
     return edge?.kind==="ramp"&&localTerminal(edge)===edge?
-      700*(localRoundaboutBoundaries.has(edge.index)?1:Math.min(2,edge.lanes)):null;
+      junctionCapacity(edge,false,localRoundaboutBoundaries.has(edge.index)?1:Math.min(2,edge.lanes)):null;
+  }
+  function junctionCapacity(edge,entry,lanes){
+    const profile=traffic.junctionProfile(edge.ref,edge.name);
+    return ((entry?profile?.entryCapacity:profile?.exitCapacity)??700)*lanes;
+  }
+  let capacityMinute=-1,exitRelief=1,entryRelief=1;
+  function capacityRelief(entry){
+    const minute=Math.floor(clockMs()/60000);
+    if(capacityMinute!==minute){
+      capacityMinute=minute;
+      const {hour}=traffic.localClock(clockMs());
+      exitRelief=traffic.junctionCapacityFactor(hour);
+      entryRelief=traffic.junctionCapacityFactor(hour,true);
+    }
+    return entry?entryRelief:exitRelief;
+  }
+  function effectiveJunctionCapacity(edge,nominal,entry=false){
+    return Math.min(edge.capacityPerLane*edge.lanes,nominal*capacityRelief(entry));
   }
   // Nominal capacity is an upper bound, not a constant discharge. At an
   // overloaded local junction, conflicting traffic produces alternating
   // gaps and short blocked periods. This is a deterministic model estimate,
   // not measured signal timing or a surveyed priority-control plan.
   function localDischargeRate(edge){
-    const nominal=localDischargeVph(edge);
-    if(nominal===null)return Infinity;
+    const dayCapacity=localDischargeVph(edge);
+    if(dayCapacity===null)return Infinity;
+    const nominal=effectiveJunctionCapacity(edge,dayCapacity);
     // Exactly the same junction physics with or without an event. A past
     // detour must not permanently change a ramp's discharge.
     if(edge.stock[edge.n-1]<edge.jamPerCell*.32)return nominal;
@@ -2414,13 +2537,36 @@ function createLegacyTrafficScenario(data){
     if(members.length<2)continue;
     const key=members.map(e=>e.index).sort((a,b)=>a-b).join(":");
     if(localExitGroupKeys.has(key))continue;
-    localExitGroupKeys.add(key);localExitGroups.push({members,capacity:700*Math.min(2,first.lanes)});
+    localExitGroupKeys.add(key);localExitGroups.push({members,first,capacity:junctionCapacity(terminal,false,Math.min(2,first.lanes))});
   }
   // The public-road junction meters demand into an actual entrance. A
   // queue for that junction belongs outside the motorway model, not on a
   // freely draining on-ramp. Detoured and ordinary traffic share this limit.
   function localAdmissionVph(edge){
-    return edge?.kind==="ramp"&&isLocalOrigin(edge)?700*Math.min(2,edge.lanes):Infinity;
+    return edge?.kind==="ramp"&&isLocalOrigin(edge)?junctionCapacity(edge,true,Math.min(2,edge.lanes)):Infinity;
+  }
+  function localAdmissionRate(edge){
+    const nominal=localAdmissionVph(edge);
+    return Number.isFinite(nominal)?effectiveJunctionCapacity(edge,nominal,true):Infinity;
+  }
+  // Each calibrated local exit percentage applies to the complete physical
+  // exit movement, not to every parallel OSM branch of that exit.
+  for(const main of edges)if(main.kind==="mainline")for(const links of main.linksFrom){
+    const groups=new Map();
+    for(const turn of links){
+      const terminal=localTerminal(edges[turn.to]);
+      if(!terminal)continue;
+      const profile=traffic.junctionProfile(terminal.ref,terminal.name);
+      if(!profile?.exitCapacity)continue;
+      const key=profile.road+":"+profile.ref;
+      const group=groups.get(key)||{profile,turns:[]};
+      group.turns.push(turn);groups.set(key,group);
+    }
+    for(const {profile,turns} of groups.values())for(const turn of turns){
+      turn.weight=20*profile.exitPercent/(100-profile.exitPercent)/turns.length;
+      const next=main.next.find(t=>t.to===turn.to&&t.fromCell===turn.fromCell);
+      if(next)next.weight=turn.weight;
+    }
   }
   // Actual exit-ramp storage, not a nominal motorway-sized cell for every
   // tiny OSM Way. Retain a two-tick numerical minimum on micro-connectors;
@@ -2489,7 +2635,20 @@ function createLegacyTrafficScenario(data){
   }
   function closureExitEligible(road,offset,plan){
     const affected=plan?.kind==="closure"||!!closureFingerprint&&Number.isFinite(closureDistanceAhead(road,offset,Infinity));
-    return !affected||!hasClearLaterExit(road,offset);
+    return !affected||queueAtExit(road,offset)||!hasClearLaterExit(road,offset);
+  }
+  // The physical queue must have reached the actual fork, not merely
+  // exist many kilometres downstream. Once reached, an open exit remains
+  // a valid decision even if the NEXT exit is only a short drive away.
+  function queueAtExit(road,offset){
+    const tolerance=Math.min(road.cellLength,230);
+    if((routingQueueBands.get(road.id)||[]).some(b=>
+      b.fromM<=offset+.05&&b.toM>=offset-tolerance))return true;
+    // A fork exactly at a Way boundary can be at the head of the next
+    // numerical cell. Check that real continuation, not a distant AS.
+    return road.links.some(t=>Math.abs(t.fromM-offset)<.1&&
+      edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref&&
+      (routingQueueBands.get(edges[t.to].id)||[]).some(b=>b.fromM<=t.toM+.05&&b.toM>t.toM));
   }
   const nextDecisionMemo=new Map();let nextDecisionStamp="";
   function corridorDelayBetween(road,offset,target,targetOffset){
@@ -2525,6 +2684,13 @@ function createLegacyTrafficScenario(data){
   }
   function localDiversionShare(road,offset,observed,plan){
     const preferred=preferredTransferDelay(road,offset,plan);
+    // Once the queue covers this AS, waiting motorists continue making
+    // local escape decisions based on the remaining trip delay. Never
+    // turn the off-ramp off because the queue has advanced past it.
+    if(queueAtExit(road,offset)){
+      const remaining=Math.max(Number.isFinite(observed)?observed:0,preferred??0);
+      if(remaining>=VOLUNTARY_START_MIN)return diversionShare(remaining);
+    }
     if(preferred!==null)return diversionShare(Math.min(preferred,nextDecisionDelay(road,offset)));
     if(observed<VOLUNTARY_START_MIN||!Number.isFinite(observed)||!closureExitEligible(road,offset,plan))return 0;
     // At a motorway end (e.g. a feeder joining A3), the next usable exit
@@ -2682,6 +2848,7 @@ function createLegacyTrafficScenario(data){
     detourPlansKey=key;exitDetours.clear();fallbackExits.clear();fallbackTransfers.clear();dynamicTransferChoices.clear();motorwayAlternatives.clear();
     designatedApproach.clear();designatedTransfers.clear();localSourceDetours.clear();transferFallbackByApproach.clear();
     localSourceCandidates.clear();localSourceChoiceCache.clear();
+    wideSourceOptions.clear();wideRoutesByEvent.clear();wideDecisionCache.clear();wideDecisionStamp="";
     const routePlans=new Map();mandatoryMemo.clear();
     for(const obstacle of obstacles){
       const last=obstacle.spans.at(-1),endEdge=byId.get(last.edgeId);
@@ -2704,7 +2871,7 @@ function createLegacyTrafficScenario(data){
       }
       const optionsByJunction=new Map();
       for(const ramp of edges){
-        if(ramp.kind!=="ramp"||!isLocalEntrance(ramp)||
+        if(ramp.kind!=="ramp"||!(isLocalEntrance(ramp)||ramp.ref==="A48"&&ramp.source&&isLocalOrigin(ramp))||
           (activeEffects.get(ramp.id)||NO_EFFECTS).some(e=>
             e.event.kind==="closure"))continue;
         // If the apparent entrance is itself fed by motorway mainlines,
@@ -2724,6 +2891,13 @@ function createLegacyTrafficScenario(data){
         const arrivals=rampMainlineArrivals(ramp,(from,turn)=>
           !blockedMovement(from,turn)&&!(activeEffects.get(from.id)||NO_EFFECTS)
             .some(s=>s.event.kind==="closure"&&s.fromM<turn.fromM-.05));
+        // A direction-specific physical source allows returning traffic to
+        // share admission with normal traffic instead of joining halfway
+        // down a ramp chain. Mixed-direction collectors stay on the signed
+        // direction-specific entrance.
+        const rooted=ramp.ref==="A48"&&ramp.source&&arrivals.length>0&&
+          arrivals.every(a=>downstream.has(a.road.id));
+        if(ramp.ref==="A48"&&!isLocalEntrance(ramp)&&!rooted)continue;
         for(const {road,metre} of arrivals){
           const base=downstream.get(road.id);
           if(road.kind!=="mainline"||road.ref!==endEdge.ref||base===undefined)continue;
@@ -2742,13 +2916,47 @@ function createLegacyTrafficScenario(data){
             .replace(/\s+/g," ").trim().toLowerCase();
           const key=endEdge.ref+":"+junction;
           const previous=optionsByJunction.get(key);
-          if(!previous||distance<previous.distance)
-            optionsByJunction.set(key,{ramp,distance,junction});
+          if(!previous||distance<previous.distance-.05||
+            Math.abs(distance-previous.distance)<=.05&&rooted&&!previous.rooted)
+            optionsByJunction.set(key,{ramp,distance,junction,rooted});
         }
       }
       const candidates=[...optionsByJunction.values()]
         .sort((a,b)=>a.distance-b.distance||a.ramp.id.localeCompare(b.ramp.id))
         .slice(0,3);
+      // When the A48 ends at the cropped A61, a local bypass can still
+      // reach that external motorway destination. Verify it on the actual
+      // directed graph beyond the event; never invent an A61 on-ramp.
+      if(!candidates.length&&endEdge.ref==="A48"){
+        const outbound=[],seen=new Set();
+        for(const [id,base] of downstream){
+          const road=byId.get(id);
+          for(const turn of road.links)if(edges[turn.to].kind==="ramp"&&
+            (road!==endEdge||turn.fromM>=last.toM-.05))
+            outbound.push({edge:edges[turn.to],distance:base+turn.fromM});
+        }
+        // The westbound A61 fork lies just BEFORE the final cropped
+        // A48 Way. The closure includes that fork; the missing outside
+        // road can still reach A61 without crossing the closed junction.
+        for(const span of obstacle.spans){
+          const road=byId.get(span.edgeId);
+          for(const turn of road?.links||[])if(isA61Boundary(edges[turn.to])&&
+            turn.fromM>=span.fromM-.05&&turn.fromM<=span.toM+.05)
+            outbound.push({edge:edges[turn.to],distance:0});
+        }
+        for(let i=0;i<outbound.length;i++){
+          const item=outbound[i],edge=item.edge;
+          if(seen.has(edge.index))continue;seen.add(edge.index);
+          if(edge.externalDetourDestination){
+            candidates.push({ramp:edge,distance:item.distance,junction:"A61 · Netzgrenze AK Koblenz"});
+            continue;
+          }
+          if(!isA61Boundary(edge))continue;
+          for(const t of edge.links)if(edges[t.to].kind==="ramp")
+            outbound.push({edge:edges[t.to],distance:item.distance+edge.lengthM});
+        }
+        candidates.sort((a,b)=>a.distance-b.distance);
+      }
       // Reverse the actual directed network from this particular obstacle.
       // An exit must be able to approach THIS event, not merely any closure
       // anywhere on another motorway. Offsets matter at interior forks.
@@ -2775,6 +2983,32 @@ function createLegacyTrafficScenario(data){
               !blockedMovement(from,turn)))
               approachAt(from.id,turn.fromM);
         }
+      }
+      // Configured off-map corridors work for ANY event on their covered
+      // directed motorway, not a hard-coded AS-to-AS closure. Both endpoints
+      // must exist and the return must be after this event on the same
+      // carriageway. The mapped portion is checked again at booking/arrival.
+      const configured=data.wideCorridors||
+        (data===global.STAU_LEGACY_GEOMETRY?traffic.WIDE_CORRIDORS:[]);
+      if(obstacle.spec.kind!=="congestion")for(const config of configured||[]){
+        const reentry=byId.get(config.reentryId),target=byId.get(config.targetId);
+        if(config.ref!==endEdge.ref||!reentry||!target||!downstream.has(target.id)||
+          directedCorridorIds.get(target.index)!==directedCorridorIds.get(endEdge.index)||
+          target===endEdge&&last.toM>=target.lengthM-.05)continue;
+        const route={...config,reentry,target,downstream,endEdgeId:endEdge.id,endOffset:last.toM,closureId:obstacle.spec.id};
+        const affectedSources=[];
+        for(const source of sources){
+          const arrivals=source.kind==="mainline"?[{road:source,metre:0}]:rampMainlineArrivals(source);
+          if(!arrivals.length||!arrivals.every(a=>a.road.ref===config.ref&&
+            directedCorridorIds.get(a.road.index)===directedCorridorIds.get(target.index)&&
+            (approach.get(a.road.id)??-1)>=a.metre-.05))continue;
+          if(source.kind==="mainline"&&config.direction&&source.directionKey!==config.direction)continue;
+          const a=arrivals[0],list=wideSourceOptions.get(source.index)||[];
+          list.push({route,...a});wideSourceOptions.set(source.index,list);
+          affectedSources.push(source.index);
+        }
+        if(affectedSources.length)wideRoutesByEvent.set(obstacle.spec.id,
+          [...(wideRoutesByEvent.get(obstacle.spec.id)||[]),route]);
       }
       // Also consider purely motorway alternatives. A transfer is a real
       // candidate only if it can reach the SAME downstream destination on
@@ -2984,7 +3218,7 @@ function createLegacyTrafficScenario(data){
             seen.add(ramp.id);
             const successors=ramp.links.map(link=>edges[link.to]);
             if(!successors.length&&boundaryExit[ramp.index]&&
-              !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(junctionLabel(ramp))){
+              !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(ramp.name)){
               const weights=destinationWeights(candidates.length);
               const entries=candidates.map((candidate,i)=>({
                 reentry:candidate.ramp.index,
@@ -3012,6 +3246,25 @@ function createLegacyTrafficScenario(data){
           }
         }
       }
+      // A61 feeder drivers cannot enter a fully closed A48. Their trips
+      // start outside the map and bypass directly to the first open AS.
+      if(obstacle.spec.kind==="closure"&&!candidates[0].ramp.externalDetourDestination)
+        for(const source of sources){
+          if(!source.externalTransferOrigin)continue;
+          const arrivals=source.kind==="mainline"?[{road:source,metre:0}]:rampMainlineArrivals(source);
+          const affected=arrivals.some(a=>a.road.ref===endEdge.ref&&
+            (approach.get(a.road.id)??-1)>=a.metre-.05);
+          const open=source.kind==="mainline"?arrivals:rampMainlineArrivals(source,(a,b)=>!blockedMovement(a,b));
+          const closedAtEntry=a=>(activeEffects.get(a.road.id)||NO_EFFECTS).some(s=>
+            s.event.kind==="closure"&&closureMatches(s,obstacle.spec.id)&&
+            a.metre>=s.fromM-.05&&a.metre<s.toM-.05);
+          if(!affected||open.some(a=>!closedAtEntry(a)))continue;
+          const candidate=candidates[0],durationS=estimatedOutsideSeconds(source,candidate.ramp,true);
+          localSourceDetours.set(source.index,{fraction:1,plan:{terminal:source.index,
+            reentry:candidate.ramp.index,durationS,closureId:obstacle.spec.id,kind:"closure",
+            entries:[{reentry:candidate.ramp.index,distanceM:candidate.distance,weight:1,
+              durationS,junction:candidate.junction,closureId:obstacle.spec.id}]}});
+        }
     }
     for(const [first,routes] of routePlans){
       // The explicitly signed destination must not be overwritten by a
@@ -3063,6 +3316,8 @@ function createLegacyTrafficScenario(data){
   }
   function localSourceChoice(source){
     if(localSourceDetours.has(source.index))return localSourceDetours.get(source.index);
+    const wide=wideSourceChoice(source);
+    if(wide)return wide;
     if(source.kind!=="ramp"||!isLocalOrigin(source))return null;
     const minute=Math.floor(elapsed/60);
     if(localSourceChoiceMinute!==minute){localSourceChoiceCache.clear();localSourceChoiceMinute=minute;}
@@ -3076,7 +3331,7 @@ function createLegacyTrafficScenario(data){
       // use an A48 exit and later enter A3 Frankfurt. Reject no destinations
       // merely because the original motorway number ends at an AD.
       const returnRoads=rampMainlineArrivals(edges[plan.reentry],(a,b)=>!blockedMovement(a,b));
-      if(!returnRoads.length)continue;
+      if(!returnRoads.length&&!edges[plan.reentry].externalDetourDestination)continue;
       const candidate=candidatesByDestination.get(plan.closureId)||{best:null,share:0};
       const willingness=localDiversionShare(arrival.road,arrival.metre,observedPlanDelay(arrival.road,arrival.metre,plan),plan);
       if(willingness>0){
@@ -3378,7 +3633,7 @@ function createLegacyTrafficScenario(data){
       const cost=e=>e.durationS/60+returnWaitMinutes(e.reentry)+
         // Compare at the same downstream point on the original motorway.
         Math.max(0,commonDistance-e.distanceM)*.06/100;
-      const isOpen=e=>!(activeEffects.get(edges[e.reentry].id)||NO_EFFECTS)
+      const isOpen=e=>edges[e.reentry].externalDetourDestination||!(activeEffects.get(edges[e.reentry].id)||NO_EFFECTS)
         .some(x=>x.event.kind==="closure");
       let entry=isOpen(primary)?primary:choices.find(isOpen)||primary;
       for(const option of choices){
@@ -3387,13 +3642,25 @@ function createLegacyTrafficScenario(data){
       }
       const vehicles=amount*primary.weight;
       if(vehicles<=0)continue;
-      const readyAt=Math.ceil((elapsed+dt+entry.durationS)/30)*30;
-      const key=entry.reentry+":"+readyAt+":"+primary.closureId;
+      let departure=elapsed+dt;
+      const wide=entry.wideRoute;
+      if(wide){
+        // Shared finite residual service for the regional route. If several
+        // boundary sources choose it, they queue outside the mapped network
+        // instead of all appearing on the A4/A3 at the same instant.
+        const service=wide.capacityVph*capacityRelief(false);
+        departure=Math.max(departure,wideBookings.get(wide.id)||0)+vehicles/service*3600;
+        wideBookings.set(wide.id,departure);
+        const stats=wideAccounting.get(wide.id)||{label:wide.label,assigned:0,returned:0};
+        stats.assigned+=vehicles;wideAccounting.set(wide.id,stats);
+      }
+      const readyAt=Math.ceil((departure+entry.durationS)/30)*30;
+      const key=entry.reentry+":"+readyAt+":"+primary.closureId+(wide?":"+wide.id:"");
       const existing=detourBatchIndex.get(key);
       if(existing)existing.vehicles+=vehicles;
       else{
         const trip={reentry:entry.reentry,readyAt,vehicles,key,closureId:primary.closureId,
-          durationS:entry.durationS,alternatives:choices};
+          durationS:entry.durationS,alternatives:choices,wide};
         detourTrips.push(trip);detourBatchIndex.set(key,trip);
       }
     }
@@ -3508,9 +3775,9 @@ function createLegacyTrafficScenario(data){
     // This fixes mid-Way motorway junctions without creating new road geometry.
     const laneReceive=new Map(),throughStart=new Map(),throughSent=new Map();
     const terminalBudgets=new Map();
-    for(const {members,capacity} of localExitGroups){
+    for(const {members,capacity,first} of localExitGroups){
       const demands=members.map(e=>Math.min(send[e.index][e.n-1],localDischargeRate(e)*dt/3600));
-      const total=demands.reduce((a,b)=>a+b,0),limit=capacity*dt/3600;
+      const total=demands.reduce((a,b)=>a+b,0),limit=effectiveJunctionCapacity(first,capacity)*dt/3600;
       if(total<=limit)continue;
       members.forEach((e,i)=>terminalBudgets.set(e.index,Math.min(terminalBudgets.get(e.index)??Infinity,demands[i]*limit/total)));
     }
@@ -3938,8 +4205,7 @@ function createLegacyTrafficScenario(data){
         }
         if(outsideWeight){
           // A local public-road junction has a finite discharge rate. A
-          // single lane with conflicting traffic is modelled at 700 veh/h
-          // (calibration assumption), not at freeway ramp capacity.
+          // public-road service varies with the site and time of day.
           const localCapacity=terminalBudget(edge);
           const leaving=Math.min(ordinaryTurns?ordinaryOutside:available*outsideWeight/sum,localCapacity);
           if(ordinaryTurns)edge.turnStock[k].set("outside",Math.max(0,(edge.turnStock[k].get("outside")||0)-leaving));
@@ -4076,6 +4342,14 @@ function createLegacyTrafficScenario(data){
       const trip=detourTrips[i];
       if(trip.readyAt>elapsed+dt)continue;
       const road=edges[trip.reentry];
+      if(trip.wide&&!wideRouteOpen(trip.wide))continue;
+      if(road.externalDetourDestination){
+        // Arrival beyond the mapped network: finish the same conserved
+        // trip outside it, without spawning a car on a nonexistent road.
+        outsideVehicles-=trip.vehicles;exited+=trip.vehicles;
+        detourTrips.splice(i--,1);detourBatchIndex.delete(trip.key);
+        continue;
+      }
       const closed=(activeEffects.get(road.id)||NO_EFFECTS).some(x=>
         x.event.kind==="closure"&&x.gate&&x.fromM<road.cellLength)||
         entranceDiversionShare(road)>=1;
@@ -4100,11 +4374,18 @@ function createLegacyTrafficScenario(data){
       }
       const current=(accepted.get(cellKey(road.index,0))||0)+(localAdmissionUsed.get(road.index)||0);
       const room=Math.max(0,receive[road.index][0]-current);
-      const remaining=Math.max(0,localAdmissionVph(road)*dt/3600-(localAdmissionUsed.get(road.index)||0));
+      const remaining=Math.max(0,localAdmissionRate(road)*dt/3600-(localAdmissionUsed.get(road.index)||0));
       const admitted=Math.min(trip.vehicles,room,remaining);
       if(admitted<=0)continue;
       delta[road.index][0]+=admitted;
-      if(road.kind==="ramp")entryDelta[road.index][0]+=admitted;
+      if(trip.wide){
+        // The return can be on another motorway (A4). Keep its intended
+        // downstream A3 carriageway, not the A4's normal destination split.
+        const target=trip.wide.target.index;
+        divertDelta[road.index][0]+=admitted;
+        changeRoute(road.index,0,target,admitted);accountRoute(target).assigned+=admitted;
+        wideAccounting.get(trip.wide.id).returned+=admitted;
+      }else if(road.kind==="ramp")entryDelta[road.index][0]+=admitted;
       localAdmissionUsed.set(road.index,(localAdmissionUsed.get(road.index)||0)+admitted);
       enteredStep[road.index]+=admitted;
       outsideVehicles-=admitted;returnedVehicles+=admitted;
@@ -4126,15 +4407,17 @@ function createLegacyTrafficScenario(data){
       const entryClosed=(activeEffects.get(edge.id)||NO_EFFECTS)
         .some(x=>x.event.kind==="closure"&&x.gate&&x.fromM<edge.cellLength)||
         (edge.kind==="ramp"&&anyClosureActive&&!entryReach.has(edge.index));
-      const offered=entryClosed?0:edge.referencePeakVph*(demandPercent/100)*
+      const sourceDetour=localSourceChoice(edge);
+      const wide=sourceDetour?.plan?.kind==="wide";
+      const offered=entryClosed&&!(edge.externalTransferOrigin&&sourceDetour?.plan)&&!wide?0:edge.referencePeakVph*(demandPercent/100)*
         sourceFactor(edge,clockMs())*dt/3600;
       generated+=offered;
-      const sourceDetour=localSourceChoice(edge);
       // A source backlog is made of real waiting cars, too. Once every
       // driver chooses the bypass, don't quietly inject that old backlog
       // into the disturbed motorway behind the closed route choice.
       const diverted=sourceDetour?
-        offered*sourceDetour.fraction+(sourceDetour.fraction===1?edge.backlog:0):0;
+        offered*sourceDetour.fraction+(sourceDetour.fraction===1?edge.backlog:
+          wide?edge.backlog*sourceDetour.fraction*Math.min(1,dt/60):0):0;
       if(diverted>0){
         if(sourceDetour.plan)enqueueDetour(sourceDetour.plan,diverted,dt);
         else exited+=diverted; // outside the mapped motorway, no invented return
@@ -4142,14 +4425,14 @@ function createLegacyTrafficScenario(data){
       const available=edge.backlog+offered-diverted;
       const admitted=entryClosed?0:Math.min(available,
         Math.max(0,receive[j][0]-(accepted.get(cellKey(j,0))||0)-(localAdmissionUsed.get(j)||0)),
-        Math.max(0,localAdmissionVph(edge)*dt/3600-(localAdmissionUsed.get(j)||0)));
+        Math.max(0,localAdmissionRate(edge)*dt/3600-(localAdmissionUsed.get(j)||0)));
       delta[j][0]+=admitted;
       if(edge.kind==="ramp")entryDelta[j][0]+=admitted;
       enteredStep[j]+=admitted;
       // The closed-destination share was already sent to the local bypass.
       // Remaining local entrants are explicitly bound to an open route;
       // do not classify them as Frankfurt-bound a second time at the AD.
-      if(sourceDetour)bypassDelta[j][0]+=admitted;
+      if(sourceDetour&&!wide)bypassDelta[j][0]+=admitted;
       edge.backlog=Math.max(0,available-admitted);
     }
     const alpha=1-Math.exp(-dt/120);
@@ -4299,6 +4582,7 @@ function createLegacyTrafficScenario(data){
         sectionSpeedKmh=Math.min(sectionSpeedKmh,effect.event.speedKmh);
     return {reachable:reachable.has(id),vehicles:count,
       turnCommitments:[...turnCommitments].map(([targetEdgeId,vehicles])=>({targetEdgeId,vehicles})),
+      localEntryVehiclesOnEdge:edge.entryStock.reduce((sum,x)=>sum+x,0),
       divertedVehiclesOnEdge:edge.divertStock.reduce((sum,x)=>sum+x,0),
       sectionVph:edge.cellThroughVph[at],sectionSpeedKmh,boundaryExit:boundaryExit[edge.index],
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
@@ -4308,7 +4592,9 @@ function createLegacyTrafficScenario(data){
       localDischargeVph:localDischargeVph(edge),
       localExitTerminalId:localTerminal(edge)?.id??null,
       localDischargeRateVph:finite(localDischargeRate(edge))?localDischargeRate(edge):null,
+      localDischargeLimitVph:localDischargeVph(edge)===null?null:effectiveJunctionCapacity(edge,localDischargeVph(edge)),
       localAdmissionVph:finite(localAdmissionVph(edge))?localAdmissionVph(edge):null,
+      localAdmissionRateVph:finite(localAdmissionRate(edge))?localAdmissionRate(edge):null,
       localSourceDetourFraction:localSourceChoice(edge)?.fraction??0,
       diversionDemandFraction:diversionDecisions.get(localTerminal(edge)?.index??edge.index)??0,
       lengthM:edge.lengthM,storageVehicles:edge.n*edge.jamPerCell,
@@ -4333,8 +4619,9 @@ function createLegacyTrafficScenario(data){
     sourceIds:()=>sources.map(x=>x.id),
     normalizedReversedWays:()=>[...reversedWays],
     migrateLegacyEvent,restoreEvent,
-    diversionShare,
-    routingDelayAhead:(id,offsetM=0)=>byId.has(id)?measuredDelayAhead(byId.get(id),offsetM):null,
+    diversionShare,wideDiversionShare,
+    queueAtExit:(id,offsetM=0)=>byId.has(id)&&queueAtExit(byId.get(id),offsetM),
+    routingDelayAhead:(id,offsetM=0,maxDistance=50000)=>byId.has(id)?measuredDelayAhead(byId.get(id),offsetM,maxDistance):null,
     routingDelayToNextExit:(id,offsetM=0)=>byId.has(id)?nextDecisionDelay(byId.get(id),offsetM):null,
     routingDelayToPreferredTransferExit:(id,offsetM=0)=>byId.has(id)?preferredTransferDelay(byId.get(id),offsetM,null):null,
     detourPlans:()=>[...exitDetours.values(),...fallbackExits.values()].map(plan=>({
@@ -4350,13 +4637,23 @@ function createLegacyTrafficScenario(data){
       updateEffects();buildDetourPlans();
       return [...new Set([...exitDetours.values(),...fallbackExits.values()].flatMap(plan=>
         plan.entries.filter(e=>e.closureId===eventId&&e.weight>0)
-          .map(e=>edges[e.reentry].name)))];
+          .map(e=>edges[e.reentry].externalDetourDestination?"A61 · Netzgrenze AK Koblenz":edges[e.reentry].name)))];
     },
     designatedDetourRoutes:eventId=>{
       updateEffects();buildDetourPlans();
       return [...fallbackExits.values()].filter(p=>p.designated&&p.closureId===eventId)
         .map(p=>p.feederRef+" → "+p.transferRef+" → "+junctionLabel(edges[p.terminal])+" → "+junctionLabel(edges[p.reentry]));
     },
+    wideDetourRoutes:eventId=>{
+      updateEffects();buildDetourPlans();
+      return (wideRoutesByEvent.get(eventId)||[]).filter(wideRouteOpen).map(route=>({
+        id:route.id,label:route.label,reentryEdgeId:route.reentry.id,targetEdgeId:route.target.id,
+        assigned:wideAccounting.get(route.id)?.assigned||0,returned:wideAccounting.get(route.id)?.returned||0,
+        waitingMin:Math.max(0,(wideBookings.get(route.id)||0)-elapsed)/60
+      }));
+    },
+    wideDetourAccounting:()=>[...wideAccounting].map(([id,x])=>({id,...x,
+      outside:detourTrips.filter(t=>t.wide?.id===id).reduce((n,t)=>n+t.vehicles,0)})),
     detourRouteAccounting:()=>[...routeAccounting].map(([terminal,stats])=>{
       const remaining=edges.reduce((n,edge)=>n+edge.routeStock.reduce((v,cell)=>v+(cell?.get(terminal)||0),0),0);
       return {terminalEdgeId:edges[terminal].id,assigned:stats.assigned,arrived:stats.arrived,

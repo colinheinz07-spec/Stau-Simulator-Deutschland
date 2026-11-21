@@ -631,8 +631,8 @@ async function startLegacyCanvas(existingMap=null){
   function updateCapacityDetails(activity){
     const capacity=$("detail-capacity"),storage=$("detail-storage");
     if(capacity)capacity.textContent=activity?
-      format(Math.round(activity.localDischargeRateVph??activity.operatingCapacityVph??activity.capacityVph))+" Kfz/h · aktuell (max. "+
-      format(Math.round(activity.localDischargeVph??activity.capacityVph))+")":"—";
+      format(Math.round(activity.localDischargeRateVph??activity.localAdmissionRateVph??activity.operatingCapacityVph??activity.capacityVph))+" Kfz/h · aktuell (max. "+
+      format(Math.round(activity.localDischargeLimitVph??activity.localAdmissionRateVph??activity.capacityVph))+")":"—";
     if(storage)storage.textContent=activity&&Number.isFinite(activity.storageVehicles)?
       format(Math.round(activity.vehicles))+" / "+format(Math.ceil(activity.storageVehicles))+" Kfz":"—";
   }

@@ -252,6 +252,12 @@ function createOfflineEventEditor(options){
         for(const route of scenario.designatedDetourRoutes?.(ev.id)||[]){
           const via=document.createElement("small");via.textContent="Vorgegebene Modellumleitung: "+route;box.append(via);
         }
+        for(const route of scenario.wideDetourRoutes?.(ev.id)||[]){
+          const via=document.createElement("small");
+          via.textContent="Großraumumleitung (außerhalb Kartennetz, Modell): "+route.label+
+            (route.assigned>0?" · "+Math.round(route.assigned)+" Kfz umgeleitet":" · bei sehr hoher Verzögerung");
+          box.append(via);
+        }
       }else box.append(name,info);
       const buttons=document.createElement("div");buttons.className="event-list-actions";
       const edit=document.createElement("button"),del=document.createElement("button");

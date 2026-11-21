@@ -215,7 +215,7 @@ export class NetworkFlowEngine {
           (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45))));
         delay+=Math.max(0,current.lengthM*.06*(1/speed-1/free));
       }
-      if(delay>=240)break; // willingness is saturated; no distance/hop limit
+      if(delay>=480)break; // voluntary willingness is saturated
     }
     this.delayCache.set(edgeId,delay);
     return delay;
@@ -407,8 +407,17 @@ export class NetworkFlowEngine {
       // continuation a through-lane turn weight, not the ramp's capacity.
       let outsideWeight=this.openBoundarySinks.has(id)?20:0;
       const localExits=this.localExitMoves.get(id);
+      const exitIds=new Set(localExits?.map(m=>m.toId));
       const observed=localExits?this.routingDelayAhead(id):0;
-      const divert=observed>=60?diversionShare(Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0;
+      const lastDensity=state.vehicles[state.vehicles.length-1]!/Math.max(.001,state.jamCellVehicles);
+      const nextQueued=choices.some(m=>{
+        const target=this.cells.get(m.toId)!;
+        return target.edge.kind==='mainline'&&target.edge.motorwayRef===state.edge.motorwayRef&&
+          target.vehicles[0]!/Math.max(.001,target.jamCellVehicles)>.65;
+      });
+      const queueAtExit=lastDensity>.65||nextQueued;
+      const divert=observed>=60?diversionShare(queueAtExit?observed:
+        Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0;
       if(localExits&&divert>0){
         const openExits=choices.filter(m=>localExits.includes(m));
         if(openExits.length){
@@ -437,8 +446,27 @@ export class NetworkFlowEngine {
         for(const t of turns){
           const amount=(pending.get(t.id)??0)+fresh*t.weight/weightSum;
           pending.set(t.id,amount);
-          planned.set(t.id,Math.min(amount*(motion.get(id)??0),t.receiving));
         }
+        // Cars already waiting for the through movement may decide to
+        // leave at this still-open AS. Preserve finite real receiving room.
+        if(localExits&&divert>0){
+          const donors=choices.filter(m=>!exitIds.has(m.toId)&&
+            this.cells.get(m.toId)!.edge.kind==='mainline'&&
+            this.cells.get(m.toId)!.edge.motorwayRef===state.edge.motorwayRef);
+          const moving=Math.max(.001,motion.get(id)??0);
+          for(const exit of turns.filter(t=>exitIds.has(t.id))){
+            let room=Math.max(0,exit.receiving/moving-(pending.get(exit.id)??0));
+            for(const donor of donors){
+              const receiving=turns.find(t=>t.id===donor.toId)?.receiving??0;
+              const queued=pending.get(donor.toId)??0;
+              const shifted=Math.min(room,Math.max(0,queued-receiving/moving)*Math.min(1,divert*dt/60));
+              if(shifted<=0)continue;
+              pending.set(donor.toId,queued-shifted);
+              pending.set(exit.id,(pending.get(exit.id)??0)+shifted);room-=shifted;
+            }
+          }
+        }
+        for(const t of turns)planned.set(t.id,Math.min((pending.get(t.id)??0)*(motion.get(id)??0),t.receiving));
         this.turnStock.set(id,pending);
         const demand=[...planned.values()].reduce((a,b)=>a+b,0);
         if(demand>available)for(const [key,value] of planned)planned.set(key,value*available/demand);
