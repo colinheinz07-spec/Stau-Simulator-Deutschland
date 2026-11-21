@@ -59,3 +59,16 @@
 .map-status{max-height:44px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 
 .jam-card-delay.is-unknown{font-size:12px;max-width:92px;white-space:normal;text-align:right;line-height:1.25;color:#b2d0dd}
+
+/* App controls are not selectable text: prevent iOS long-press selection and
+   link previews from taking over map gestures. Keep native form editing. */
+.app-shell,.app-shell *,.detail-drawer,.detail-drawer *{
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+}
+.app-shell :is(input,textarea,select,[contenteditable="true"],[contenteditable="true"] *),
+.detail-drawer :is(input,textarea,select,[contenteditable="true"],[contenteditable="true"] *){
+  -webkit-user-select:auto;user-select:auto;-webkit-touch-callout:default;
+}
+.map-pane,#map{touch-action:none}
+.map-center-message{pointer-events:none}
+button,.map-toolbar a,.settings-nav a{touch-action:manipulation}
