@@ -68,15 +68,17 @@ test('voluntary decisions stop as the primary queue clears, while committed ramp
   s.removeEvent('acc');s.setDemandPercent(55);
   let recovered=0,residualRamp=0;
   const speeds=[];
-  for(let i=0;i<100;i++){
+  for(let i=0;i<240;i++){
     s.advance(12);
     const exit=s.edgeActivity('out');
-    const primary=s.jamSummaries().find(g=>g.endEdgeId==='bad')?.routingDelayMin??0;
-    if(primary<60&&exit.divertedVehiclesOnEdge>1){
+    // The head moves upstream after reopening. Its old edge can already be
+    // free while kilometres of real remaining through congestion persist.
+    const remaining=s.routingDelayToDestination('up',offset,'bad');
+    if(remaining<59&&exit.divertedVehiclesOnEdge>1){
       residualRamp++;assert.equal(exit.diversionDemandFraction,0);
       assert.ok(s.edgeActivity('up').voluntaryWaitingVehicles<1e-6,'waiting drivers who have not yet exited resume the original road');
     }
-    if(primary<6){recovered++;assert.equal(exit.diversionDemandFraction,0);}
+    if(remaining<6){recovered++;assert.equal(exit.diversionDemandFraction,0);}
     speeds.push(s.edgeActivity('long',12000).sectionSpeedKmh);
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
   }
@@ -113,7 +115,7 @@ test('several close exits independently divert from a severe remaining queue, in
       if(s.routingDelayAhead('up',at)<59)assert.equal(a.diversionDemandFraction,0);
       if(a.diversionDemandFraction>0.04&&a.divertedVehiclesOnEdge>1){
         used.add(j);
-        if(!s.queueAtExit('up',at)&&s.routingDelayToNextExit('up',at)<10&&s.routingQueueLength('up',at)>=500)priorToTail=true;
+        if(!s.queueAtExit('up',at)&&s.routingDelayToNextExit('up',at)<10&&s.routingDelayAhead('up',at)>=60)priorToTail=true;
       }
     }
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);

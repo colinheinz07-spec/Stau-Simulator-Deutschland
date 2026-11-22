@@ -380,7 +380,12 @@ async function startLegacyCanvas(existingMap=null){
       // Very short approach queues remain in the detailed traffic list,
       // but don't obscure nearby closure/access symbols on a phone.
       if(width<480&&group.lengthM<750&&eventTargets.some(e=>e.closure&&Math.hypot(e.x-x,e.y-y)<65))continue;
-      const info=window.StauDashboard?.describeJam(group,jamRoadInfo(group.edgeId,group.offsetM,group))??{
+      const roadInfo=jamRoadInfo(group.edgeId,group.offsetM,group);
+      // Entrance queues remain visible in traffic colours and the detailed
+      // list; do not cover the motorway map with ordinary merge callouts.
+      // Real motorway-to-motorway transfers retain their own labels.
+      if(roadInfo?.rampRole==="Auffahrt")continue;
+      const info=window.StauDashboard?.describeJam(group,roadInfo)??{
         ref:road.ref||"Autobahn",state:"Stau",color:"#e34f56",
         length:(group.lengthM/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1})+" km",
         delay:Number.isFinite(group.delayMin)?"+"+Math.max(1,Math.round(group.delayMin))+" min":"Zeit offen"};
@@ -645,7 +650,7 @@ async function startLegacyCanvas(existingMap=null){
   function updateCapacityDetails(activity){
     const capacity=$("detail-capacity"),storage=$("detail-storage");
     if(capacity)capacity.textContent=activity?
-      format(Math.round(activity.localDischargeRateVph??activity.localAdmissionRateVph??activity.operatingCapacityVph??activity.capacityVph))+" Kfz/h · aktuell (max. "+
+      format(Math.round(activity.availableCapacityVph??activity.localDischargeRateVph??activity.localAdmissionRateVph??activity.operatingCapacityVph??activity.capacityVph))+" Kfz/h · aufnehmbar (max. "+
       format(Math.round(activity.localDischargeLimitVph??activity.localAdmissionRateVph??activity.capacityVph))+")":"—";
     if(storage)storage.textContent=activity&&Number.isFinite(activity.storageVehicles)?
       format(Math.round(activity.vehicles))+" / "+format(Math.ceil(activity.storageVehicles))+" Kfz":"—";

@@ -73,7 +73,7 @@
     if(!list||!count)return;
     const sorted=[...groups].sort((a,b)=>b.delayMin-a.delayMin);
     count.textContent=String(sorted.length);
-    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),g.startEdgeId,g.endEdgeId,g.startOffsetM,g.endOffsetM,Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),g.delayLowerBound,Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2]));
+    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),g.startEdgeId,g.endEdgeId,g.startOffsetM,g.endOffsetM,Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),g.delayLowerBound,Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2,Math.round(g.routeDelayMin??0),g.routeDelayLowerBound]));
     if(list.dataset.signature===key)return;
     list.dataset.signature=key;
     list.replaceChildren();
@@ -94,6 +94,8 @@
       header.append(el("span","jam-card-icon","▰"),heading,el("strong","jam-card-delay"+(g.delayMin===null?" is-unknown":""),view.delay));
       const metrics=el("div","jam-card-metrics");
       metrics.append(el("span","jam-card-state",view.state),el("span","",view.length),el("span","","Ø Geschwindigkeit: "+view.speed));
+      if(Number.isFinite(g.routeDelayMin))metrics.append(el("span","","Auf der Weiterfahrt: "+
+        (g.routeDelayLowerBound?"≥ ":"")+"+"+Math.round(g.routeDelayMin)+" min gesamt"));
       card.append(header,metrics);
       card.addEventListener("click",()=>focus(g.edgeId,g.offsetM));
       list.append(card);
