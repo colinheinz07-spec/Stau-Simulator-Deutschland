@@ -350,3 +350,10 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - Ein kleiner Rückstau an einer Ausfahrt darf die weiter vorne liegende, wesentlich längere Staugruppe nicht aus der Routenentscheidung verdrängen. Abfahrten im bereits entstandenen Rückstau bleiben offen und kapazitätsbegrenzt.
 - Verzögerte Brems- und Anfahrreaktionen verändern die reale Zellkapazität zustandsabhängig (max. 7 % zusätzliche Headway-Reduktion; Erholung mit 45 Sekunden Zeitkonstante). Bremswellen und Stauabbau ergeben sich aus Fahrzeugbewegungen und verfügbarem Platz, nicht aus zufälligen Kartenfarben.
 - Staufarben und Stauwerte zählen ausschließlich befahrbare Teilintervalle; eingeschlossene Fahrzeuge bleiben im Bestand. Sehr kurze Rückstaus an Sperrsymbolen bleiben in der Verkehrsliste, ohne die mobile Karte mit zusätzlichen Labels zu verdecken.
+
+
+## Version 0.10.30 – Dauerhafte Fahrstreifen statt Baustellenquerschnitt
+
+- Die reguläre Anzahl der durchgehenden Fahrstreifen ist eine Netzeigenschaft. Eine Baustelle oder Sperrung verändert ausschließlich die verfügbaren Fahrstreifen und die jeweilige Betriebskapazität, niemals die Grundzahl.
+- Auf 16 belegten A3-Ways zwischen Siebengebirge und Kreuz Bonn/Siegburg wird der temporäre zweistreifige Bestand auf die regulären drei Fahrstreifen zurückgeführt. Auf 39 belegten Ways der A3/A4 ab der gemeinsamen Hauptfahrbahn am AD Heumar bis zur nördlichen Netzgrenze hinter AK Köln-Ost gelten vier Fahrstreifen je Richtung. Die getrennten Verbindungsrampen bleiben unverändert.
+- Nachweise: [Autobahn GmbH, Bauabschnitt IV](https://www.autobahn.de/planen-bauen/projekt/bauabschnitt-iv-grundhafte-erneuerung-zwischen-koeln-heumar-und-bad-honnef); [Autobahn GmbH, Ausbau A3 Richtung Leverkusen](https://www.autobahn.de/planen-bauen/projekt/a-bei-lev-ausbau-der-a1-und-a3-in-leverkusen); [DEGES, Umbau Heumar](https://www.deges.de/projekte/projekt/a-3-a-4-a-59-umbau-des-autobahndreieck-heumar/). Die konkreten Korrekturen sind über vorhandene OSM-Way-IDs in Offline-Modell und OSM-Importer dokumentiert; bei aktualisiertem dauerhaftem Ausbau erneut prüfen.
