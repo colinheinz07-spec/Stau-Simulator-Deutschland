@@ -55,13 +55,15 @@ test('voluntary decisions stop as the primary queue clears, while committed ramp
   s.setSimulationStart(Date.parse('2026-11-13T13:00:00Z'));s.setDemandPercent(160);s.warmStart();
   s.setEvent({...incident,closedLanes:[0,1]});
   const offset=s.edgeActivity('up').lengthM*.4;
-  let diverted=0;
+  let diverted=0,waiting=0;
   for(let i=0;i<100;i++){
     s.advance(12);
     if(s.routingDelayAhead('up',offset)<59)assert.equal(s.edgeActivity('out').diversionDemandFraction,0);
     diverted=Math.max(diverted,s.edgeActivity('out').diversionDemandFraction);
+    waiting=Math.max(waiting,s.edgeActivity('up').voluntaryWaitingVehicles);
   }
   assert.ok(diverted>0&&diverted<1);
+  assert.ok(waiting>10,'voluntarily queued vehicles are still physically waiting on the motorway');
   assert.ok(s.totals().detouredVehicles>100);
   s.removeEvent('acc');s.setDemandPercent(55);
   let recovered=0,residualRamp=0;
@@ -72,6 +74,7 @@ test('voluntary decisions stop as the primary queue clears, while committed ramp
     const primary=s.jamSummaries().find(g=>g.endEdgeId==='bad')?.routingDelayMin??0;
     if(primary<60&&exit.divertedVehiclesOnEdge>1){
       residualRamp++;assert.equal(exit.diversionDemandFraction,0);
+      assert.ok(s.edgeActivity('up').voluntaryWaitingVehicles<1e-6,'waiting drivers who have not yet exited resume the original road');
     }
     if(primary<6){recovered++;assert.equal(exit.diversionDemandFraction,0);}
     speeds.push(s.edgeActivity('long',12000).sectionSpeedKmh);

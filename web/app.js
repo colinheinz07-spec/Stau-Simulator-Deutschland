@@ -271,7 +271,7 @@ function drawJamCallouts(rendered,byId,showMap=true){
     const label=document.createElement("span");label.className="map-jam-label";
     label.style.setProperty("--severity",view?.color||"#e34f56");
     const title=document.createElement("strong");
-    title.textContent=(view?.ref||edge.motorwayRef||"Autobahn")+(view?.destination?" → "+view.destination:"")+" · "+
+    title.textContent=(view?.mapTitle||(view?.ref||edge.motorwayRef||"Autobahn")+(view?.destination?" → "+view.destination:""))+" · "+
       (view?.severity==="slow"?"Stockend":view?.severity==="standstill"?"Stillstand":"Stau");
     const metrics=document.createElement("span");
     metrics.textContent=(view?.length||((g.lengthM/1000).toFixed(1)+" km"))+" · "+

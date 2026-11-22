@@ -384,7 +384,7 @@ async function startLegacyCanvas(existingMap=null){
         ref:road.ref||"Autobahn",state:"Stau",color:"#e34f56",
         length:(group.lengthM/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1})+" km",
         delay:Number.isFinite(group.delayMin)?"+"+Math.max(1,Math.round(group.delayMin))+" min":"Zeit offen"};
-      const title=info.ref+(info.destination?" → "+info.destination:"")+" · "+(info.severity==="slow"?"Stockend":info.severity==="standstill"?"Stillstand":"Stau");
+      const title=(info.mapTitle||info.ref+(info.destination?" → "+info.destination:""))+" · "+(info.severity==="slow"?"Stockend":info.severity==="standstill"?"Stillstand":"Stau");
       const metrics=info.length+"  ·  "+(info.shortDelay??info.delay);
       context.font="700 12px system-ui,Arial,sans-serif";
       const w=Math.min(width-18,Math.max(114,context.measureText(metrics).width+19,
