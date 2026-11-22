@@ -34,6 +34,13 @@ const BASELINE_THREE_WAYS=new Set([
   88004925,37264385,992482669,992482670,25404897,620672136,840177199,
   840177198,992482934,992482935,140575546,840177202,840177203,423654340,
   992483386,223297045,
+  // A3 Leverkusen-Zentrum–AK Leverkusen: existing three through lanes.
+  992501211,500374477,133846788,29696292,29233698,206721974,34565957,
+  34565958,832594830,4008345,302370861,34565943,206716762,206716772,
+  992501341,992501342,35554439,126500245,206721982,499192038,29696291,
+  29696290,499192039,133850006,206721976,1074482670,34565955,832672648,
+  22609448,22609434,34565946,34565945,126500248,227223960,206719014,
+  569020230,332121766,
 ]);
 const BASELINE_FOUR_WAYS=new Set([
   132614469,886737506,886737507,753473363,753473366,312198258,132624375,
@@ -42,6 +49,17 @@ const BASELINE_FOUR_WAYS=new Set([
   208913376,132624378,132624384,992498533,206716755,206716768,258495161,
   258495159,281773996,26164974,281774006,208913378,132624381,132624387,
   132624371,132624372,315647743,315647744,
+  // Completed eight-lane A3 expansion south of Leverkusen-Zentrum.
+  133860389,495004583,495004582,53051821,202731875,59398939,281773974,
+  26493583,560386360,560386359,26493553,59398945,439070856,439070854,
+  281773979,992499532,37264395,254185383,992499592,29233696,281773984,
+  992499787,992499788,832600847,494773279,558843792,558843791,335801527,
+  133846420,133846790,992500089,992500090,328957437,133846419,992501210,
+  1021881383,992498579,992498822,992498821,132624386,133849585,133749201,
+  281773982,26493584,26493574,560386357,560386358,26493445,281773977,
+  439070855,126500247,992499195,992499194,133749600,281773993,281773987,
+  499192035,335801530,335801529,558843797,558843793,29550391,133749601,
+  499192037,992500497,298236763,133849780,992501240,992501239,
 ]);
 const verifiedBaselineLanes=way=>BASELINE_FOUR_WAYS.has(way)?4:BASELINE_THREE_WAYS.has(way)?3:null;
 const isLegacyService=row=>row[1]==="ramp"&&(REST.test(row[5]||"")||
@@ -68,8 +86,14 @@ function trafficOperatingState(density,merge=0,mainline=true){
   const interactions=clamp01((density-.055)/.19);
   const pressure=clamp01((density-.10)/.23);
   return {speedFactor:1-.24*interactions,
-    capacityFactor:1-.10*interactions-.08*pressure-.20*merge*interactions};
+    // Limit duplicated headway losses. Density, restart and braking memory
+    // together must not multiply a moving queue into an artificial roadblock.
+    capacityFactor:1-.065*interactions-.045*pressure-.17*merge*interactions};
 }
+// Empirical backward jam-front velocities on German freeways are around
+// 15–20 km/h. Retain the free-flow receiving capacity; only dense traffic
+// approaches the calibrated 18 km/h congested branch.
+const receivingWave=(density,mainline)=>mainline?22-4*clamp01((density-.25)/.30):22;
 // Delayed recovery of discharge headway after real braking. Driven by the
 // measured traffic state, not a clock/random pattern painted on the map.
 function brakingMemory(previous,density,speed,free,dt){
@@ -266,6 +290,9 @@ function createLegacyTrafficScenario(data){
       next:[],incoming:0,incomingAtStart:0,mainlineIncomingAtStart:0,source:false,backlog:0,
       mode:"none",speed:row[1]==="ramp"?75:120,visualBands:[],
       cellFlowSpeeds:new Float64Array(count).fill(row[1]==="ramp"?75:120),
+      // Rolling vehicle-distance / vehicle-time speed. A momentary stopped
+      // pulse is not the traversal speed of an entire stop-and-go queue.
+      cellSpeedMovement:new Float64Array(count),cellSpeedExposure:new Float64Array(count),
       brakeMemory:new Float64Array(count),
       // Two-minute actual throughput per cell, including internal merges.
       cellThroughVph:new Float64Array(count),
@@ -312,7 +339,12 @@ function createLegacyTrafficScenario(data){
     // cropped ramp roundabout or silently join the opposite carriageway.
     if(from.kind==="ramp"&&to.kind==="ramp"&&
       fromM>=from.lengthM-.01&&toM<.01&&mappedLocalBoundaries.has(from.to)&&
-      /\bAS\b/.test(from.name)&&/\bAS\b/.test(to.name))return;
+      /\bAS\b/.test(from.name)&&/\bAS\b/.test(to.name)&&
+      // A signed entrance can include a slip lane touching the public
+      // road before the common on-ramp (e.g. Dellbrück B506). Preserve the
+      // real directed entrance chain, but not a local exit-to-entry loop.
+      !(/· Auffahrt\b/.test(from.name)&&/· Auffahrt\b/.test(to.name)&&
+        from.name.split(" · ")[0]===to.name.split(" · ")[0]))return;
     // Compact OSM data often omits the public road between the two ramps.
     // A same-AS exit ending exactly at an entrance is a local-road boundary,
     // not an automatic U-shaped path that rejoins the congested motorway.
@@ -354,7 +386,10 @@ function createLegacyTrafficScenario(data){
     for(const dest of last){
       if(dest.edge===edge.index||dest.last)continue;
       const downstream=edges[dest.edge];
-      if(dest.first||downstream.kind==="mainline")
+      if(dest.first||downstream.kind==="mainline"||
+        edge.kind==="ramp"&&downstream.kind==="ramp"&&
+        /· Auffahrt\b/.test(edge.name)&&/· Auffahrt\b/.test(downstream.name)&&
+        edge.name.split(" · ")[0]===downstream.name.split(" · ")[0])
         connect(edge,downstream,edge.lengthM,dest.metre);
     }
     // Off-ramp starts can attach to an interior vertex of the upstream Way.
@@ -1026,9 +1061,12 @@ function createLegacyTrafficScenario(data){
     const found=[];
     if(edge.ref&&edge.kind==="mainline")for(const junction of data.junctions||[]){
       if(junction[0]!==edge.ref||!Array.isArray(junction[3]))continue;
-      const p=junction[3],cos=Math.cos(p[0]*rad)*R*rad,lat=R*rad;
       let best=Infinity,offset=0;
-      for(let i=1;i<points.length;i++){
+      // Some interchanges have directional signposts almost a kilometre
+      // apart. Use the original signed OSM nodes for each carriageway;
+      // the single map label remains unchanged.
+      for(const p of junction[4]||[junction[3]])for(let i=1;i<points.length;i++){
+        const cos=Math.cos(p[0]*rad)*R*rad,lat=R*rad;
         const a=points[i-1],b=points[i];
         const x=(b[1]-a[1])*cos,y=(b[0]-a[0])*lat;
         const qx=(p[1]-a[1])*cos,qy=(p[0]-a[0])*lat;
@@ -1587,6 +1625,34 @@ function createLegacyTrafficScenario(data){
     const share=fork.shares.get(fork.throughKey);
     return {count:(pending.get(fork.throughKey)||0)+fresh*share,storage:edge.jamPerCell*share};
   }
+  function measuredCellSpeed(edge,k,count,storage){
+    if(count<.8)return edge.freeKmh;
+    const density=clamp01(count/Math.max(.001,storage));
+    // Before receiving a meaningful flow sample (e.g. initial inventory),
+    // use the density-based estimate. Once measured, do not apply a second
+    // independent density slowdown to already observed vehicle movements.
+    if(edge.cellSpeedExposure[k]<.8)return edge.freeKmh*
+      trafficOperatingState(density,0,edge.kind==="mainline").speedFactor*
+      (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
+    return Math.max(0,Math.min(edge.freeKmh,edge.cellFlowSpeeds[k]));
+  }
+  // A full-width accident can have exactly the same zero discharge as a
+  // planned closure. Do not publish a fictitious multihour ETA based on
+  // the numerical 1 km/h lower bound while there is no physical opening.
+  function fullBlockAhead(road,offset,maxDistance=2000){
+    const visited=new Set();let distance=0;
+    while(road&&!visited.has(road.id)&&distance<maxDistance){
+      visited.add(road.id);
+      if((activeEffects.get(road.id)||NO_EFFECTS).some(x=>x.toM>=offset-.05&&
+        distance+Math.max(0,x.fromM-offset)<=maxDistance&&
+        (x.event.kind==="closure"||x.event.closedLanes.length>=road.lanes&&x.event.shoulder!=="open")))return true;
+      distance+=road.lengthM-offset;
+      const next=road.next.filter(t=>edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref);
+      if(next.length!==1)break;
+      road=edges[next[0].to];offset=next[0].toM;
+    }
+    return false;
+  }
   function recomputeSpeeds(){
     updateEffects();
     for(const edge of edges){
@@ -1599,9 +1665,7 @@ function createLegacyTrafficScenario(data){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
         const {count,storage}=throughOccupancy(edge,k);
         const fraction=Math.min(1,count/Math.max(.001,storage));
-        const densitySpeed=edge.freeKmh*trafficOperatingState(fraction,0,edge.kind==="mainline").speedFactor*
-          (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
-        const measured=Math.min(densitySpeed,edge.cellFlowSpeeds[k]);
+        const measured=measuredCellSpeed(edge,k,count,storage);
         let speed=measured;
         for(const effect of effectList){
           if(effect.fromM>=b-.001||effect.toM<=a+.001)continue;
@@ -1764,7 +1828,7 @@ function createLegacyTrafficScenario(data){
         // Keep its severity for routing, even when the public ETA is unknown.
         const noDischarge=travelDelay>=240&&headRoad&&
           headRoad.cellThroughVph[headCell]<30&&
-          Number.isFinite(closureDistanceAhead(headRoad,head.toM,Infinity));
+          (Number.isFinite(closureDistanceAhead(headRoad,head.toM,Infinity))||fullBlockAhead(headRoad,head.toM));
         publicGroup.delayMin=Number.isFinite(travelDelay)&&!noDischarge?Math.max(0,travelDelay):null;
         if(head){
           publicGroup.endEdgeId=head.edgeId;
@@ -1850,6 +1914,7 @@ function createLegacyTrafficScenario(data){
       edge.stock.fill(0);edge.entryStock.fill(0);edge.divertStock.fill(0);edge.bypassStock.fill(0);edge.routeStock.fill(null);edge.turnStock.fill(null);
       edge.backlog=0;edge.speed=edge.freeKmh;
       edge.cellFlowSpeeds.fill(edge.freeKmh);edge.brakeMemory.fill(0);
+      edge.cellSpeedMovement.fill(0);edge.cellSpeedExposure.fill(0);
       edge.cellThroughVph.fill(0);
       edge.cellCapacityVph.fill(edge.capacityPerLane*edge.lanes);
       edge.lastProfileMinute=-1;edge.profileFactor=0;
@@ -2171,13 +2236,7 @@ function createLegacyTrafficScenario(data){
           (i+1)*current.cellLength-Math.max(from,i*current.cellLength));
         if(metres<=0)continue;
         const {count,storage}=throughOccupancy(current,i);
-        const occupied=count>=1;
-        const density=Math.min(1,count/Math.max(.001,storage));
-        const free=current.freeKmh*trafficOperatingState(density,0,current.kind==="mainline").speedFactor;
-        const densitySpeed=free*(density<=.23?1:
-          Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
-        const v=occupied?Math.max(1,Math.min(densitySpeed,current.cellFlowSpeeds[i])):
-          current.freeKmh;
+        const v=Math.max(1,measuredCellSpeed(current,i,count,storage));
         delay+=Math.max(0,metres/1000*60*(1/v-1/current.freeKmh));
         distance+=metres;
       }
@@ -2359,11 +2418,7 @@ function createLegacyTrafficScenario(data){
   }
   function routingCellSpeed(edge,k){
     const {count,storage}=throughOccupancy(edge,k);
-    if(count<.8)return edge.freeKmh;
-    const density=clamp01(count/Math.max(.001,storage));
-    const desired=edge.freeKmh*trafficOperatingState(density,0,edge.kind==="mainline").speedFactor;
-    const densitySpeed=desired*(density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
-    return Math.max(1,Math.min(densitySpeed,edge.cellFlowSpeeds[k]));
+    return Math.max(1,measuredCellSpeed(edge,k,count,storage));
   }
   function exitTravelMinutes(link,plan){
     const first=edges[link.to],terminal=edges[plan.terminal];
@@ -3838,7 +3893,6 @@ function createLegacyTrafficScenario(data){
       const s=send[j],r=receive[j],d=delta[j];
       d.fill(0);divertDelta[j].fill(0);bypassDelta[j].fill(0);entryDelta[j].fill(0);
       // Backward-moving queue front; receiving depends on downstream room.
-      const wave=Math.min(1,(22/3.6)*dt/edge.cellLength);
       const effects=activeEffects.get(edge.id)||NO_EFFECTS;
       for(let k=0;k<n;k++){
         const a=k*edge.cellLength,b=(k+1)*edge.cellLength;
@@ -3888,7 +3942,7 @@ function createLegacyTrafficScenario(data){
         // standstill queue to full free-flow service after event removal.
         // 5–10% loss is a model assumption, not a measured regional factor.
         const density=stock[k]/Math.max(.001,edge.jamPerCell);
-        const restartFactor=density>.60?.90:density>.42?.95:1;
+        const restartFactor=density>.60?.96:density>.42?.98:1;
         // Actual speed/occupancy trigger a transient headway penalty. Low
         // density clears it; no periodic arbitrary speed oscillations.
         edge.brakeMemory[k]=edge.kind==="mainline"?brakingMemory(edge.brakeMemory[k],density,
@@ -3906,7 +3960,7 @@ function createLegacyTrafficScenario(data){
         // At very low legal speeds vehicle length consumes more of the
         // available headway. 80 km/h does not halve capacity versus 160.
         const lowSpeed=permitted<60?(permitted/(7+1.45*permitted/3.6))/(60/(7+1.45*60/3.6)):1;
-        const operatingFactor=state.capacityFactor*restartFactor*lowSpeed*(1-.07*edge.brakeMemory[k]);
+        const operatingFactor=state.capacityFactor*restartFactor*lowSpeed*(1-.05*edge.brakeMemory[k]);
         const cap=open*edge.capacityPerLane*restriction*operatingFactor*dt/3600;
         const moving=Math.min(1,(permitted*state.speedFactor/3.6)*dt/edge.cellLength);
         // Block receiving at the first closure cell, but let already-present
@@ -3929,6 +3983,7 @@ function createLegacyTrafficScenario(data){
         edge.cellMotion[k]=moving;
         s[k]=Math.min(stock[k],transferCapacity,stock[k]*moving);
         const room=Math.max(0,edge.jamPerCell-stock[k]);
+        const wave=Math.min(1,(receivingWave(density,edge.kind==="mainline")/3.6)*dt/edge.cellLength);
         r[k]=blockedAtGate?0:Math.min(room,transferCapacity,room*wave);
       }
     }
@@ -3971,7 +4026,7 @@ function createLegacyTrafficScenario(data){
         for(const t of weights)pending.set(t.key,(pending.get(t.key)||0)+fresh*t.weight/sum);
         road.turnStock[cell]=pending;
         throughStart.set(cellKey(road.index,cell),pending.get(fork.throughKey)||0);
-        const limits=new Map(),wave=Math.min(1,(22/3.6)*dt/road.cellLength);
+        const limits=new Map(),wave=Math.min(1,(receivingWave(road.stock[cell]/Math.max(.001,road.jamPerCell),true)/3.6)*dt/road.cellLength);
         for(const [key,share] of shares){
           const room=Math.max(0,road.jamPerCell*share-(pending.get(key)||0));
           limits.set(key,Math.min(receive[road.index][cell],room,room*wave,road.cellCapacityVph[cell]*dt/3600*share));
@@ -4598,7 +4653,7 @@ function createLegacyTrafficScenario(data){
       if(sourceDetour&&!wide)bypassDelta[j][0]+=admitted;
       edge.backlog=Math.max(0,available-admitted);
     }
-    const alpha=1-Math.exp(-dt/120);
+    const alpha=1-Math.exp(-dt/120),speedAlpha=1-Math.exp(-dt/60);
     for(const {j,k,amounts} of routeChanges.values()){
       const stock=edges[j].routeStock[k]||new Map();
       for(const [terminal,change] of amounts){
@@ -4615,12 +4670,22 @@ function createLegacyTrafficScenario(data){
         edge.cellThroughVph[k]+=alpha*(sent*3600/dt-edge.cellThroughVph[k]);
         const throughBefore=throughStart.get(cellKey(j,k))??before;
         const throughFlow=throughStart.has(cellKey(j,k))?throughSent.get(cellKey(j,k))||0:sent;
-        if(throughBefore>=.8){
+        if(throughBefore>=.3){
           const effectiveLength=Math.max(edge.cellLength,edge.freeKmh*dt/3.6);
-          const observed=Math.min(edge.freeKmh,Math.max(0,
-            throughFlow*effectiveLength*3.6/(dt*throughBefore)));
-          edge.cellFlowSpeeds[k]=.45*observed+.55*edge.cellFlowSpeeds[k];
-        }else if(throughBefore<.3)edge.cellFlowSpeeds[k]=edge.freeKmh;
+          // Vehicle-weighted space mean. 60 s time constant retains real
+          // waves but avoids extrapolating one 5 s stop across kilometres.
+          const movement=Math.min(throughBefore*edge.freeKmh,
+            Math.max(0,throughFlow*effectiveLength*3.6/dt));
+          if(edge.cellSpeedExposure[k]<.01){
+            edge.cellSpeedMovement[k]=movement;edge.cellSpeedExposure[k]=throughBefore;
+          }else{
+            edge.cellSpeedMovement[k]+=speedAlpha*(movement-edge.cellSpeedMovement[k]);
+            edge.cellSpeedExposure[k]+=speedAlpha*(throughBefore-edge.cellSpeedExposure[k]);
+          }
+          edge.cellFlowSpeeds[k]=edge.cellSpeedMovement[k]/Math.max(.001,edge.cellSpeedExposure[k]);
+        }else{
+          edge.cellSpeedMovement[k]=0;edge.cellSpeedExposure[k]=0;edge.cellFlowSpeeds[k]=edge.freeKmh;
+        }
         const after=edge.stock[k]+change[k];
         if(after < -1e-7||after>edge.jamPerCell+1e-6)
           throw Error("Ungültiger Fahrzeugbestand auf "+edge.id);

@@ -42,7 +42,9 @@ test('a long moving queue triggers actual exits before 60 min and remains dynami
   assert.ok(s.routingQueueLength('up',offset)<peak,'actual flow can already shorten the queue while the incident remains active');
   const downstream=s.edgeActivity('long',12000).sectionSpeedKmh;
   s.removeEvent('acc');s.setDemandPercent(65);
-  for(let i=0;i<75;i++)s.advance(12);
+  // Empirically calibrated congested wave speed (18 rather than 22 km/h)
+  // may take a little longer to release the last isolated cell.
+  for(let i=0;i<90;i++)s.advance(12);
   assert.equal(s.routingQueueLength('up',offset),0);
   assert.ok(s.edgeActivity('long',12000).sectionSpeedKmh>downstream);
   assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);

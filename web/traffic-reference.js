@@ -75,6 +75,10 @@ const REFERENCE_PEAKS = {
 };
 
 const LOCAL_JUNCTION_PROFILES = [
+    // Large urban junctions on the newly connected northern Cologne ring.
+    {road:'A3',ref:'24',name:'Leverkusen-Zentrum',entryPercent:14,exitPercent:14,entryCapacity:1100,exitCapacity:1200},
+    {road:'A3',ref:'25',name:'Köln-Mülheim',entryPercent:12,exitPercent:12,entryCapacity:1000,exitCapacity:1050},
+    {road:'A3',ref:'26',name:'Köln-Dellbrück',entryPercent:10,exitPercent:10,entryCapacity:900,exitCapacity:950},
     // A3: regionale Abschnitte zwischen Köln/Bonn, Westerwald und Limburg.
     { road: 'A3', ref: '33', name: 'Siebengebirge', entryPercent: 6, exitPercent: 6, reason: 'Regionaler Zubringer' },
     { road: 'A3', ref: '34', name: 'Bad Honnef/Linz', entryPercent: 5.5, exitPercent: 5, reason: 'Regionalverkehr Rheintal' },

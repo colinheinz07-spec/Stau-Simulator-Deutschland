@@ -155,10 +155,9 @@ function drawJamCallouts(rendered,byId,showMap=true){
     const row=[];
     for(const band of bands){
       const metres=band.toM-band.fromM;
-      const delay=Math.max(0,(metres/1000)*60*
-        (1/Math.max(5,band.speedKmh)-1/edge.freeSpeedKmh));
       const travelMin=metres/1000*60/Math.max(1,band.speedKmh);
       const freeMin=metres/1000*60/edge.freeSpeedKmh;
+      const delay=Math.max(0,travelMin-freeMin);
       const last=row.at(-1);
       if(last&&Math.abs(last.toM-band.fromM)<.1){
         last.toM=band.toM;last.lengthM+=metres;last.delayMin+=delay;last.travelMin+=travelMin;last.freeMin+=freeMin;last.worstKmh=Math.min(last.worstKmh,band.speedKmh);last.delayLowerBound ||= band.speedKmh<1;

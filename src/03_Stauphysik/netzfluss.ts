@@ -10,7 +10,7 @@ import type {RoadEdge,RoadNetwork,SpeedSample,TrafficCellBand} from '../model.js
 import {activeEvent,activeNetworkClosures,type SimEvent,type CorridorClosure}
   from '../04_Ereignisse.js';
 
-type CellEdge={edge:RoadEdge;lengthM:number;vehicles:Float64Array;jamCellVehicles:number;operatingVph:Float64Array;brakeMemory:Float64Array};
+type CellEdge={edge:RoadEdge;lengthM:number;vehicles:Float64Array;jamCellVehicles:number;operatingVph:Float64Array;brakeMemory:Float64Array;speedMovement:Float64Array;speedExposure:Float64Array;stepOut:Float64Array};
 export interface FlowSettings {
   /** Spatial granularity; every original directed OSM edge remains separate. */
   targetCellLengthM?:number;
@@ -56,7 +56,7 @@ function operatingState(density:number,merge:number,mainline:boolean){
   if(!mainline)return {speedFactor:1,capacityFactor:1};
   const interactions=clamp01((density-.055)/.19),pressure=clamp01((density-.10)/.23);
   return {speedFactor:1-.24*interactions,
-    capacityFactor:1-.10*interactions-.08*pressure-.20*merge*interactions};
+    capacityFactor:1-.065*interactions-.045*pressure-.17*merge*interactions};
 }
 
 export class NetworkFlowEngine {
@@ -96,7 +96,7 @@ export class NetworkFlowEngine {
       const count=Math.max(1,Math.ceil(edge.lengthM/length));
       const cellLength=edge.lengthM/count;
       this.cells.set(edge.id,{
-        edge,lengthM:cellLength,vehicles:new Float64Array(count),
+        edge,lengthM:cellLength,vehicles:new Float64Array(count),speedMovement:new Float64Array(count),speedExposure:new Float64Array(count),stepOut:new Float64Array(count),
         operatingVph:new Float64Array(count).fill(edge.lanes*edge.capacityPerLaneVph),brakeMemory:new Float64Array(count),
         jamCellVehicles:130*edge.lanes*cellLength/1000
       });
@@ -201,6 +201,16 @@ export class NetworkFlowEngine {
   movementVph(fromId:string,toId:string):number{
     return this.movementFlow.get(fromId+'=>'+toId)??0;
   }
+  /** Space-mean speed from actual accepted movements, not instantaneous
+   * density multiplied by another independent slowdown. */
+  private cellSpeed(state:CellEdge,k:number):number{
+    const count=state.vehicles[k]!,free=state.edge.freeSpeedKmh;
+    if(count<.8)return free;
+    if(state.speedExposure[k]!>=.8)return Math.max(0,Math.min(free,state.speedMovement[k]!/state.speedExposure[k]!));
+    const density=clamp01(count/Math.max(.001,state.jamCellVehicles));
+    return free*operatingState(density,0,state.edge.kind==='mainline').speedFactor*
+      (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
+  }
   /** Excess travel time along the directed continuation AFTER this junction.
    * Do not count a queue behind the exit or on an unrelated motorway arm. */
   routingDelayAhead(edgeId:string):number{
@@ -219,11 +229,9 @@ export class NetworkFlowEngine {
       if(next.length!==1||seen.has(next[0]!.toId))break;
       current=this.cells.get(next[0]!.toId)!;
       seen.add(current.edge.id);
-      for(const count of current.vehicles){
-        const density=clamp01(count/Math.max(.001,current.jamCellVehicles));
+      for(let k=0;k<current.vehicles.length;k++){
         const free=current.edge.freeSpeedKmh;
-        const speed=count<.8?free:Math.max(1,free*operatingState(density,0,true).speedFactor*
-          (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45))));
+        const speed=Math.max(1,this.cellSpeed(current,k));
         delay+=Math.max(0,current.lengthM*.06*(1/speed-1/free));
       }
       if(delay>=480)break; // voluntary willingness is saturated
@@ -249,8 +257,7 @@ export class NetworkFlowEngine {
         const count=current.vehicles[k]!,metres=Math.min(current.lengthM,gate-k*current.lengthM);
         if(metres<=0)break outer;
         const density=clamp01(count/Math.max(.001,current.jamCellVehicles));
-        const speed=current.edge.freeSpeedKmh*operatingState(density,0,true).speedFactor*
-          (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
+        const speed=this.cellSpeed(current,k);
         if(count>=Math.max(2,current.edge.lanes*1.2)&&density>.23&&speed<=65){
           if(lastEnd>=0&&distance-lastEnd>500){lastEnd=-1;length=0;}
           if(lastEnd<0&&passedExit)break outer;
@@ -282,11 +289,9 @@ export class NetworkFlowEngine {
       const id=next[0]!.toId;
       if(closed.has(id)||blocked.has(current.edge.id+'=>'+id))return Infinity;
       current=this.cells.get(id)!;seen.add(id);
-      for(const count of current.vehicles){
-        const density=clamp01(count/Math.max(.001,current.jamCellVehicles));
+      for(let k=0;k<current.vehicles.length;k++){
         const free=current.edge.freeSpeedKmh;
-        const speed=count<.8?free:Math.max(1,free*operatingState(density,0,true).speedFactor*
-          (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45))));
+        const speed=Math.max(1,this.cellSpeed(current,k));
         delay+=Math.max(0,current.lengthM*.06*(1/speed-1/free));
       }
       if(this.localExitMoves.get(id)?.some(m=>!closed.has(m.toId)&&!blocked.has(id+'=>'+m.toId)))return delay;
@@ -318,11 +323,8 @@ export class NetworkFlowEngine {
       // Equal-length cells: harmonic mean reflects travel time over the
       // entire OSM edge. A single slow cell must not paint a long Way red.
       let inverseSpeedSum=0;
-      for(const count of state.vehicles){
-        const fraction=state.jamCellVehicles>0?
-          Math.min(1,count/state.jamCellVehicles):0;
-        const speed=state.edge.freeSpeedKmh*operatingState(fraction,0,state.edge.kind==='mainline').speedFactor*
-          (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
+      for(let k=0;k<state.vehicles.length;k++){
+        const speed=this.cellSpeed(state,k);
         inverseSpeedSum+=1/Math.max(1,speed);
       }
       const speedKmh=state.vehicles.length/inverseSpeedSum;
@@ -339,8 +341,7 @@ export class NetworkFlowEngine {
         const count=state.vehicles[i]!;
         const fraction=state.jamCellVehicles>0?
           Math.min(1,count/state.jamCellVehicles):0;
-        const speedKmh=state.edge.freeSpeedKmh*operatingState(fraction,0,state.edge.kind==='mainline').speedFactor*
-          (fraction<=.23?1:Math.max(.04,1-Math.pow((fraction-.23)/.77,1.45)));
+        const speedKmh=this.cellSpeed(state,i);
         if(count<Math.max(2,state.edge.lanes*1.2) ||
            fraction<=.23 || speedKmh>65)continue;
         let open=[{fromM:i*state.lengthM,toM:(i+1)*state.lengthM}];
@@ -388,9 +389,9 @@ export class NetworkFlowEngine {
     const motion=new Map<string,number>();
     for(const [id,state] of this.cells){
       const {edge,vehicles,lengthM,jamCellVehicles}=state;
+      state.stepOut.fill(0);
       const outs=new Float64Array(vehicles.length),ins=new Float64Array(vehicles.length);
       const changes=new Float64Array(vehicles.length);
-      const waveFraction=Math.min(1,(this.waveKmh/3.6)*dt/lengthM);
       const affecting=activeById.get(id)??[];
       const approaches=(this.incomingMoves.get(id)??[]).map(parent=>this.movementFlow.get(parent+'=>'+id)??0);
       const total=approaches.reduce((a,b)=>a+b,0);
@@ -418,18 +419,20 @@ export class NetworkFlowEngine {
           capacity=Math.max(0,edge.lanes-closed.size)*edge.capacityPerLaneVph;
         const density=vehicles[i]!/Math.max(.001,jamCellVehicles);
         const dynamic=operatingState(density,i===0?merge:0,edge.kind==='mainline');
-        const restart=density>.60?.90:density>.42?.95:1;
+        const restart=density>.60?.96:density>.42?.98:1;
         const relativeSpeed=dynamic.speedFactor*(density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
         const pressure=edge.kind==='mainline'?clamp01((density-.28)/.35)*clamp01((.70-relativeSpeed)/.55):0;
         const previous=state.brakeMemory[i]!,tau=pressure>previous?12:45;
         state.brakeMemory[i]=previous+(pressure-previous)*(1-Math.exp(-dt/tau));
-        capacity*=dynamic.capacityFactor*restart*(1-.07*state.brakeMemory[i]!);
+        capacity*=dynamic.capacityFactor*restart*(1-.05*state.brakeMemory[i]!);
         state.operatingVph[i]=forbiddenEntry||corridor.blockedEdgeIds.has(id)||closedByEvent.has(id)?0:capacity;
         const freeTravelFraction=Math.min(1,(edge.freeSpeedKmh*dynamic.speedFactor/3.6)*dt/lengthM);
         if(i===vehicles.length-1)motion.set(id,freeTravelFraction);
         const cap=capacity*dt/3600;
         outs[i]=Math.min(vehicles[i]!,cap,vehicles[i]!*freeTravelFraction);
         const room=Math.max(0,jamCellVehicles-vehicles[i]!);
+        const waveKmh=edge.kind==='mainline'?this.waveKmh*(1-4/22*clamp01((density-.25)/.30)):this.waveKmh;
+        const waveFraction=Math.min(1,(waveKmh/3.6)*dt/lengthM);
         // Corridor closures are enforced at real directed boundaries below.
         // Do not prevent exiting a closed OSM Way into the next closed Way.
         ins[i]=forbiddenEntry?0:Math.min(room,cap,room*waveFraction);
@@ -444,6 +447,7 @@ export class NetworkFlowEngine {
         if(moved<=0)continue;
         changes[i]=changes[i]!-moved;
         changes[i+1]=changes[i+1]!+moved;
+        state.stepOut[i]=state.stepOut[i]!+moved;
         out[i]=out[i]!-moved; ins[i+1]=ins[i+1]!-moved;
       }
     }
@@ -471,9 +475,9 @@ export class NetworkFlowEngine {
       const nextQueued=choices.some(m=>{
         const target=this.cells.get(m.toId)!;
         return target.edge.kind==='mainline'&&target.edge.motorwayRef===state.edge.motorwayRef&&
-          target.vehicles[0]!/Math.max(.001,target.jamCellVehicles)>.65;
+          target.vehicles[0]!/Math.max(.001,target.jamCellVehicles)>.65&&this.cellSpeed(target,0)<=65;
       });
-      const queueAtExit=lastDensity>.65||nextQueued;
+      const queueAtExit=lastDensity>.65&&this.cellSpeed(state,state.vehicles.length-1)<=65||nextQueued;
       const lengthShare=localExits?lengthDiversionShare(this.routingQueueLength(id,closureEdges,corridor.blockedMovementKeys)):0;
       const divert=Math.max(lengthShare,observed>=60?diversionShare(queueAtExit?observed:
         Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0);
@@ -535,6 +539,7 @@ export class NetworkFlowEngine {
         if(pending)pending.set('',Math.max(0,(pending.get('')??0)-leaving));
         const change=delta.get(id)!;
         change[change.length-1]=change[change.length-1]!-leaving;
+        state.stepOut[state.stepOut.length-1]=state.stepOut[state.stepOut.length-1]!+leaving;
         this.exited+=leaving;
       }
       for(const choice of choices){
@@ -561,6 +566,8 @@ export class NetworkFlowEngine {
         this.movementFlow.set(p.fromId+'=>'+toId,amount*3600/dt);
         const fromChanges=delta.get(p.fromId)!;
         fromChanges[fromChanges.length-1]=fromChanges[fromChanges.length-1]!-amount;
+        const sent=this.cells.get(p.fromId)!.stepOut;
+        sent[sent.length-1]=sent[sent.length-1]!+amount;
         total+=amount;
       }
       const receivedChanges=delta.get(toId)!;
@@ -584,9 +591,19 @@ export class NetworkFlowEngine {
       this.sourceBacklog.set(id,waiting-admitted);
     }
     // Atomically apply all previously allocated, storage-safe transfers.
+    const speedAlpha=1-Math.exp(-dt/60);
     for(const [id,state] of this.cells){
       const changes=delta.get(id)!;
       for(let i=0;i<changes.length;i++){
+        const count=state.vehicles[i]!,free=state.edge.freeSpeedKmh;
+        if(count>=.3){
+          const movement=Math.min(count*free,state.stepOut[i]!*Math.max(state.lengthM,free*dt/3.6)*3.6/dt);
+          if(state.speedExposure[i]!<.01){state.speedMovement[i]=movement;state.speedExposure[i]=count;}
+          else{
+            state.speedMovement[i]=state.speedMovement[i]!+speedAlpha*(movement-state.speedMovement[i]!);
+            state.speedExposure[i]=state.speedExposure[i]!+speedAlpha*(count-state.speedExposure[i]!);
+          }
+        }else{state.speedMovement[i]=0;state.speedExposure[i]=0;}
         state.vehicles[i]=Math.max(0,state.vehicles[i]!+changes[i]!);
         if(state.vehicles[i]!>state.jamCellVehicles+1e-7)
           throw Error('Zellspeicher überschritten: '+id+' ['+i+']');
