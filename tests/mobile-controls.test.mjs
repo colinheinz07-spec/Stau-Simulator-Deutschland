@@ -82,8 +82,9 @@ test("Staukarten verwenden gemessene Modellwerte, Fahrtrichtung und verknüpfen 
  assert.equal(view.delay,"+12 min");assert.equal(view.severity,"standstill");assert.equal(view.speed,"8 km/h");
  const exit=ui.describeJam(group,{ref:"A3",kind:"ramp",name:"AS Ransbach-Baumbach · Abfahrt von A3 → Köln"});
  assert.equal(exit.title,"A3 · Abfahrt Richtung Köln");
- assert.equal(exit.mapTitle,"A3 · Abfahrt");
- assert.equal(ui.describeJam(group,{...road,bottleneck:"Rückstau an AS Test"}).mapTitle,"A3 · Ausfahrtsrückstau");
+ assert.equal(exit.mapTitle,"A3 → Köln · Abfahrt");
+ assert.equal(ui.describeJam(group,{...road,bottleneck:"Rückstau an AS Test"}).mapTitle,"A3 → Köln · Ausfahrtsrückstau");
+ assert.equal(ui.describeJam(group,{ref:"A3",kind:"ramp",name:"AS Leverkusen · Abfahrt von A3 → Köln",destination:"Düsseldorf"}).mapTitle,"A3 → Düsseldorf · Abfahrt");
  assert.equal(ui.describeJam({...group,meanKmh:18,delayMin:null},road).speed,"18 km/h");
  assert.equal(ui.describeJam({...group,meanKmh:18},road).severity,"jam","severity agrees with complete queue mean, not worst cell");
  assert.equal(ui.describeJam({...group,meanKmh:18,delayMin:null},road).delay,"Nicht berechenbar");

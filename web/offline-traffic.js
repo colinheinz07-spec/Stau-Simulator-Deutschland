@@ -1859,12 +1859,43 @@ function createLegacyTrafficScenario(data){
       });
   }
   const queueLocationCache=new Map();
+  // The display direction is taken from a connected motorway sample, not
+  // the heading of a tiny Way or the peak-demand profile's corridor name.
+  const navigationSampleCache=new Map();
+  function destinationAt(edge,offset){
+    const points=rowById.get(edge.id)[4],cumulative=pointMetres.get(edge.id);
+    const at=Math.max(0,Math.min(edge.lengthM,Number(offset)||0));
+    const index=cumulative.findIndex(m=>m>=at),i=index===-1?points.length-1:Math.max(1,index);
+    const a=points[i-1],b=points[i],t=(at-cumulative[i-1])/Math.max(.001,cumulative[i]-cumulative[i-1]);
+    const point=[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+    if(!navigationSampleCache.has(edge.id))navigationSampleCache.set(edge.id,
+      traffic.navigationTravelPoints(edge,e=>mainlineBack.get(e.id)||[],e=>mainlineNext.get(e.id)||[],
+        e=>rowById.get(e.id)[4],e=>e.lengthM));
+    return traffic.navigationDestination(edge.ref,point,navigationSampleCache.get(edge.id));
+  }
+  function rampDestination(edge,role){
+    let arrivals=[];
+    if(role==="Abfahrt"){
+      const work=[edge],seen=new Set();
+      for(let i=0;i<work.length&&i<100;i++){
+        const ramp=work[i];if(seen.has(ramp.id))continue;seen.add(ramp.id);
+        for(const {from,turn} of incomingTurns[ramp.index]){
+          if(from.kind==="mainline"&&(!edge.ref||from.ref===edge.ref))arrivals.push({road:from,metre:turn.fromM});
+          else if(from.kind==="ramp"&&!seen.has(from.id))work.push(from);
+        }
+      }
+    }else arrivals=rampMainlineArrivals(edge);
+    const destinations=new Set(arrivals.map(a=>destinationAt(a.road,a.metre)).filter(Boolean));
+    // At a shared collector with several true destinations retain its
+    // original signed name instead of inventing a single direction.
+    return destinations.size===1?[...destinations][0]:undefined;
+  }
   function queueRoadInfo(group){
     const anchor=byId.get(group.edgeId);
     if(!anchor)return {};
     const start=byId.get(group.startEdgeId)||anchor,end=byId.get(group.endEdgeId)||anchor;
     const startM=group.startOffsetM??group.offsetM,endM=group.endOffsetM??group.offsetM;
-    const key=[start.id,Math.round(startM/50),end.id,Math.round(endM/50)].join(":");
+    const key=[start.id,Math.round(startM/50),end.id,Math.round(endM/50),anchor.id,Math.round((group.offsetM||0)/10)].join(":");
     const annotate=info=>{
       // The road name is static, but the ramp load can change while the
       // queue endpoints stay in the same cache bucket.
@@ -1891,11 +1922,7 @@ function createLegacyTrafficScenario(data){
         info.location="zwischen "+section.from[2]+" und "+section.to[2];
         info.direction=traffic.motorwayDirection(anchor.ref,[section.from[3],section.to[3]],"");
       }
-      // Traffic-profile keys identify whole directed corridors; the signed
-      // destination in a local traffic report changes along that corridor.
-      // North of Köln-Ost the A3 continues toward Düsseldorf, not Köln.
-      if(anchor.ref==="A3"&&info.direction==="A3-koeln"&&anchor.first[0]>=50.96)
-        info.destination="Düsseldorf";
+      info.destination=destinationAt(anchor,group.offsetM);
     }else{
       const adjacent=[...incomingTurns[anchor.index].map(t=>t.from),...anchor.links.map(t=>edges[t.to])];
       const named=adjacent.find(r=>r.kind==="ramp"&&r.name)||adjacent.find(r=>r.ref);
@@ -1905,6 +1932,7 @@ function createLegacyTrafficScenario(data){
       info.location=info.name||"Autobahnrampe";
       info.rampRole=localTerminal(anchor)?"Abfahrt":/\bAuffahrt\b/.test(info.name)?"Auffahrt":
         /\b(?:AK|AD|Überleitung)\b|→/.test(info.name)?"Überleitung":"Rampe";
+      info.destination=rampDestination(anchor,info.rampRole);
     }
     // Limit memory for an advancing queue; coordinates remain true to the
     // queue's actual endpoint rather than the midpoint of an arbitrary Way.

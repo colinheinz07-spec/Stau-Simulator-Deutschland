@@ -292,6 +292,87 @@ function motorwayDirection(ref,points,name=""){
   if(ref==="A573")return dy>=0?"extra-a573-nord":"extra-a573-sued";
   return ref+"-"+(Math.abs(dy)>=Math.abs(dx)?"lat":"lon")+(Math.abs(dy)>=Math.abs(dx)?Math.sign(dy):Math.sign(dx));
 }
+// Display destinations, deliberately independent of traffic-profile keys.
+// Ordered motorway landmarks, not nearest-city distances or the compass
+// bearing of individual OSM Ways. Each change applies to the interval AFTER
+// its landmark in the axis order; reverse traffic has its own destination.
+// The axis landmarks are the junction positions of the imported network;
+// regional onward destinations are navigation labels, not claimed sign text.
+const DESTINATION_AXES=[
+  {ref:"A3",points:[[50.051,8.392],[50.146,8.326],[50.210,8.251],[50.298,8.237],[50.385,8.083],[50.402,8.064],[50.413,7.941],[50.446,7.828],[50.466,7.764],[50.535,7.597],[50.567,7.521],[50.604,7.430],[50.649,7.331],[50.690,7.271],[50.778,7.242],[50.821,7.208],[50.886,7.180],[50.920,7.074],[50.9462625,7.0392933],[50.984,7.016],[51.021,7.012],[51.038,7.009]],
+    initial:["Limburg","Frankfurt"],changes:{4:["Limburg","Limburg"],5:["Köln","Limburg"],17:["Köln","Köln"],18:["Düsseldorf","Köln"]}},
+  {ref:"A48",points:[[50.3556,7.4794],[50.3888,7.5403],[50.4139,7.5810],[50.4439,7.6646],[50.4556,7.7495]],
+    initial:["Koblenz","Trier"],changes:{0:["Koblenz","Koblenz"],1:["Neuwied","Koblenz"],2:["Montabaur","Koblenz"]}},
+  {ref:"A61",points:[[50.5896176,7.0395749],[50.5755,7.1130],[50.5263,7.1888],[50.4729,7.2277],[50.4102,7.2366],[50.3852,7.2742],[50.3917,7.3560],[50.3787,7.3875],[50.3552877,7.4895745],[50.35035,7.49628]],
+    initial:["Koblenz","Köln"],changes:{0:["Koblenz","Bonn"],8:["Rheinböllen","Koblenz"]}},
+  {ref:"A4",points:[[50.925833,6.845278],[50.8961,6.9144],[50.891,6.92655],[50.88552,6.9683],[50.902,6.996],[50.9176,7.0319],[50.9206,7.0498],[50.9462625,7.0392933]],
+    initial:["Köln","Aachen"],changes:{0:["Köln","Köln"],6:["Olpe","Köln"]}},
+  {ref:"A1",points:[[50.925833,6.845278],[50.9354,6.8493],[50.9804,6.8523],[50.9996,6.8976],[51.0280,6.9489],[51.0370,6.9654],[51.0393643,7.0005214]],
+    initial:["Köln","Euskirchen"],changes:{0:["Köln","Köln"],3:["Leverkusen","Köln"],6:["Dortmund","Leverkusen"]}},
+  {ref:"A59",points:[[50.7231,7.1568],[50.7476,7.1422],[50.7594,7.1386],[50.7894,7.1499],[50.8080,7.1342],[50.8168,7.1142],[50.8437,7.0966],[50.8818,7.0945],[50.9044,7.0725],[50.9285,7.0557]],
+    initial:["Bonn","Königswinter"],changes:{0:["Bonn","Bonn"],2:["Köln","Bonn"]}},
+  {ref:"A59",points:[[51.018,6.965],[51.03698,6.96540],[51.046,6.94745]],initial:["Düsseldorf","Leverkusen"],changes:{}},
+  {ref:"A57",points:[[50.968,6.9186],[50.995,6.893],[51.0056,6.8801],[51.018,6.8621]],initial:["Neuss","Köln"],changes:{}},
+  {ref:"A555",points:[[50.7492,7.0630],[50.7639,7.0314],[50.8111,6.9855],[50.8487,6.9678],[50.8855,6.9683]],initial:["Köln","Bonn"],changes:{}},
+  {ref:"A559",points:[[50.9044,7.0725],[50.9072,7.0641],[50.9135,7.0312],[50.9196,7.0249]],initial:["Köln","Porz"],changes:{}},
+  {ref:"A560",points:[[50.7935,7.1515],[50.7953,7.1753],[50.7886,7.1946],[50.7783,7.2227],[50.7764,7.2332],[50.7798,7.2656],[50.7764,7.2988],[50.7677,7.3113]],initial:["Hennef","Bonn"],changes:{}},
+  {ref:"A562",points:[[50.7050,7.1313],[50.7083,7.1359],[50.7213,7.1468],[50.7231,7.1577]],initial:["Bonn-Beuel","Bonn-Bad Godesberg"],changes:{}},
+  {ref:"A565",points:[[50.7648,7.1320],[50.7601,7.1085],[50.7516,7.0847],[50.7489,7.0785],[50.7318,7.0745],[50.7141,7.0642],[50.7092,7.0610],[50.6512,7.0461],[50.6360,7.0581],[50.59817,7.03496],[50.58450,7.02622]],
+    initial:["Bonn","Bonn-Beuel"],changes:{6:["Meckenheim","Bonn"],9:["Gelsdorf","Bonn"]}},
+  {ref:"A571",points:[[50.52974,7.18845],[50.53250,7.19286],[50.54560,7.19724]],initial:["Sinzig","Koblenz"],changes:{}},
+  {ref:"A573",points:[[50.57321,7.11844],[50.55283,7.11946],[50.55016,7.12558]],initial:["Bad Neuenahr-Ahrweiler","Bonn"],changes:{}}
+];
+function navigationProject(axis,point){
+  const lonScale=Math.cos(point[0]*Math.PI/180),p=axis.points;
+  let best=null;
+  for(let i=1;i<p.length;i++){
+    const a=p[i-1],b=p[i],x=(b[1]-a[1])*lonScale,y=b[0]-a[0];
+    const norm=x*x+y*y;
+    if(norm<1e-12)continue;
+    const qx=(point[1]-a[1])*lonScale,qy=point[0]-a[0];
+    const raw=(x*qx+y*qy)/norm;
+    // Permit the next/previous destination immediately beyond a cropped
+    // map end instead of pinning the vehicle to the last landmark.
+    const t=Math.max(i===1?-2:0,Math.min(i===p.length-1?3:1,raw));
+    const error=Math.hypot(qx-t*x,qy-t*y);
+    if(!best||error<best.error)best={station:i-1+t,error};
+  }
+  return best;
+}
+function navigationDestination(ref,point,travelPoints){
+  if(!point||!travelPoints?.length||!travelPoints[0]||!travelPoints.at(-1))return undefined;
+  let chosen=null;
+  for(const axis of DESTINATION_AXES){
+    if(axis.ref!==ref)continue;
+    const at=navigationProject(axis,point);
+    if(at&&(!chosen||at.error<chosen.at.error))chosen={axis,at};
+  }
+  // Do not reuse a Rheinland label on an unrelated extract of the same
+  // numbered motorway hundreds of kilometres away.
+  if(!chosen||chosen.at.error>.12)return undefined;
+  const {axis,at}=chosen;
+  const start=navigationProject(axis,travelPoints[0]),end=navigationProject(axis,travelPoints.at(-1));
+  if(!start||!end||Math.abs(end.station-start.station)<1e-7)return undefined;
+  const forward=end.station>start.station;
+  let pair=axis.initial;
+  for(const [station,change] of Object.entries(axis.changes))if(at.station>=Number(station))pair=change;
+  return pair[forward?0:1];
+}
+// Sample the direction over real connected mainline Ways (including very
+// short, curving OSM fragments), never cross to the opposite carriageway.
+function navigationTravelPoints(edge,back,forward,geometry,length){
+  function endpoint(neighbours,first){
+    let current=edge,distance=length(edge);const seen=new Set([edge]);
+    for(let i=0;i<150&&distance<3500;i++){
+      const next=neighbours(current).filter(e=>!seen.has(e));
+      if(next.length!==1)break;
+      current=next[0];seen.add(current);distance+=length(current);
+    }
+    const points=geometry(current);
+    return first?points[0]:points.at(-1);
+  }
+  return [endpoint(back,true),endpoint(forward,false)];
+}
 function regionFor(key,ref,points){
   if(ref==="A3"&&points?.some(p=>p[0]>50.84&&p[1]<7.17))return "ring";
   return familyByRef[ref]||"transit";
@@ -361,6 +442,6 @@ function junctionEntryPeak(row){
 }
 const api=Object.freeze({REFERENCE_PEAKS,LOCAL_JUNCTION_PROFILES,
   referenceForRoad,junctionEntryPeak,junctionProfile,junctionCapacityFactor,profileFactor,motorwayDirection,localClock,WIDE_CORRIDORS,
-  calendarStatus,isPublicHoliday,schoolBreaks});
+  calendarStatus,isPublicHoliday,schoolBreaks,navigationDestination,navigationTravelPoints});
 root.StauTrafficReference=api;
 })(typeof window!=="undefined"?window:globalThis);

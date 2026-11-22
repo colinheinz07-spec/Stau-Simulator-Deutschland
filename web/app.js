@@ -245,9 +245,29 @@ function drawJamCallouts(rendered,byId,showMap=true){
     const a=start?pointOnEdge(start,group.startOffsetM):edge.geometry[0];
     const b=end?pointOnEdge(end,group.endOffsetM):edge.geometry.at(-1);
     const left=nearestJunction(a,ref),right=nearestJunction(b,ref);
+    const traffic=window.StauTrafficReference;
+    const neighbours=(map,e)=>[...(map.get(e.id)||[])].map(id=>byId.get(id)).filter(Boolean);
+    const mainNeighbours=(map,e)=>neighbours(map,e).filter(n=>n.kind==="mainline"&&n.motorwayRef===e.motorwayRef);
+    const destinationAt=(e,at)=>traffic?.navigationDestination(e.motorwayRef,pointOnEdge(e,at),
+      traffic.navigationTravelPoints(e,r=>mainNeighbours(incoming,r),r=>mainNeighbours(out,r),r=>r.geometry,r=>r.lengthM));
+    let destination=edge.kind==="mainline"?destinationAt(edge,offset):undefined;
+    if(edge.kind==="ramp"){
+      const exit=/\bAbfahrt\b/i.test(edge.name||""),links=exit?incoming:out;
+      const work=[edge],seen=new Set(),destinations=new Set();
+      for(let i=0;i<work.length&&i<100;i++){
+        const r=work[i];if(seen.has(r.id))continue;seen.add(r.id);
+        for(const n of neighbours(links,r)){
+          if(n.kind==="ramp")work.push(n);
+          else if(n.kind==="mainline"&&(!exit||n.motorwayRef===ref)){
+            const label=destinationAt(n,exit?n.lengthM:0);if(label)destinations.add(label);
+          }
+        }
+      }
+      if(destinations.size===1)destination=[...destinations][0];
+    }
     return {ref,kind:edge.kind,name:edge.name,
       location:left&&right&&left!==right?"zwischen "+left+" und "+right:left||right?"bei "+(left||right):undefined,
-      direction:window.StauTrafficReference?.motorwayDirection(ref,[a,b],edge.name||"")};
+      direction:traffic?.motorwayDirection(ref,[a,b],edge.name||""),destination};
   };
   window.StauDashboard?.renderJams(qualified,roadInfo,(id,offset)=>{
     const edge=byId.get(id);if(!edge)return;

@@ -36,8 +36,10 @@
     "extra-a1-dortmund":"Dortmund","extra-a1-koblenz":"Koblenz",
     "extra-a57-krefeld":"Krefeld","extra-a57-koeln":"Köln",
     "extra-a59-duesseldorf":"Düsseldorf","extra-a59-leverkusen":"Leverkusen",
-    "extra-a61-nord":"Norden","extra-a61-sued":"Süden",
-    "extra-a565-nord":"Norden","extra-a565-sued":"Süden"
+    "extra-a61-nord":"Bonn","extra-a61-sued":"Koblenz",
+    "extra-a565-nord":"Bonn","extra-a565-sued":"Meckenheim",
+    "extra-a571-nord":"Sinzig","extra-a571-sued":"Koblenz",
+    "extra-a573-nord":"Bonn","extra-a573-sued":"Bad Neuenahr-Ahrweiler"
   };
   function describeJam(group,road={}){
     const speed=Number(group.meanKmh??group.worstKmh),known=Number.isFinite(speed);
@@ -47,14 +49,15 @@
     const states={slow:["Stockender Verkehr","#efae47"],jam:["Stau / Stop-and-Go","#e34f56"],standstill:["Stillstand / Kriechverkehr","#a85169"]};
     const [state,color]=states[severity];
     const signedDestination=road.kind==="ramp"&&road.name?.includes("→")?road.name.split("→").at(-1).trim():null;
-    const destination=signedDestination||road.destination||directionNames[road.direction];
+    const destination=road.destination||signedDestination||directionNames[road.direction];
     // A ramp's delay is its own waiting time, not the travel time of the
     // adjacent through motorway. Keep the route category visible on the map.
     const rampRole=road.kind==="ramp"?(road.rampRole||(/\bAbfahrt\b/.test(road.name||"")?"Abfahrt":
       /\bAuffahrt\b/.test(road.name||"")?"Auffahrt":/\b(?:AK|AD|Überleitung)\b/.test(road.name||"")?"Überleitung":"Rampe")):null;
     const ref=road.ref||"Autobahn";
     const title=ref+(rampRole?" · "+rampRole:"")+(destination?" Richtung "+destination:"");
-    const mapTitle=rampRole?ref+" · "+rampRole:road.bottleneck?ref+" · Ausfahrtsrückstau":ref+(destination?" → "+destination:"");
+    const routeTitle=ref+(destination?" → "+destination:"");
+    const mapTitle=rampRole?routeTitle+" · "+rampRole:road.bottleneck?routeTitle+" · Ausfahrtsrückstau":routeTitle;
     const km=(Math.max(0,Number(group.lengthM)||0)/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1});
     const delay=Number.isFinite(group.delayMin)?Math.max(1,Math.round(group.delayMin)):null;
     const delayText=delay===null?null:(group.delayLowerBound?"≥ ":"")+"+"+
