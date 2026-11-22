@@ -34,6 +34,8 @@
     "extra-a562-bonn":"Bonn","extra-a562-bonn-ost":"Bonn-Ost",
     "extra-a555-koeln":"Köln","extra-a555-bonn":"Bonn",
     "extra-a1-dortmund":"Dortmund","extra-a1-koblenz":"Koblenz",
+    "extra-a57-krefeld":"Krefeld","extra-a57-koeln":"Köln",
+    "extra-a59-duesseldorf":"Düsseldorf","extra-a59-leverkusen":"Leverkusen",
     "extra-a61-nord":"Norden","extra-a61-sued":"Süden",
     "extra-a565-nord":"Norden","extra-a565-sued":"Süden"
   };

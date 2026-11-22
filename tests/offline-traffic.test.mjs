@@ -1285,7 +1285,7 @@ test("real A3 Heumar to Köln-Ost closure does not invent a local entrance at th
   const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
   sim.setSimulationStart(Date.parse("2026-11-13T15:51:00Z"));
   const event=sim.setEvent({id:"koeln-heumar",edgeId:"A3-132624375",
-    kind:"closure",closedLanes:[0,1,2],offsetM:3,lengthM:200,
+    kind:"closure",closedLanes:[0,1,2,3],offsetM:3,lengthM:200,
     speedKmh:0,hasShoulder:false,shoulder:"normal"});
   assert.match(event.closureFrom,/A3 28 AD Köln-Heumar/);
   assert.match(event.closureTo,/A3 27 AK Köln-Ost/);
@@ -1365,7 +1365,7 @@ test("A3 Köln-Ost to Heumar motorway closure covers all connected Ways and feed
     runInNewContext(await readFile(path,"utf8"),{window:w});
   const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
   const event=sim.setEvent({id:"a3-full",edgeId:"A3-26164974",
-    kind:"closure",closedLanes:[0,1,2],offsetM:460,lengthM:200,
+    kind:"closure",closedLanes:[0,1,2,3],offsetM:460,lengthM:200,
     speedKmh:0,shoulder:"normal",hasShoulder:false});
   assert.match(event.closureFrom,/A3 27 AK Köln-Ost/);
   assert.match(event.closureTo,/A3 28 AD Köln-Heumar/);

@@ -12,7 +12,7 @@ const state={
   visible:true,junctions:true,requestId:0
 };
 const COLOURS={free:"#24c688",slow:"#f2af4e",jam:"#df4a55",standstill:"#792341"};
-const TEST_CENTER=[50.46,7.56], CORRIDOR_BOUNDS=[[50.155,6.86],[50.855,8.17]],
+const TEST_CENTER=[50.60,7.50], CORRIDOR_BOUNDS=[[50.15,6.80],[51.06,8.21]],
   GERMANY_BOUNDS=[[47.1,5.65],[55.15,15.35]];
 const L=window.L;
 if(!L){

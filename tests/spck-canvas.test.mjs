@@ -101,20 +101,30 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   assert.ok(Number(element("sim-vehicles").textContent.replaceAll(".",""))>0);
   assert.match(element("sim-toggle").textContent,/anhalten/);
   assert.equal(element("sim-run-state").textContent,"Läuft");
+  // Touching the map while a physics batch is queued must not drain that
+  // batch on the main thread. It resumes automatically when touch ends.
+  intervalCallback();
+  const drag={pointerId:42,pointerType:"touch",clientX:100,clientY:100};
+  listeners.get("create-canvas:pointerdown")(drag);
+  flushTimers();
+  assert.equal(element("sim-clock").textContent,"1:00");
+  listeners.get("create-canvas:pointercancel")(drag);
+  flushTimers();
+  assert.equal(element("sim-clock").textContent,"2:00");
   intervalCallback();
   const queued=timeouts.size;
   intervalCallback();
   assert.equal(timeouts.size,queued,"a slow minute cannot schedule overlapping batches");
   listeners.get("sim-toggle:click")();
   assert.equal(timeouts.size,0,"pausing cancels remaining physics tasks");
-  assert.equal(element("sim-clock").textContent,"1:05","pause preserves only completed physics steps");
+  assert.equal(element("sim-clock").textContent,"2:00","pause preserves only completed physics steps");
 
   // Tap a real A3 point and set a full closure through the actual mobile UI.
   // The closure has its own red-white overlay, not fake traffic-speed coloring.
   const refPoint=window.STAU_LEGACY_GEOMETRY.roads[0][4][0];
   const merc=p=>[(p[1]+180)*256/360,
     (1-Math.log(Math.tan(Math.PI/4+p[0]*Math.PI/360))/Math.PI)*128];
-  const sw=merc([50.15,6.84]),ne=merc([50.88,8.21]);
+  const sw=merc([50.15,6.80]),ne=merc([51.06,8.21]);
   const z=Math.log2(Math.min(348/Math.abs(sw[0]-ne[0]),624/Math.abs(sw[1]-ne[1])));
   const mid=[(sw[0]+ne[0])/2,(sw[1]+ne[1])/2],p=merc(refPoint);
   const click={pointerId:1,clientX:195+(p[0]-mid[0])*2**z,

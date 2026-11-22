@@ -52,7 +52,11 @@ function throughTrafficFloor(ref,clock,holiday){
   return scale*smoothInterpolate(curve,clock.hour);
 }
 const REFERENCE_PEAKS = {
-    'extra-a1-dortmund': 2900, 'extra-a1-koblenz': 2850,
+    // Ring and newly connected A57/A59 arms: estimated weekday boundary
+    // demand, not a full downstream AADT injected at every junction.
+    'extra-a1-dortmund': 3900, 'extra-a1-koblenz': 4000,
+    'extra-a57-krefeld': 2600, 'extra-a57-koeln': 3200,
+    'extra-a59-duesseldorf': 1900, 'extra-a59-leverkusen': 2000,
     // Regional scenario calibration, not official traffic-counter data.
     'A3-koeln': 5000, 'A3-frankfurt': 5000, 'A48-dernbach': 3200, 'A48-koblenz': 2500,
     // Southern B42 boundary feeds A59 in addition to the A562/A565/A560
@@ -75,6 +79,12 @@ const REFERENCE_PEAKS = {
 };
 
 const LOCAL_JUNCTION_PROFILES = [
+    {road:'A1',ref:'103',name:'Köln-Lövenich',entryPercent:10,exitPercent:10,entryCapacity:1000,exitCapacity:1100},
+    {road:'A1',ref:'102',name:'Köln-Bocklemünd',entryPercent:12,exitPercent:12,entryCapacity:1100,exitCapacity:1150},
+    {road:'A1',ref:'100',name:'Köln-Niehl',entryPercent:17,exitPercent:17,entryCapacity:1200,exitCapacity:1300},
+    {road:'A57',ref:'27',name:'Köln-Chorweiler',entryPercent:12,exitPercent:12,entryCapacity:900,exitCapacity:1000},
+    {road:'A57',ref:'28',name:'Köln-Longerich',entryPercent:10,exitPercent:10,entryCapacity:900,exitCapacity:950},
+    {road:'A57',ref:'29',name:'Köln-Bickendorf',entryPercent:15,exitPercent:15,entryCapacity:1050,exitCapacity:1100},
     // Large urban junctions on the newly connected northern Cologne ring.
     {road:'A3',ref:'24',name:'Leverkusen-Zentrum',entryPercent:14,exitPercent:14,entryCapacity:1100,exitCapacity:1200},
     {road:'A3',ref:'25',name:'Köln-Mülheim',entryPercent:12,exitPercent:12,entryCapacity:1000,exitCapacity:1050},
@@ -141,7 +151,7 @@ const LOCAL_JUNCTION_PROFILES = [
 
 const familyByRef={
   A3:"transit",A48:"koblenz",A59:"airport",A4:"ring",
-  A1:"ring",A555:"ring",A559:"urban",A560:"siegtal",
+  A1:"ring",A57:"ring",A555:"ring",A559:"urban",A560:"siegtal",
   A562:"urban",A565:"urban",A61:"transit",A571:"urban",A573:"urban"
 };
 const siteProfiles=new Map(LOCAL_JUNCTION_PROFILES.map(p=>[p.road+":"+p.ref,p]));
@@ -245,11 +255,15 @@ const formatter=new Intl.DateTimeFormat("en-GB",{
   timeZone:"Europe/Berlin",weekday:"short",hour:"2-digit",
   minute:"2-digit",year:"numeric",month:"2-digit",day:"2-digit",hourCycle:"h23"
 });
+let lastClockMinute=NaN,lastClock;
 function localClock(ms){
+  const minute=Math.floor(ms/60000);
+  if(minute===lastClockMinute)return lastClock;
   const t=Object.fromEntries(formatter.formatToParts(new Date(ms))
     .map(x=>[x.type,x.value]));
   const days={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6};
-  return {day:days[t.weekday]??0,hour:Number(t.hour)+Number(t.minute)/60,
+  lastClockMinute=minute;
+  return lastClock={day:days[t.weekday]??0,hour:Number(t.hour)+Number(t.minute)/60,
     date:t.year+"-"+t.month+"-"+t.day};
 }
 function motorwayDirection(ref,points,name=""){
@@ -259,11 +273,13 @@ function motorwayDirection(ref,points,name=""){
     /köln|koeln/.test(route)?"A3-koeln":dy>=0?"A3-koeln":"A3-frankfurt";
   if(ref==="A48")return /dernbach/.test(route)?"A48-dernbach":
     /koblenz/.test(route)?"A48-koblenz":dx>=0?"A48-dernbach":"A48-koblenz";
+  if(ref==="A59"&&first[0]>51)return /düsseldorf|duesseldorf/.test(route)||!route&&dy>0?"extra-a59-duesseldorf":"extra-a59-leverkusen";
   if(ref==="A59")return /bonn/.test(route)&&!/köln|koeln|heumar/.test(route)?
     "extra-a59-bonn":dy>=0?"extra-a59-koeln":"extra-a59-bonn";
   if(ref==="A4")return /aachen/.test(route)?"extra-a4-aachen":
     /olpe/.test(route)?"extra-a4-olpe":dx>=0?"extra-a4-olpe":"extra-a4-aachen";
-  if(ref==="A1")return dy>=0?"extra-a1-dortmund":"extra-a1-koblenz";
+  if(ref==="A1")return /dortmund/.test(route)?"extra-a1-dortmund":/koblenz/.test(route)?"extra-a1-koblenz":dy>=0?"extra-a1-dortmund":"extra-a1-koblenz";
+  if(ref==="A57")return /krefeld/.test(route)?"extra-a57-krefeld":/köln|koeln/.test(route)?"extra-a57-koeln":dy>=0?"extra-a57-krefeld":"extra-a57-koeln";
   if(ref==="A555")return dy>=0?"extra-a555-koeln":"extra-a555-bonn";
   if(ref==="A559")return /porz/.test(route)?"extra-a559-porz":
     /gremberg/.test(route)?"extra-a559-gremberg":dy>=0?"extra-a559-gremberg":"extra-a559-porz";
@@ -280,9 +296,14 @@ function regionFor(key,ref,points){
   if(ref==="A3"&&points?.some(p=>p[0]>50.84&&p[1]<7.17))return "ring";
   return familyByRef[ref]||"transit";
 }
+let profileMinute=NaN;const profileCache=new Map();
 function profileFactor(key,ref,ms,points=[],kind="mainline"){
   const clock=localClock(ms),day=clock.day,hour=clock.hour;
   const family=regionFor(key,ref,points),base=weekday[family]||weekday.transit;
+  const minute=Math.floor(ms/60000);
+  if(minute!==profileMinute){profileMinute=minute;profileCache.clear();}
+  const cacheKey=[key,ref,family,localState(ref,points),kind].join(":");
+  if(profileCache.has(cacheKey))return profileCache.get(cacheKey);
   let raw,directionWeekend=1;
   if(day===0||day===6){
     const weekend=day===0?sunday:saturday;
@@ -319,7 +340,8 @@ function profileFactor(key,ref,ms,points=[],kind="mainline"){
   const context=calendarStatus(ref,points,ms);
   const commuter=(raw<1?raw**exp:raw)*direction;
   const through=kind==="mainline"?throughTrafficFloor(ref,clock,context.holiday):0;
-  return Math.max(0,commuter,through)*context.factor;
+  const factor=Math.max(0,commuter,through)*context.factor;
+  profileCache.set(cacheKey,factor);return factor;
 }
 function referenceForRoad(row){
   const ref=row[2]||"",points=row[4],name=row[5]||"";

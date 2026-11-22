@@ -388,8 +388,9 @@ function createLegacyTrafficScenario(data){
       const downstream=edges[dest.edge];
       if(dest.first||downstream.kind==="mainline"||
         edge.kind==="ramp"&&downstream.kind==="ramp"&&
-        /· Auffahrt\b/.test(edge.name)&&/· Auffahrt\b/.test(downstream.name)&&
-        edge.name.split(" · ")[0]===downstream.name.split(" · ")[0])
+        /· Auffahrt\b/.test(edge.name)&&(
+          /· Auffahrt\b/.test(downstream.name)&&edge.name.split(" · ")[0]===downstream.name.split(" · ")[0]||
+          /\bAS\b/.test(edge.name)&&/^AK\b/.test(downstream.name)))
         connect(edge,downstream,edge.lengthM,dest.metre);
     }
     // Off-ramp starts can attach to an interior vertex of the upstream Way.
@@ -712,14 +713,18 @@ function createLegacyTrafficScenario(data){
     const label=originLabel(edge);
     if(!label&&!isLocalEntrance(edge))continue;
     const row=rowById.get(edge.id);
-    const realDestinations=rampMainlineArrivals(edge).map(x=>x.road).filter(target=>
+    let realDestinations=rampMainlineArrivals(edge).map(x=>x.road).filter(target=>
       target.kind==="mainline"&&target.ref&&(hasContinuousMainline(target)||
-        /^(A565|A61|A571|A573)$/.test(target.ref)&&
+        /^(A1|A57|A565|A61|A571|A573)$/.test(target.ref)&&
         (corridorLengths.get(directedCorridorIds.get(target.index))||0)>=1500));
     if(!realDestinations.length)continue;
     // OSM motorway_link may lack a ref even when its real directed merge
     // unambiguously joins an A3/A4/... carriageway. Infer the DESTINATION's
     // motorway from that real mapped movement, never from geographic proximity.
+    // A signed local entrance at a combined AS/AK may reach multiple
+    // motorways. Charge its demand once to the explicitly signed local ref.
+    if(edge.ref&&/\bAS\b/.test(edge.name)&&realDestinations.some(target=>target.ref===edge.ref))
+      realDestinations=realDestinations.filter(target=>target.ref===edge.ref);
     const refs=new Set(realDestinations.map(target=>target.ref));
     const inferredRef=edge.ref||(refs.size===1?[...refs][0]:null);
     const corridors=new Set(realDestinations.map(target=>directedCorridorIds.get(target.index)));
@@ -861,6 +866,12 @@ function createLegacyTrafficScenario(data){
   const divertDelta=edges.map(edge=>new Float64Array(edge.n));
   const bypassDelta=edges.map(edge=>new Float64Array(edge.n));
   const entryDelta=edges.map(edge=>new Float64Array(edge.n));
+  // These transfer requests are transient cell faces, not vehicle objects.
+  // Reuse buckets and records every tick to avoid GC spikes on mobile.
+  const requestBuckets=edges.map(edge=>Array.from({length:edge.n},()=>[]));
+  const requestPool=[],activeBuckets=[];
+  const used=edges.map(edge=>new Float64Array(edge.n));
+  const accepted=edges.map(edge=>new Float64Array(edge.n));
   const routeChanges=new Map(),routeAccounting=new Map(),routePaths=new Map();
   const routePathCosts=new Map(),motorwayAlternatives=new Map();
   const enteredStep=new Float64Array(edges.length);
@@ -3245,7 +3256,7 @@ function createLegacyTrafficScenario(data){
           const transfers=branch.kind==="mainline"?branch.ref!==main.ref:
             !localTerminal(branch)&&rampMainlineArrivals(branch).some(x=>x.road.ref!==main.ref);
           if(!transfers)continue;
-          const fork=main.index+":"+turn.fromCell;
+          const fork=cellKey(main.index,turn.fromCell);
           const list=motorwayAlternatives.get(fork)||[];
           list.push({turn,target:target.index,kind:obstacle.spec.kind,closureId:obstacle.spec.id,
             downstream,endEdgeId:endEdge.id,endOffset:last.toM,
@@ -3582,7 +3593,9 @@ function createLegacyTrafficScenario(data){
     }
     localSourceChoiceCache.set(source.index,result);return result;
   }
-  function cellKey(j,k){return j+":"+k;}
+  // Numeric keys avoid millions of short-lived strings in the cell solver.
+  // A 230 m cell and the OSM Way length limit make 65536 cells per Way ample.
+  function cellKey(j,k){return j*65536+k;}
   function internalGate(edge,k){
     return (activeEffects.get(edge.id)||NO_EFFECTS).some(x=>x.event.kind==="closure"&&x.gate&&
       x.fromM>k*edge.cellLength+.001&&x.fromM<=(k+1)*edge.cellLength+.001);
@@ -3892,6 +3905,7 @@ function createLegacyTrafficScenario(data){
       const edge=edges[j],n=edge.n,stock=edge.stock;
       const s=send[j],r=receive[j],d=delta[j];
       d.fill(0);divertDelta[j].fill(0);bypassDelta[j].fill(0);entryDelta[j].fill(0);
+      used[j].fill(0);accepted[j].fill(0);
       // Backward-moving queue front; receiving depends on downstream room.
       const effects=activeEffects.get(edge.id)||NO_EFFECTS;
       for(let k=0;k<n;k++){
@@ -4034,17 +4048,44 @@ function createLegacyTrafficScenario(data){
         laneReceive.set(cellKey(road.index,cell),limits);
       }
     }
-    const proposed=new Map(),splitSources=[],boundaryUsed=new Map();
+    for(const bucket of activeBuckets)bucket.length=0;
+    activeBuckets.length=0;
+    let requestCount=0;
+    const splitSources=[];
     const push=(to,toCell,from,fromCell,want,mark=false,tagShare,markFraction,protect=false,routeTerminal=null,newRouteTerminal=null,ignoreBypass=false,turnKey=null,carryTurnKey=null,entry=false)=>{
-      const key=to+":"+toCell,arr=proposed.get(key)||[];
-      arr.push({to,toCell,from,fromCell,want,mark,tagShare,markFraction,protect,routeTerminal,newRouteTerminal,ignoreBypass,turnKey,carryTurnKey,entry});
-      proposed.set(key,arr);
+      const arr=requestBuckets[to][toCell];
+      if(!arr.length)activeBuckets.push(arr);
+      const req=requestPool[requestCount]||(requestPool[requestCount]={});requestCount++;
+      req.to=to;req.toCell=toCell;req.from=from;req.fromCell=fromCell;req.want=want;
+      req.mark=mark;req.tagShare=tagShare;req.markFraction=markFraction;req.protect=protect;
+      req.routeTerminal=routeTerminal;req.newRouteTerminal=newRouteTerminal;req.ignoreBypass=ignoreBypass;
+      req.turnKey=turnKey;req.carryTurnKey=carryTurnKey;req.entry=entry;
+      arr.push(req);
     };
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],out=send[j];
       for(let k=0;k<edge.n;k++){
         let available=out[k];
         if(available<=0)continue;
+        // Most motorway cells have exactly one ordinary continuation. They
+        // need the same simultaneous receiving allocation, but no OD/turn
+        // choice, copied link objects, temporary arrays or route searches.
+        // Use the full path whenever a closure, lane fork or cohort exists.
+        if(!anyClosureActive&&edge.kind==="mainline"&&!edge.entryStock[k]&&
+          !edge.divertStock[k]&&!edge.routeStock[k]&&!edge.turnStock[k]&&!approachForks[j][k]?.active){
+          const turns=edge.linksFrom[k];
+          if(k<edge.n-1&&!turns.length){
+            if(receive[j][k+1]>0)push(j,k+1,j,k,available,false,0);
+            continue;
+          }
+          if(k===edge.n-1&&!boundaryExit[j]&&turns.length===1){
+            const t=turns[0],target=edges[t.to];
+            if(target.kind==="mainline"&&target.ref===edge.ref&&!blockedMovement(edge,t)){
+              if(receive[t.to][t.toCell]>0)push(t.to,t.toCell,j,k,available,false,0);
+              continue;
+            }
+          }
+        }
         const entryAmount=edge.entryStock[k];
         if(entryAmount>1e-9&&edge.kind==="ramp"){
           edge.turnStock[k]=null;
@@ -4443,13 +4484,11 @@ function createLegacyTrafficScenario(data){
           const rerouted=plan?tagged:0;
           exited+=leaving-rerouted;
           enqueueDetour(plan,rerouted,dt);
-          const key=j+":"+k;
-          boundaryUsed.set(key,(boundaryUsed.get(key)||0)+leaving);
+          used[j][k]+=leaving;
         }
       }
     }
-    const used=new Map(boundaryUsed),accepted=new Map();
-    for(const requests of proposed.values()){
+    for(const requests of activeBuckets){
       const {to,toCell}=requests[0];
       const accepting=receive[to][toCell];
       const groupLimits=laneReceive.get(cellKey(to,toCell));
@@ -4504,9 +4543,8 @@ function createLegacyTrafficScenario(data){
         }
         delta[req.from][req.fromCell]-=amount;
         delta[to][toCell]+=amount;
-        const fromKey=req.from+":"+req.fromCell,toKey=to+":"+toCell;
-        used.set(fromKey,(used.get(fromKey)||0)+amount);
-        accepted.set(toKey,(accepted.get(toKey)||0)+amount);
+        used[req.from][req.fromCell]+=amount;
+        accepted[to][toCell]+=amount;
         if(req.from!==to){
           enteredStep[to]+=amount;
           departedStep[req.from]+=amount;
@@ -4521,12 +4559,10 @@ function createLegacyTrafficScenario(data){
     // nearby ramp and ERASED the physical accident queue. Extra diversion
     // is allowed only when there is an active announced corridor closure.
     for(const split of (anyClosureActive?splitSources:[])){
-      const fromKey=split.from+":"+split.cell;
-      let remaining=split.available-(used.get(fromKey)||0);
+      let remaining=split.available-used[split.from][split.cell];
       if(remaining<1e-6)continue;
       for(const opt of [...split.options].sort((a,b)=>b.weight-a.weight)){
-        const toKey=opt.to+":"+opt.toCell;
-        const spare=receive[opt.to][opt.toCell]-(accepted.get(toKey)||0);
+        const spare=receive[opt.to][opt.toCell]-accepted[opt.to][opt.toCell];
         if(spare<=1e-6)continue;
         const moved=Math.min(remaining,spare);
         const sourceEdge=edges[split.from],old=sourceEdge.stock[split.cell];
@@ -4543,7 +4579,7 @@ function createLegacyTrafficScenario(data){
           enteredStep[opt.to]+=moved;
           departedStep[split.from]+=moved;
         }
-        accepted.set(toKey,(accepted.get(toKey)||0)+moved);
+        accepted[opt.to][opt.toCell]+=moved;
         remaining-=moved;
         if(remaining<=1e-6)break;
       }
@@ -4590,7 +4626,7 @@ function createLegacyTrafficScenario(data){
         }
         continue;
       }
-      const current=(accepted.get(cellKey(road.index,0))||0)+(localAdmissionUsed.get(road.index)||0);
+      const current=accepted[road.index][0]+(localAdmissionUsed.get(road.index)||0);
       const room=Math.max(0,receive[road.index][0]-current);
       const remaining=Math.max(0,localAdmissionRate(road)*dt/3600-(localAdmissionUsed.get(road.index)||0));
       const admitted=Math.min(trip.vehicles,room,remaining);
@@ -4642,7 +4678,7 @@ function createLegacyTrafficScenario(data){
       }
       const available=edge.backlog+offered-diverted;
       const admitted=entryClosed?0:Math.min(available,
-        Math.max(0,receive[j][0]-(accepted.get(cellKey(j,0))||0)-(localAdmissionUsed.get(j)||0)),
+        Math.max(0,receive[j][0]-accepted[j][0]-(localAdmissionUsed.get(j)||0)),
         Math.max(0,localAdmissionRate(edge)*dt/3600-(localAdmissionUsed.get(j)||0)));
       delta[j][0]+=admitted;
       if(edge.kind==="ramp")entryDelta[j][0]+=admitted;
@@ -4666,7 +4702,7 @@ function createLegacyTrafficScenario(data){
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],change=delta[j];
       for(let k=0;k<edge.n;k++){
-        const before=edge.stock[k],sent=used.get(j+":"+k)||0;
+        const before=edge.stock[k],sent=used[j][k];
         edge.cellThroughVph[k]+=alpha*(sent*3600/dt-edge.cellThroughVph[k]);
         const throughBefore=throughStart.get(cellKey(j,k))??before;
         const throughFlow=throughStart.has(cellKey(j,k))?throughSent.get(cellKey(j,k))||0:sent;
@@ -4800,7 +4836,7 @@ function createLegacyTrafficScenario(data){
     const count=edge.stock.reduce((sum,x)=>sum+x,0);
     const turnCommitments=new Map();
     for(const cell of edge.turnStock)if(cell)for(const [target,vehicles] of cell){
-      const targetId=target==="outside"?"outside":edges[Number(target.split(":")[0])].id;
+      const targetId=target==="outside"?"outside":edges[Math.floor(target/65536)].id;
       turnCommitments.set(targetId,(turnCommitments.get(targetId)||0)+vehicles);
     }
     const at=Math.max(0,Math.min(edge.n-1,Math.floor((Number(offsetM)||0)/edge.cellLength)));

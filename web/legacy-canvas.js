@@ -6,7 +6,7 @@
 "use strict";
 const $=id=>document.getElementById(id);
 const RAD=Math.PI/180;
-const CORRIDOR=[[50.15,6.84],[50.88,8.21]];
+const CORRIDOR=[[50.15,6.80],[51.06,8.21]];
 const GERMANY=[[47.1,5.65],[55.15,15.35]];
 function merc(point){
   const lat=Math.max(-85,Math.min(85,point[0]))*RAD;
@@ -125,7 +125,7 @@ async function startLegacyCanvas(existingMap=null){
   }
   let eventTargets=[];
   let eventEditor=null;
-  let timer=null,simRunning=false,sliceTimer=null,sliceRemaining=0;
+  let timer=null,simRunning=false,sliceTimer=null,sliceRemaining=0,pendingWarmStart=false;
   const mainlines=segments.filter(x=>x.kind!=="ramp");
   const ramps=segments.filter(x=>x.kind==="ramp");
   $("chip-roads").textContent=format(segments.length)+" Fahrwege";
@@ -272,7 +272,7 @@ async function startLegacyCanvas(existingMap=null){
     const starts=new Set(),ends=new Set();
     const key=(road,point)=>road.ref+":"+road.kind+":"+point[0].toFixed(7)+","+point[1].toFixed(7);
     for(const road of roads){
-      for(const band of scenario.visualBands(road.id)){
+      for(const band of trafficSnapshot.get(road.id)||[]){
         if(band.color==="free")continue;
         if(band.fromM<=1)starts.add(key(road,road.points[0]));
         if(band.toM>=road.meters-1)ends.add(key(road,road.points.at(-1)));
@@ -303,7 +303,7 @@ async function startLegacyCanvas(existingMap=null){
         context.beginPath();
         let changed=false;
         for(const road of view){
-          for(const part of scenario.visualBands(road.id)){
+          for(const part of trafficSnapshot.get(road.id)||[]){
             if(part.color!==state)continue;
             const length=part.toM-part.fromM;
             if(zoom<11&&length<35){
@@ -325,7 +325,7 @@ async function startLegacyCanvas(existingMap=null){
     if(phase!=="closed")return;
     const closed=[];
     for(const road of view){
-      for(const part of scenario.closureBands(road.id))
+      for(const part of closureSnapshot.get(road.id)||[])
         closed.push({road,...part});
     }
     if(closed.length){
@@ -367,10 +367,10 @@ async function startLegacyCanvas(existingMap=null){
       a[0]>=6&&a[1]>=6&&a[0]+w<=width-6&&a[1]+h<=height-6&&
       !obstacles.some(b=>intersects(a,b)))??null;
   }
-  function drawJamLabels(){
+  function drawJamLabels(groups){
     const boxes=[];
     if(zoom<10.2||typeof scenario.jamSummaries!=="function")return boxes;
-    const groups=scenario.jamSummaries(),scale=2**zoom;
+    const scale=2**zoom;
     for(const group of groups){
       if(boxes.length>=(width<480?2:5))break;
       const road=segmentById.get(group.edgeId);
@@ -533,12 +533,22 @@ async function startLegacyCanvas(existingMap=null){
     }
   }
   let renderedJamGroups=null;
+  const trafficSnapshot=new Map(),closureSnapshot=new Map();
   function draw(){
     if(!width||!height)return;
     const groups=scenario.jamSummaries();
     if(groups!==renderedJamGroups){
       window.StauDashboard?.renderJams(groups,jamRoadInfo,focusJam);
       renderedJamGroups=groups;
+      // Snapshot only changed traffic, once per model update. A pan/pinch
+      // is then pure canvas drawing, not thousands of scenario queries.
+      trafficSnapshot.clear();closureSnapshot.clear();
+      for(const road of segments){
+        const bands=scenario.visualBands(road.id).filter(b=>b.color!=="free");
+        if(bands.length)trafficSnapshot.set(road.id,bands);
+        const closed=scenario.closureBands(road.id);
+        if(closed.length)closureSnapshot.set(road.id,closed);
+      }
     }
     // Show how many distinct saved closures are ACTIVE. Otherwise several
     // old locally stored incidents can look like one ghost closure spreading
@@ -571,7 +581,7 @@ async function startLegacyCanvas(existingMap=null){
           strokeGroup(layer.visible,layer.line,scale,phase);
       // Never redraw a selected Way over a full red/white closure.
       drawEventMarkers();
-      const jamBoxes=drawJamLabels();
+      const jamBoxes=drawJamLabels(groups);
       drawLabels(jamBoxes);
     }else eventTargets=[];
     context.fillStyle="#ffffffee";
@@ -585,6 +595,7 @@ async function startLegacyCanvas(existingMap=null){
     const rect=root.getBoundingClientRect();
     const nextWidth=Math.floor(rect.width),nextHeight=Math.floor(rect.height);
     if(nextWidth<80||nextHeight<80)return;
+    if(width===nextWidth&&height===nextHeight&&canvas.dataset.fitted)return;
     width=nextWidth;height=nextHeight;
     const dpr=clamp(window.devicePixelRatio||1,1,2);
     canvas.width=Math.round(width*dpr);
@@ -713,7 +724,7 @@ async function startLegacyCanvas(existingMap=null){
         if(hit)open(hit.road,Math.min(hit.road.meters-.001,hit.offsetM));
       }
     }
-    if(!pointers.size){tap=null;wasPinching=false;}
+    if(!pointers.size){tap=null;wasPinching=false;resumeSlice();}
   }
   canvas.addEventListener("pointerup",endPointer);
   // A native gesture interruption is never a tap. Drop stale captures so
@@ -722,10 +733,11 @@ async function startLegacyCanvas(existingMap=null){
     if(!pointers.delete(e.pointerId))return;
     tap=null;
     wasPinching=pointers.size>0;
+    if(!pointers.size)resumeSlice();
   }
   canvas.addEventListener("pointercancel",cancelPointer);
   canvas.addEventListener("lostpointercapture",cancelPointer);
-  window.addEventListener("blur",()=>{pointers.clear();tap=null;wasPinching=false;});
+  window.addEventListener("blur",()=>{pointers.clear();tap=null;wasPinching=false;resumeSlice();});
   canvas.addEventListener("wheel",e=>{e.preventDefault();const p=local(e);
     zoomAt(p[0],p[1],e.deltaY<0?.45:-.45);
   },{passive:false});
@@ -781,10 +793,14 @@ async function startLegacyCanvas(existingMap=null){
   }
   function runSlice(){
     sliceTimer=null;
-    if(!simRunning||!sliceRemaining)return;
+    if(!simRunning||!sliceRemaining||document.hidden||pointers.size)return;
     try{
       // Yield to touch, drawing and browser painting between short physics
       // tasks. A slow phone never accumulates overlapping minute batches.
+      if(pendingWarmStart){
+        pendingWarmStart=false;scenario.warmStart?.();displayStats();requestDraw();
+        sliceTimer=setTimeout(runSlice,0);return;
+      }
       const started=Date.now();
       do{
         scenario.step(5,sliceRemaining===1);sliceRemaining--;
@@ -798,15 +814,19 @@ async function startLegacyCanvas(existingMap=null){
       console.error(error);
     }
   }
+  function resumeSlice(){
+    if(simRunning&&sliceRemaining&&sliceTimer===null&&!document.hidden&&!pointers.size)
+      sliceTimer=setTimeout(runSlice,0);
+  }
   function tick(){
-    if(!simRunning||sliceRemaining||document.hidden)return;
-    sliceRemaining=12;runSlice();
+    if(!simRunning||sliceRemaining||document.hidden||pointers.size)return;
+    sliceRemaining=12;resumeSlice();
   }
   function startSimulation(){
     if(simRunning)return;
     // Old simulator initialized the entire motorway with cars already
     // driving at the selected date/hour; these are not additional sources.
-    scenario.warmStart?.();
+    pendingWarmStart=true;
     simRunning=true;
     $("sim-toggle").textContent="Ⅱ Simulation anhalten";
     $("sim-toggle").classList.add("running");

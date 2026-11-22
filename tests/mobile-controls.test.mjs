@@ -41,6 +41,7 @@ test("Mobiles Bedienfeld lässt sich einklappen und öffnen",async()=>{
     requestAnimationFrame:fn=>fn()
   };
   const document={
+    addEventListener(){},
     querySelector:x=>x===".sidebar"?sidebar:null,
     getElementById:id=>ids[id]||null
   };
@@ -69,7 +70,7 @@ test("Staukarten verwenden gemessene Modellwerte, Fahrtrichtung und verknüpfen 
   return elements.get(id);
  }
  let serial=0;
- const document={getElementById:element,querySelector:()=>null,createElement:tag=>element(tag+ ++serial)};
+ const document={getElementById:element,querySelector:()=>null,createElement:tag=>element(tag+ ++serial),addEventListener(){}};
  runInNewContext(code,{window,document});
  const ui=window.StauDashboard;
  const group={edgeId:"a3",offsetM:135,lengthM:2400,delayMin:11.7,worstKmh:8};
