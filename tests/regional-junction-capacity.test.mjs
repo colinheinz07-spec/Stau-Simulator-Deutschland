@@ -38,7 +38,10 @@ test("large real AS have individual finite capacities and increased overnight se
   assert.ok(sources.filter(p=>/Montabaur/.test(p.name)).reduce((n,p)=>n+p.peakVph,0)>=1600);
   assert.ok(sources.filter(p=>/Koblenz-Nord/.test(p.name)).reduce((n,p)=>n+p.peakVph,0)>=1200);
   assert.ok(sources.filter(p=>p.ref==="A61").reduce((n,p)=>n+p.peakVph,0)>=1299);
-  assert.ok(Math.abs(sources.filter(p=>p.ref==="A61"||p.id==="A48-24351899").reduce((n,p)=>n+p.peakVph,0)-3200)<1e-6);
+  assert.equal(sources.find(p=>p.id==="A48-824372860").peakVph,1900);
+  assert.equal(sources.filter(p=>p.ref==="A61"&&p.kind==="mainline").reduce((n,p)=>n+p.peakVph,0),6500);
+  assert.ok(!sources.some(p=>p.ref==="A61"&&p.name.includes('AK Koblenz')),
+    'mapped motorway transfers must not independently generate traffic');
 });
 
 function close(s,data,id){
@@ -46,14 +49,14 @@ function close(s,data,id){
   return s.setEvent({id,edgeId:id,kind:"closure",offsetM:150,lengthM:5,
     closedLanes:Array.from({length:road[3]},(_,i)=>i),speedKmh:0,hasShoulder:false,shoulder:"normal"});
 }
-test("A48 closure detours use Bendorf and Koblenz-Nord in both directions, and A61 as external destination",async()=>{
+test("A48 closure detours use Bendorf and Koblenz-Nord in both directions, and the mapped A61 at Plaidt",async()=>{
   const {s,data}=await scenario();
   for(const [id,destination] of [
     ["A48-3991660",/Bendorf/],
     ["A48-348130010",/Koblenz-Nord/],
     ["A48-224110328",/Bendorf/],
     ["A48-24351899",/Koblenz-Nord/],
-    ["A48-489943812",/A61.*Netzgrenze/]
+    ["A48-489943812",/A61.*Plaidt/]
   ]){
     close(s,data,id);
     assert.ok(s.detourDestinations(id).some(name=>destination.test(name)),id);
@@ -61,24 +64,24 @@ test("A48 closure detours use Bendorf and Koblenz-Nord in both directions, and A
     s.removeEvent(id);
   }
 });
-test("A61 feeder traffic bypasses a closed A48 entry without disappearing or entering the closure",async()=>{
+test("A61 through traffic remains independent of a closed A48 entry",async()=>{
   const {s,data}=await scenario();
   s.setSimulationStart(Date.parse("2026-11-18T16:00:00+01:00"));
   s.warmStart();
   for(let i=0;i<8;i++)s.advance(12);
-  const feeders=s.sourceProfiles().filter(p=>p.ref==="A61");
+  const feeders=s.sourceProfiles().filter(p=>p.ref==="A61"&&p.kind==="mainline");
+  assert.equal(feeders.length,2);
   assert.ok(feeders.every(p=>s.edgeActivity(p.id).enteredVph>350));
-  assert.ok(s.edgeActivity("extra-heumar-4854593").enteredVph>400);
   s.setSimulationStart(Date.parse("2026-11-18T16:00:00+01:00"));
   s.warmStart();
   const id="A48-24351899";
   close(s,data,id);
   s.advance(12);
   for(const p of feeders){
-    assert.equal(s.edgeActivity(p.id).localSourceDetourFraction,1,p.id);
-    assert.equal(s.edgeActivity(p.id).enteredVph,0,p.id);
+    assert.equal(s.edgeActivity(p.id).localSourceDetourFraction,0,p.id);
+    assert.ok(s.edgeActivity(p.id).enteredVph>0,p.id);
   }
-  assert.ok(s.totals().vehiclesOnDetours>0);
+  assert.ok(s.detourDestinations(id).some(name=>/Koblenz-Nord/.test(name)));
   assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
 });
 

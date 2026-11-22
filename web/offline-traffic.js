@@ -304,8 +304,15 @@ function createLegacyTrafficScenario(data){
     }
   }
   const linkKeys=new Set();
+  const mappedLocalBoundaries=new Set((data.localRampBoundaryNodes||[]).map(coord));
   function connect(from,to,fromM,toM){
     if(from.index===to.index)return;
+    // Exact motorway_link endpoints on an actual public street are the
+    // interface to the local network. Do not circulate vehicles around a
+    // cropped ramp roundabout or silently join the opposite carriageway.
+    if(from.kind==="ramp"&&to.kind==="ramp"&&
+      fromM>=from.lengthM-.01&&toM<.01&&mappedLocalBoundaries.has(from.to)&&
+      /\bAS\b/.test(from.name)&&/\bAS\b/.test(to.name))return;
     // Compact OSM data often omits the public road between the two ramps.
     // A same-AS exit ending exactly at an entrance is a local-road boundary,
     // not an automatic U-shaped path that rejoins the congested motorway.
@@ -563,7 +570,7 @@ function createLegacyTrafficScenario(data){
     if(/a59-bonn|a555-bonn|a1-koblenz|a559-porz/.test(key))return lat;
     return key.endsWith("-sued")?-lat:key.endsWith("-nord")?lat:-lon;
   }
-  const sources=[],componentSeen=new Set(),directedCorridorIds=new Map();
+  const sources=[],componentSeen=new Set(),directedCorridorIds=new Map(),corridorLengths=new Map();
   let sourceComponents=0,unservedComponents=0;
   // An interchange-fed motorway start is not an external demand boundary.
   // Trace real motorway traffic through ramp chains (not local AS origins).
@@ -589,6 +596,7 @@ function createLegacyTrafficScenario(data){
         if(!componentSeen.has(neighbor))stack.push(neighbor);
     }
     const totalLength=component.reduce((sum,edge)=>sum+edge.lengthM,0);
+    corridorLengths.set(first.index,totalLength);
     // A short disconnected ramp/Way fragment must NOT get a full motorway
     // source. But a real map-cut motorway >= 1.5 km must receive arrivals.
     if(totalLength<1500)continue;
@@ -603,6 +611,10 @@ function createLegacyTrafficScenario(data){
       ||b.edge.lengthM-a.edge.lengthM);
     const {edge,profile}=possible[0];
     edge.source=true;edge.referencePeakVph=profile.peakVph;
+    // Real map boundaries at the Gelsdorf/B257 and west A48 cuts carry
+    // only their own traffic, not the full downstream motorway peak.
+    if(edge.id==="A565-16799872")edge.referencePeakVph=650;
+    if(edge.id==="A48-824372860")edge.referencePeakVph=1900;
     edge.directionKey=profile.key;sources.push(edge);sourceComponents++;
   }
   const distinctOnramps=new Map();
@@ -666,7 +678,9 @@ function createLegacyTrafficScenario(data){
     if(!label&&!isLocalEntrance(edge))continue;
     const row=rowById.get(edge.id);
     const realDestinations=rampMainlineArrivals(edge).map(x=>x.road).filter(target=>
-      target.kind==="mainline"&&target.ref&&hasContinuousMainline(target));
+      target.kind==="mainline"&&target.ref&&(hasContinuousMainline(target)||
+        /^(A565|A61|A571|A573)$/.test(target.ref)&&
+        (corridorLengths.get(directedCorridorIds.get(target.index))||0)>=1500));
     if(!realDestinations.length)continue;
     // OSM motorway_link may lack a ref even when its real directed merge
     // unambiguously joins an A3/A4/... carriageway. Infer the DESTINATION's
@@ -711,7 +725,7 @@ function createLegacyTrafficScenario(data){
     // feed the same Köln/Heumar direction. Reserve their demand fully,
     // including a modest share of the already modelled city transfers.
     const urbanFeeder=boundary.ref==="A59";
-    if(boundary.source)boundary.referencePeakVph=Math.max(boundary.referencePeakVph*(urbanFeeder?.35:.5),
+    if(boundary.source&&boundary.id!=="A565-16799872")boundary.referencePeakVph=Math.max(boundary.referencePeakVph*(urbanFeeder?.35:.5),
       boundary.referencePeakVph-peak*(urbanFeeder?1.25:.8));
   }
   for(const {origins,profile,peak} of distinctOnramps.values())for(const edge of origins){
@@ -1071,7 +1085,7 @@ function createLegacyTrafficScenario(data){
     // choosing the best geometrical projection (lowest perpendicular error).
     const unique=new Map();
     for(const mark of marks){
-      const key=mark.junction[0]+":"+mark.junction[1];
+      const key=mark.junction[0]+":"+(mark.junction[1]||mark.junction[2]);
       const old=unique.get(key);
       if(!old||mark.best<old.best-.01||
         (Math.abs(mark.best-old.best)<.01&&
@@ -1129,7 +1143,7 @@ function createLegacyTrafficScenario(data){
     const ix=selectionPositions.findIndex(position=>position>=point);
     if(ix<=0)return null;
     const left=ordered[ix-1],right=ordered[ix];
-    if(!right||left.junction[1]===right.junction[1]||
+    if(!right||(left.junction[1]||left.junction[2])===(right.junction[1]||right.junction[2])||
       right.position<=left.position+.001)return null;
     const startExits=offSplits.filter(({position,target})=>
       position<point+.05&&(nearestJunctionIndex(position)===ix-1||
@@ -1170,8 +1184,8 @@ function createLegacyTrafficScenario(data){
     }
     return {spans,coveredLengthM:spans.reduce((n,s)=>n+s.toM-s.fromM,0),
       truncated:false,from:left.junction,to:right.junction,releaseTransfers:[...releaseTransfers],
-      fromLabel:left.junction[0]+" "+left.junction[1]+" "+left.junction[2],
-      toLabel:right.junction[0]+" "+right.junction[1]+" "+right.junction[2]};
+      fromLabel:left.junction.filter((_,i)=>i<3).filter(Boolean).join(" "),
+      toLabel:right.junction.filter((_,i)=>i<3).filter(Boolean).join(" ")};
   }
   // A tap on an exit or entrance ramp closes only that directed ramp.
   // Extend through physically joined ramp fragments, but never across a
@@ -3037,6 +3051,38 @@ function createLegacyTrafficScenario(data){
       const candidates=[...optionsByJunction.values()]
         .sort((a,b)=>a.distance-b.distance||a.ramp.id.localeCompare(b.ramp.id))
         .slice(0,3);
+      // At a network-ending interchange the reachable return may be on a
+      // DIFFERENT mapped motorway (e.g. A61 Plaidt → AK Koblenz → A48 west).
+      // Trace only open, directed transfers back from the actual downstream
+      // carriageway. Never recreate the former fictitious A61 boundary sink.
+      if(!candidates.length&&obstacle.spec.kind==="closure"&&
+        edges.some(e=>e.kind==="mainline"&&e.ref==="A61")){
+        const returns=new Map(),work=[];
+        const closedEdge=e=>(activeEffects.get(e.id)||NO_EFFECTS).some(s=>s.event.kind==="closure");
+        for(const [id,distance] of downstream){
+          const road=byId.get(id);
+          if(!road||closedEdge(road))continue;
+          returns.set(road.index,distance);work.push(road);
+        }
+        for(let i=0;i<work.length;i++){
+          const road=work[i],base=returns.get(road.index);
+          for(const {from,turn} of incomingTurns[road.index]){
+            if(closedEdge(from)||blockedMovement(from,turn))continue;
+            const metres=base+Math.max(1,from.lengthM);
+            if(metres>35000||metres>=(returns.get(from.index)??Infinity))continue;
+            returns.set(from.index,metres);work.push(from);
+          }
+        }
+        const alternate=new Map();
+        for(const ramp of edges){
+          if(ramp.kind!=="ramp"||ramp.ref===endEdge.ref||!isLocalEntrance(ramp)||
+            !returns.has(ramp.index)||closedEdge(ramp))continue;
+          const junction=junctionLabel(ramp),distance=returns.get(ramp.index);
+          if(!alternate.has(junction)||distance<alternate.get(junction).distance)
+            alternate.set(junction,{ramp,distance,junction});
+        }
+        candidates.push(...[...alternate.values()].sort((a,b)=>a.distance-b.distance).slice(0,3));
+      }
       // When the A48 ends at the cropped A61, a local bypass can still
       // reach that external motorway destination. Verify it on the actual
       // directed graph beyond the event; never invent an A61 on-ramp.

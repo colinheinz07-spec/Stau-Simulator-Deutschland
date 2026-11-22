@@ -66,8 +66,12 @@ const REFERENCE_PEAKS = {
     'extra-a560-hennef': 2900, 'extra-a560-bonn': 2800,
     'extra-a562-bonn': 2800, 'extra-a562-bonn-ost': 2400,
     // Explicit scenario assumptions (not measured BASt data).
-    'extra-a61-nord': 2800, 'extra-a61-sued': 2700,
-    'extra-a565-nord': 2300, 'extra-a565-sued': 2600
+    // Regional model peaks, anchored to corridor DTV magnitude rather than
+    // claiming hourly counter data. A571/A573 are local Ahr valley feeders.
+    'extra-a61-nord': 3300, 'extra-a61-sued': 3200,
+    'extra-a565-nord': 2300, 'extra-a565-sued': 2600,
+    'extra-a571-nord': 700, 'extra-a571-sued': 750,
+    'extra-a573-nord': 1050, 'extra-a573-sued': 1050
 };
 
 const LOCAL_JUNCTION_PROFILES = [
@@ -112,13 +116,29 @@ const LOCAL_JUNCTION_PROFILES = [
     { road: 'A562', ref: '3', name: 'Bonn-Rheinaue', entryPercent: 9, exitPercent: 9, reason: 'Städtischer Anschluss' },
     { road: 'A562', ref: '4', name: 'Bonn-Ramersdorf', entryPercent: 9.5, exitPercent: 9, reason: 'Städtischer Anschluss' },
     { road: 'A565', ref: '2', name: 'Bonn-Beuel-Nord', entryPercent: 9, exitPercent: 9, reason: 'Städtischer Anschluss' },
-    { road: 'A565', ref: '3', name: 'Bonn-Auerberg', entryPercent: 10, exitPercent: 9.5, reason: 'Städtischer Anschluss' }
+    { road: 'A565', ref: '3', name: 'Bonn-Auerberg', entryPercent: 10, exitPercent: 9.5, reason: 'Städtischer Anschluss' },
+    { road: 'A565', ref: '5', name: 'Bonn-Tannenbusch', entryPercent: 12, exitPercent: 12, entryCapacity: 900, exitCapacity: 900 },
+    { road: 'A565', ref: '6', name: 'Bonn-Endenich', entryPercent: 12, exitPercent: 13, entryCapacity: 900, exitCapacity: 950 },
+    { road: 'A565', ref: '7', name: 'Bonn-Poppelsdorf', entryPercent: 18, exitPercent: 18, entryCapacity: 1000, exitCapacity: 1050 },
+    { road: 'A565', ref: '8', name: 'Bonn-Lengsdorf', entryPercent: 10, exitPercent: 10, entryCapacity: 800, exitCapacity: 850 },
+    { road: 'A565', ref: '9', name: 'Bonn-Hardtberg', entryPercent: 13, exitPercent: 13, entryCapacity: 950, exitCapacity: 1000 },
+    { road: 'A565', ref: '10', name: 'Meckenheim-Nord', entryPercent: 8, exitPercent: 8, entryCapacity: 750, exitCapacity: 800 },
+    { road: 'A565', ref: '11', name: 'Merl', entryPercent: 10, exitPercent: 10, entryCapacity: 850, exitCapacity: 850 },
+    { road: 'A565', ref: '13', name: 'Gelsdorf', entryPercent: 7, exitPercent: 7, entryCapacity: 650, exitCapacity: 650 },
+    { road: 'A61', ref: '32', name: 'Niederzissen', entryPercent: 6, exitPercent: 6, entryCapacity: 800, exitCapacity: 850 },
+    { road: 'A61', ref: '33', name: 'Wehr', entryPercent: 5, exitPercent: 5, entryCapacity: 700, exitCapacity: 750 },
+    { road: 'A61', ref: '34', name: 'Mendig', entryPercent: 10, exitPercent: 10, entryCapacity: 950, exitCapacity: 1000 },
+    { road: 'A61', ref: '35', name: 'Kruft', entryPercent: 7, exitPercent: 7, entryCapacity: 850, exitCapacity: 850 },
+    { road: 'A61', ref: '36', name: 'Plaidt', entryPercent: 9, exitPercent: 9, entryCapacity: 900, exitCapacity: 950 },
+    { road: 'A571', ref: '', name: 'Löhndorf', entryPercent: 18, exitPercent: 18, entryCapacity: 600, exitCapacity: 650 },
+    { road: 'A571', ref: '', name: 'Ehlingen', entryPercent: 16, exitPercent: 16, entryCapacity: 650, exitCapacity: 700 },
+    { road: 'A573', ref: '2', name: 'Bad Neuenahr-West', entryPercent: 25, exitPercent: 25, entryCapacity: 850, exitCapacity: 900 }
 ];
 
 const familyByRef={
   A3:"transit",A48:"koblenz",A59:"airport",A4:"ring",
   A1:"ring",A555:"ring",A559:"urban",A560:"siegtal",
-  A562:"urban",A565:"urban",A61:"transit"
+  A562:"urban",A565:"urban",A61:"transit",A571:"urban",A573:"urban"
 };
 const siteProfiles=new Map(LOCAL_JUNCTION_PROFILES.map(p=>[p.road+":"+p.ref,p]));
 // Off-map motorway corridors: verified endpoints in the existing OSM
@@ -134,7 +154,8 @@ const WIDE_CORRIDORS=[
 ];
 function junctionProfile(ref,name){
   const match=String(name||"").match(/\bAS\s*(\d+[a-z]?)\b/i);
-  return match?siteProfiles.get(ref+":"+match[1]):undefined;
+  return match?siteProfiles.get(ref+":"+match[1]):LOCAL_JUNCTION_PROFILES.find(p=>
+    p.road===ref&&!p.ref&&String(name).includes("AS "+p.name));
 }
 // Model calibration, not measured signal timings: fewer conflicts with
 // cross traffic after the evening peak. Keep the transition continuous.
@@ -247,6 +268,8 @@ function motorwayDirection(ref,points,name=""){
   if(ref==="A562")return dx>=0?"extra-a562-bonn-ost":"extra-a562-bonn";
   if(ref==="A61")return dy>=0?"extra-a61-nord":"extra-a61-sued";
   if(ref==="A565")return dy>=0?"extra-a565-nord":"extra-a565-sued";
+  if(ref==="A571")return dy>=0?"extra-a571-nord":"extra-a571-sued";
+  if(ref==="A573")return dy>=0?"extra-a573-nord":"extra-a573-sued";
   return ref+"-"+(Math.abs(dy)>=Math.abs(dx)?"lat":"lon")+(Math.abs(dy)>=Math.abs(dx)?Math.sign(dy):Math.sign(dx));
 }
 function regionFor(key,ref,points){
@@ -281,10 +304,10 @@ function profileFactor(key,ref,ms,points=[],kind="mainline"){
     const evening=Math.max(0,1-Math.abs(hour-(day===5?14.5:16.75))/2.5);
     const morningKeys=new Set(["A3-frankfurt","A48-dernbach",
       "extra-a59-koeln","extra-a559-gremberg","extra-a560-bonn",
-      "extra-a4-olpe","extra-a555-koeln","extra-a562-bonn"]);
+      "extra-a4-olpe","extra-a555-koeln","extra-a562-bonn","extra-a565-nord","extra-a571-nord","extra-a573-sued"]);
     const eveningKeys=new Set(["A3-koeln","A48-koblenz",
       "extra-a59-bonn","extra-a559-porz","extra-a560-hennef",
-      "extra-a4-aachen","extra-a555-bonn","extra-a562-bonn-ost"]);
+      "extra-a4-aachen","extra-a555-bonn","extra-a562-bonn-ost","extra-a565-sued","extra-a571-sued","extra-a573-nord"]);
     if(morningKeys.has(key))direction+=.09*morning;
     if(eveningKeys.has(key))direction+=.09*evening;
   }
