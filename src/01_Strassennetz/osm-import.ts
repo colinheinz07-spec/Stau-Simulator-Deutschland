@@ -1,4 +1,4 @@
-/** Generischer OSM-Netzimport für Deutschland. Keine Autobahn- oder AS-Sonderfalllisten.
+/** Generischer OSM-Netzimport für Deutschland. Keine Autobahn- oder AS-Sonderfalllogik; belegte Bestandsdaten-Korrekturen separat.
  * Quell-Daten: Overpass/OSM-Snapshot mit nodes, ways und restriction-Relations.
  * Jeder Way-Vertex bleibt erhalten; an wirklichen geteilten OSM-Nodes wird gesplittet.
  */
@@ -69,7 +69,32 @@ const BLOCKED = new Set(['no','private']);
 const asPoint = (p:{lat:number;lon:number}):Point => [p.lat,p.lon];
 const key = (wayId:number, direction:string, from:number,to:number) =>
   'osm:'+wayId+':'+direction+':'+from+'-'+to;
-function laneCount(tags:OsmTags,kind:RoadEdge['kind'],direction:'f'|'b',twoWay:boolean):number {
+// Permanent regular mainline widths, independently confirmed against the
+// Autobahn GmbH/DEGES project descriptions rather than current worksite lanes.
+// A3 Siebengebirge–Bonn/Siegburg: three; shared A3/A4 Heumar–Köln-Ost
+// and A3 north of Köln-Ost in this extract: four per direction.
+// Exact existing directed OSM Way IDs only; ramps and other roads unchanged.
+// Re-audit these IDs when the network is re-imported after permanent rebuilding.
+const BASELINE_THREE_WAYS=new Set([
+  88004925,37264385,992482669,992482670,25404897,620672136,840177199,
+  840177198,992482934,992482935,140575546,840177202,840177203,423654340,
+  992483386,223297045,
+]);
+const BASELINE_FOUR_WAYS=new Set([
+  132614469,886737506,886737507,753473363,753473366,312198258,132624375,
+  258491549,258491543,318531282,281774000,258495162,258491542,258491546,
+  132624368,315647742,992498412,992498413,258503935,258503936,193706950,
+  208913376,132624378,132624384,992498533,206716755,206716768,258495161,
+  258495159,281773996,26164974,281774006,208913378,132624381,132624387,
+  132624371,132624372,315647743,315647744,
+]);
+function laneCount(wayId:number,tags:OsmTags,kind:RoadEdge['kind'],direction:'f'|'b',twoWay:boolean):number {
+  if(kind==='mainline'&&!twoWay){
+    if(BASELINE_FOUR_WAYS.has(wayId))return 4;
+    if(BASELINE_THREE_WAYS.has(wayId))return 3;
+  }
+  // lanes:conditional/descriptions of worksite arrangements are not the
+  // permanent geometric inventory. Temporary restrictions belong to events.
   const byDir=tags[direction==='f'?'lanes:forward':'lanes:backward'];
   const n=Number(byDir??tags.lanes);
   if (byDir && Number.isInteger(n) && n > 0 && n <= 8) return n;
@@ -320,7 +345,7 @@ export function importOsmNetwork(elements:readonly OsmElement[],
           geometry,osmWayIds:[way.id],kind,
           osmClass:tags.highway as RoadClass,
           ...(sources.length?{motorwayRef:sources[0],motorwayRefs:sources}:{}),
-          lanes:laneCount(tags,kind,label,twoWay),
+          lanes:laneCount(way.id,tags,kind,label,twoWay),
           lengthM:polylineLengthM(geometry),
           freeSpeedKmh:kind==='mainline'?130:kind==='ramp'?80:50,
           capacityPerLaneVph:kind==='mainline'?2200:kind==='ramp'?1500:900
