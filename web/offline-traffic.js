@@ -24,6 +24,26 @@ const LEGACY_SERVICE_WAYS=new Set([
   384052261,384052268,384052273,384055828,
   38028821,38050873,372478868,372478869,536172766
 ]);
+// Permanent regular mainline widths, independently confirmed against the
+// Autobahn GmbH/DEGES project descriptions rather than current worksite lanes.
+// A3 Siebengebirge–Bonn/Siegburg: three; shared A3/A4 Heumar–Köln-Ost
+// and A3 north of Köln-Ost in this extract: four per direction.
+// Exact existing directed OSM Way IDs only; ramps and other roads unchanged.
+// Re-audit these IDs when the network is re-imported after permanent rebuilding.
+const BASELINE_THREE_WAYS=new Set([
+  88004925,37264385,992482669,992482670,25404897,620672136,840177199,
+  840177198,992482934,992482935,140575546,840177202,840177203,423654340,
+  992483386,223297045,
+]);
+const BASELINE_FOUR_WAYS=new Set([
+  132614469,886737506,886737507,753473363,753473366,312198258,132624375,
+  258491549,258491543,318531282,281774000,258495162,258491542,258491546,
+  132624368,315647742,992498412,992498413,258503935,258503936,193706950,
+  208913376,132624378,132624384,992498533,206716755,206716768,258495161,
+  258495159,281773996,26164974,281774006,208913378,132624381,132624387,
+  132624371,132624372,315647743,315647744,
+]);
+const verifiedBaselineLanes=way=>BASELINE_FOUR_WAYS.has(way)?4:BASELINE_THREE_WAYS.has(way)?3:null;
 const isLegacyService=row=>row[1]==="ramp"&&(REST.test(row[5]||"")||
   LEGACY_SERVICE_WAYS.has(Number(row[6])));
 const colourForSpeed=s=>s>65?"free":s>30?"slow":s>10?"jam":"standstill";
@@ -159,6 +179,13 @@ function createLegacyTrafficScenario(data){
     if(match&&knownRefs.has(match[0]))row[2]=match[0];
   }
   const reversedWays=orientExistingMotorwayChains(data);
+  // Permanent lane corrections are applied before building cells, capacities,
+  // demand and the event editor. The imported snapshot itself stays intact on disk.
+  for(const row of data.roads){
+    if(row[1]!=="mainline"||row[2]!=="A3")continue;
+    const baseline=verifiedBaselineLanes(Number(row[6]));
+    if(baseline!==null)row[3]=baseline;
+  }
   // The compact snapshot includes auxiliary merge/diverge lanes in OSM
   // lanes. A short N+1 island bounded by N through lanes on the same
   // directed carriageway is treated as auxiliary, not extra freeway capacity.
@@ -181,7 +208,10 @@ function createLegacyTrafficScenario(data){
       if(now&&Number(now[3])===Number(r[3])-1&&total<=900)
         for(const part of island)corrections.set(part,Number(r[3])-1);
     }
-    for(const [row,lanes] of corrections)row[3]=lanes;
+    for(const [row,lanes] of corrections){
+      if(row[2]==="A3"&&verifiedBaselineLanes(Number(row[6]))!==null)continue;
+      row[3]=lanes;
+    }
     Object.defineProperty(data,"_throughLanesNormalized",{value:true,configurable:true});
   }
   const edges=[],outByNode=new Map(),inByNode=new Map(),byId=new Map();
@@ -876,6 +906,15 @@ function createLegacyTrafficScenario(data){
       raw={...raw,closedLanes:Array.from({length:edge.lanes},(_,i)=>i)};
     if(edge?.kind==="ramp"&&raw.kind!=="closure"&&raw.speedKmh===0&&
       raw.closedLanes?.length===1&&raw.closedLanes[0]===0&&edge.lanes>1)
+      raw={...raw,closedLanes:Array.from({length:edge.lanes},(_,i)=>i)};
+    // Old saved full-width physical incidents also need to stay blocked
+    // when a verified permanent lane count increases. Partial events retain
+    // exactly their original selected lanes.
+    if(edge?.kind==="mainline"&&edge.ref==="A3"&&raw.kind!=="closure"&&
+      raw.speedKmh===0&&raw.shoulder!=="open"&&
+      verifiedBaselineLanes(Number(edge.osm))===edge.lanes&&
+      raw.closedLanes?.length===edge.lanes-1&&
+      raw.closedLanes.every((_,i)=>raw.closedLanes.includes(i)))
       raw={...raw,closedLanes:Array.from({length:edge.lanes},(_,i)=>i)};
     return setEvent(raw);
   }
