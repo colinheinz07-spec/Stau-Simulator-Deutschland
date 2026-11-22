@@ -299,6 +299,7 @@ function createLegacyTrafficScenario(data){
       platoonProgress:new Float64Array(count),
       // Two-minute actual throughput per cell, including internal merges.
       cellThroughVph:new Float64Array(count),
+      cellIncomingVph:new Float64Array(count),
       cellMotion:new Float64Array(count),
       cellCapacityVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:2200)),
       cellReceivingVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:2200)),
@@ -712,8 +713,32 @@ function createLegacyTrafficScenario(data){
       current=parents.length===1?parents[0]:null;
     }
   }
+  // Local access slips sometimes share an exact node with an off-ramp,
+  // although the actual public road is outside the extract. That apparent
+  // incoming exit is not a source of entrance traffic. Recover the existing
+  // entrance branches at that interface, using the SAME AS demand budget.
+  const exitReachMemo=new Map();
+  const localInterfaceLabel=e=>originLabel(e)||(/\bAS\b/.test(junctionLabel(e))&&
+    !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/.test(junctionLabel(e))?junctionLabel(e):null);
+  function reachesPublicExit(edge){
+    if(exitReachMemo.has(edge.index))return exitReachMemo.get(edge.index);
+    const work=[edge],seen=new Set();let result=false;
+    for(let i=0;i<work.length&&i<100;i++){
+      const e=work[i];if(e.kind!=="ramp"||seen.has(e.index))continue;seen.add(e.index);
+      if(!e.links.length&&localInterfaceLabel(e)){result=true;break;}
+      for(const t of e.links)if(edges[t.to].kind==="ramp")work.push(edges[t.to]);
+    }
+    exitReachMemo.set(edge.index,result);return result;
+  }
+  const recoveredOriginRoots=new Set();
   for(const edge of edges){
-    if(edge.kind!=="ramp"||edge.incomingAtStart&&!cycleOriginRoots.has(edge.index)||!edge.links.length)continue;
+    if(edge.kind!=="ramp"||!edge.incomingAtStart||!originLabel(edge)||reachesPublicExit(edge)||!edge.links.length)continue;
+    const parents=originParents[edge.index];
+    if(parents.length&&parents.every(p=>p.kind==="ramp"&&localInterfaceLabel(p)===originLabel(edge)&&reachesPublicExit(p)))
+      recoveredOriginRoots.add(edge.index);
+  }
+  for(const edge of edges){
+    if(edge.kind!=="ramp"||edge.incomingAtStart&&!cycleOriginRoots.has(edge.index)&&!recoveredOriginRoots.has(edge.index)||!edge.links.length)continue;
     const label=originLabel(edge);
     if(!label&&!isLocalEntrance(edge))continue;
     const row=rowById.get(edge.id);
@@ -751,6 +776,16 @@ function createLegacyTrafficScenario(data){
       if(!group.origins.some(old=>old.from===edge.from&&old.to===edge.to))group.origins.push(edge);
       distinctOnramps.set(key,group);
     }
+  }
+  // A shared branch already fed by a proper local origin does not need
+  // another source. Remove redundant recovered roots, not the physical link.
+  for(const group of distinctOnramps.values()){
+    const seen=new Set(),work=group.origins.filter(e=>!recoveredOriginRoots.has(e.index));
+    for(let i=0;i<work.length;i++){
+      const e=work[i];if(seen.has(e.index))continue;seen.add(e.index);
+      for(const t of e.links)if(edges[t.to].kind==="ramp")work.push(edges[t.to]);
+    }
+    group.origins=group.origins.filter(e=>!recoveredOriginRoots.has(e.index)||!seen.has(e.index));
   }
   // Urban reference peaks were calibrated on the previous, incomplete
   // extract. Newly connected local origins replace part of aggregate
@@ -1927,7 +1962,7 @@ function createLegacyTrafficScenario(data){
   // The display direction is taken from a connected motorway sample, not
   // the heading of a tiny Way or the peak-demand profile's corridor name.
   const navigationSampleCache=new Map();
-  function destinationAt(edge,offset){
+  function destinationAt(edge,offset,route=false){
     const points=rowById.get(edge.id)[4],cumulative=pointMetres.get(edge.id);
     const at=Math.max(0,Math.min(edge.lengthM,Number(offset)||0));
     const index=cumulative.findIndex(m=>m>=at),i=index===-1?points.length-1:Math.max(1,index);
@@ -1936,9 +1971,9 @@ function createLegacyTrafficScenario(data){
     if(!navigationSampleCache.has(edge.id))navigationSampleCache.set(edge.id,
       traffic.navigationTravelPoints(edge,e=>mainlineBack.get(e.id)||[],e=>mainlineNext.get(e.id)||[],
         e=>rowById.get(e.id)[4],e=>e.lengthM));
-    return traffic.navigationDestination(edge.ref,point,navigationSampleCache.get(edge.id));
+    return (route?traffic.navigationRoute:traffic.navigationDestination)(edge.ref,point,navigationSampleCache.get(edge.id));
   }
-  function rampDestination(edge,role){
+  function rampDestination(edge,role,route=false){
     let arrivals=[];
     if(role==="Abfahrt"){
       const work=[edge],seen=new Set();
@@ -1950,10 +1985,11 @@ function createLegacyTrafficScenario(data){
         }
       }
     }else arrivals=rampMainlineArrivals(edge);
-    const destinations=new Set(arrivals.map(a=>destinationAt(a.road,a.metre)).filter(Boolean));
+    const destinations=new Set(arrivals.filter(a=>!route||!edge.ref||a.road.ref===edge.ref)
+      .map(a=>destinationAt(a.road,a.metre,route)).filter(Boolean).map(v=>route?JSON.stringify(v):v));
     // At a shared collector with several true destinations retain its
     // original signed name instead of inventing a single direction.
-    return destinations.size===1?[...destinations][0]:undefined;
+    return destinations.size===1?(route?JSON.parse([...destinations][0]):[...destinations][0]):undefined;
   }
   const entranceOnlyCache=new Map();
   function entranceOnly(edge){
@@ -1976,6 +2012,31 @@ function createLegacyTrafficScenario(data){
     const startM=group.startOffsetM??group.offsetM,endM=group.endOffsetM??group.offsetM;
     const key=[start.id,Math.round(startM/50),end.id,Math.round(endM/50),anchor.id,Math.round((group.offsetM||0)/10)].join(":");
     const annotate=info=>{
+      // Attribute only events at the actual queue head, or immediately
+      // ahead on the same directed carriageway, never nearby parallel roads.
+      let road=end,metre=endM,remaining=600,cause;
+      const seen=new Set();
+      while(road&&!seen.has(road.id)&&remaining>=0){
+        seen.add(road.id);
+        const effect=eventsOn(road.id).filter(x=>x.toM>=metre-road.cellLength&&x.fromM<=metre+remaining)
+          .sort((a,b)=>a.fromM-b.fromM)[0];
+        if(effect){
+          const e=effect.event,lanes=[...e.closedLanes].sort((a,b)=>a-b),n=lanes.length;
+          const kind={accident:"Nach einem Unfall",roadworks:"Baustelle",breakdown:"Pannenfahrzeug",closure:"Vollsperrung"}[e.kind];
+          let restriction="";
+          if(n===road.lanes&&e.shoulder!=="open"||e.kind==="closure")restriction="Alle Fahrstreifen gesperrt";
+          else if(n){
+            const side=lanes.every((v,i)=>v===road.lanes-n+i)?"linke":lanes.every((v,i)=>v===i)?"rechte":"";
+            restriction=n===1?(side?"Der "+side+" Fahrstreifen gesperrt":"Ein Fahrstreifen gesperrt"):
+              n+" "+(side?side+" ":"")+"Fahrstreifen gesperrt";
+          }
+          cause=[kind,restriction].filter(Boolean).join(" · ");break;
+        }
+        remaining-=Math.max(0,road.lengthM-metre);
+        const next=mainlineNext.get(road.id)||[];
+        road=next.length===1?next[0]:null;metre=0;
+      }
+      if(cause)info={...info,cause};
       // The road name is static, but the ramp load can change while the
       // queue endpoints stay in the same cache bucket.
       if(anchor.kind!=="mainline"||!group.endEdgeId)return info;
@@ -2002,6 +2063,8 @@ function createLegacyTrafficScenario(data){
         info.direction=traffic.motorwayDirection(anchor.ref,[section.from[3],section.to[3]],"");
       }
       info.destination=destinationAt(anchor,group.offsetM);
+      const route=destinationAt(anchor,group.offsetM,true);
+      if(route){info.routeOrigin=route.origin;info.routeDestination=route.destination;}
     }else{
       const adjacent=[...incomingTurns[anchor.index].map(t=>t.from),...anchor.links.map(t=>edges[t.to])];
       const named=adjacent.find(r=>r.kind==="ramp"&&r.name)||adjacent.find(r=>r.ref);
@@ -2012,6 +2075,8 @@ function createLegacyTrafficScenario(data){
       info.rampRole=entranceOnly(anchor)?"Auffahrt":localTerminal(anchor)?"Abfahrt":/\bAuffahrt\b/.test(info.name)?"Auffahrt":
         /\b(?:AK|AD|Überleitung)\b|→/.test(info.name)?"Überleitung":"Rampe";
       info.destination=rampDestination(anchor,info.rampRole);
+      const route=rampDestination(anchor,info.rampRole,true);
+      if(route){info.routeOrigin=route.origin;info.routeDestination=route.destination;}
     }
     // Limit memory for an advancing queue; coordinates remain true to the
     // queue's actual endpoint rather than the midpoint of an arbitrary Way.
@@ -2052,7 +2117,7 @@ function createLegacyTrafficScenario(data){
       edge.cellFlowSpeeds.fill(edge.freeKmh);edge.brakeMemory.fill(0);edge.platoonProgress.fill(0);
       edge.cellSpeedMovement.fill(0);edge.cellSpeedExposure.fill(0);
       edge.branchSpeed.fill(edge.freeKmh);edge.branchMovement.fill(0);edge.branchExposure.fill(0);
-      edge.cellThroughVph.fill(0);
+      edge.cellThroughVph.fill(0);edge.cellIncomingVph.fill(0);
       edge.cellCapacityVph.fill(edge.capacityPerLane*edge.lanes);
       edge.cellReceivingVph.fill(edge.capacityPerLane*edge.lanes);
       edge.lastProfileMinute=-1;edge.profileFactor=0;
@@ -4616,7 +4681,8 @@ function createLegacyTrafficScenario(data){
         // return-to-motorway branch at the same junction. Drivers leaving
         // here must keep the terminal route even when the on-ramp is full.
         const terminal=edge.kind==="ramp"?localTerminal(edge):null;
-        const localFork=terminal&&terminal!==edge&&/\bAS\b|Abfahrt/i.test(terminal.name);
+        const localFork=terminal&&terminal!==edge&&/\bAS\b/.test(junctionLabel(edge))&&
+          /\bAS\b|Abfahrt/i.test(terminal.name);
         const legalTurns=edge.linksFrom[k].filter(link=>
           !blockedMovement(edge,link)&&(!localFork||localTerminal(edges[link.to])));
         for(const link of legalTurns){
@@ -5153,6 +5219,7 @@ function createLegacyTrafficScenario(data){
         const before=edge.stock[k],sent=used[j][k];
         edge.platoonProgress[k]=(edge.platoonProgress[k]+sent/Math.max(12,edge.lanes*18))%1;
         edge.cellThroughVph[k]+=alpha*(sent*3600/dt-edge.cellThroughVph[k]);
+        edge.cellIncomingVph[k]+=alpha*(Math.max(0,sent+change[k])*3600/dt-edge.cellIncomingVph[k]);
         const throughBefore=throughStart.get(cellKey(j,k))??before;
         const throughFlow=throughStart.has(cellKey(j,k))?throughSent.get(cellKey(j,k))||0:sent;
         const branchBefore=Math.max(0,before-throughBefore),branchFlow=Math.max(0,sent-throughFlow);
@@ -5307,7 +5374,9 @@ function createLegacyTrafficScenario(data){
       voluntaryWaitingVehicles:edge.voluntaryWaiting.reduce((n,waiting)=>n+(waiting?[...waiting.values()].reduce((sum,c)=>sum+c.amount,0):0),0),
       localEntryVehiclesOnEdge:edge.entryStock.reduce((sum,x)=>sum+x,0),
       divertedVehiclesOnEdge:edge.divertStock.reduce((sum,x)=>sum+x,0),
-      sectionVph:edge.cellThroughVph[at],sectionSpeedKmh,boundaryExit:boundaryExit[edge.index],
+      sectionVph:edge.cellThroughVph[at],sectionInflowVph:edge.cellIncomingVph[at],
+      flowClosed:closureBands(id).some(b=>offsetM>=b.fromM-.05&&offsetM<=b.toM+.05),flowSampled:elapsed>0,
+      sectionSpeedKmh,boundaryExit:boundaryExit[edge.index],
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
       enteredLastStep:enteredStep[edge.index],departedLastStep:departedStep[edge.index],
       capacityVph:edge.lanes*edge.capacityPerLane,

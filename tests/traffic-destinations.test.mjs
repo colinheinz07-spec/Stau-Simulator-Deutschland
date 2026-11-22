@@ -15,10 +15,15 @@ test('regional destinations advance at a route landmark, independently in each d
   assert.equal(t.navigationDestination('A61',south,[north,south]),'Rheinböllen');
   assert.equal(t.navigationDestination('A61',south,[south,north]),'Koblenz');
   assert.equal(t.navigationDestination('A61',north,[south,north]),'Bonn');
+  assert.deepEqual(t.navigationRoute('A61',north,[north,south]),{origin:'Mönchengladbach',destination:'Koblenz'});
+  assert.deepEqual(t.navigationRoute('A61',south,[north,south]),{origin:'Koblenz',destination:'Rheinböllen'});
+  assert.deepEqual(t.navigationRoute('A61',north,[south,north]),{origin:'Koblenz',destination:'Mönchengladbach'});
   const lev=[51.025,7.01],kol=[50.93,7.06];
   assert.equal(t.navigationDestination('A3',lev,[kol,lev]),'Düsseldorf');
   assert.equal(t.navigationDestination('A3',lev,[lev,kol]),'Köln');
   assert.equal(t.navigationDestination('A3',kol,[kol,lev]),'Köln');
+  assert.deepEqual(t.navigationRoute('A3',kol,[lev,kol]),{origin:'Köln',destination:'Frankfurt'});
+  assert.deepEqual(t.navigationRoute('A3',lev,[kol,lev]),{origin:'Köln',destination:'Oberhausen'});
   assert.equal(t.navigationDestination('A3',[49,10],[[49,10],[49.1,10]]),undefined,'do not assign a Rheinland destination outside the covered corridor');
 });
 
@@ -31,10 +36,15 @@ test('the same real A61 crossroads changes its label on both carriageways',async
   assert.equal(road('A61-10713286').destination,'Bonn');
   assert.equal(road('A61-312834611').destination,'Koblenz');
   assert.equal(road('A61-10713288').destination,'Rheinböllen');
+  assert.equal(road('A61-312834611').routeOrigin,'Rheinböllen');
+  assert.equal(road('A61-312834611').routeDestination,'Koblenz');
+  assert.equal(road('A3-992501211').routeDestination,'Oberhausen');
   assert.equal(road('A61-824372859').destination,'Koblenz');
   const southbound=w.STAU_LEGACY_GEOMETRY.roads.find(r=>r[1]==='mainline'&&r[2]==='A61'&&r[4][0][0]>50.36&&r[4][0][0]<50.38&&r[4][0][1]>7.39&&r[4].at(-1)[1]>r[4][0][1]);
   assert.ok(southbound,'actual road before the interchange');
   assert.equal(road(southbound[0]).destination,'Koblenz');
+  assert.equal(road(southbound[0]).routeOrigin,'Mönchengladbach');
+  assert.equal(road(southbound[0]).routeDestination,'Koblenz');
   // Each currently mapped motorway family has a meaningful destination.
   for(const [id,expected] of [
     ['A3-992501211','Düsseldorf'],['A3-126500248','Köln'],['A3-25341152','Köln'],
@@ -50,4 +60,9 @@ test('the same real A61 crossroads changes its label on both carriageways',async
   const len=s.edgeActivity('extra-a4-aachen').lengthM;
   assert.equal(road('extra-a4-aachen',len-5).destination,'Aachen');
   assert.equal(road('extra-a4-olpe',s.edgeActivity('extra-a4-olpe').lengthM-5).destination,'Olpe');
+  const id='A3-25341152';
+  s.setEvent({id:'radio-accident',edgeId:id,kind:'accident',offsetM:100,lengthM:50,closedLanes:[1,2],speedKmh:30,hasShoulder:false,shoulder:'normal'});
+  assert.match(road(id,100).cause,/Unfall.*2 linke Fahrstreifen/);
+  s.removeEvent('radio-accident');
+  assert.equal(road(id,100).cause,undefined);
 });

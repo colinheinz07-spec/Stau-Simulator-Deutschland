@@ -248,26 +248,29 @@ function drawJamCallouts(rendered,byId,showMap=true){
     const traffic=window.StauTrafficReference;
     const neighbours=(map,e)=>[...(map.get(e.id)||[])].map(id=>byId.get(id)).filter(Boolean);
     const mainNeighbours=(map,e)=>neighbours(map,e).filter(n=>n.kind==="mainline"&&n.motorwayRef===e.motorwayRef);
-    const destinationAt=(e,at)=>traffic?.navigationDestination(e.motorwayRef,pointOnEdge(e,at),
+    const destinationAt=(e,at,route=false)=>(route?traffic?.navigationRoute:traffic?.navigationDestination)?.(e.motorwayRef,pointOnEdge(e,at),
       traffic.navigationTravelPoints(e,r=>mainNeighbours(incoming,r),r=>mainNeighbours(out,r),r=>r.geometry,r=>r.lengthM));
     let destination=edge.kind==="mainline"?destinationAt(edge,offset):undefined;
+    let route=edge.kind==="mainline"?destinationAt(edge,offset,true):undefined;
     if(edge.kind==="ramp"){
       const exit=/\bAbfahrt\b/i.test(edge.name||""),links=exit?incoming:out;
-      const work=[edge],seen=new Set(),destinations=new Set();
+      const work=[edge],seen=new Set(),destinations=new Set(),routes=new Set();
       for(let i=0;i<work.length&&i<100;i++){
         const r=work[i];if(seen.has(r.id))continue;seen.add(r.id);
         for(const n of neighbours(links,r)){
           if(n.kind==="ramp")work.push(n);
           else if(n.kind==="mainline"&&(!exit||n.motorwayRef===ref)){
             const label=destinationAt(n,exit?n.lengthM:0);if(label)destinations.add(label);
+            const pair=(!ref||n.motorwayRef===ref)&&destinationAt(n,exit?n.lengthM:0,true);if(pair)routes.add(JSON.stringify(pair));
           }
         }
       }
       if(destinations.size===1)destination=[...destinations][0];
+      if(routes.size===1)route=JSON.parse([...routes][0]);
     }
     return {ref,kind:edge.kind,name:edge.name,
       location:left&&right&&left!==right?"zwischen "+left+" und "+right:left||right?"bei "+(left||right):undefined,
-      direction:traffic?.motorwayDirection(ref,[a,b],edge.name||""),destination};
+      direction:traffic?.motorwayDirection(ref,[a,b],edge.name||""),destination,routeOrigin:route?.origin,routeDestination:route?.destination};
   };
   window.StauDashboard?.renderJams(qualified,roadInfo,(id,offset)=>{
     const edge=byId.get(id);if(!edge)return;

@@ -629,9 +629,7 @@ async function startLegacyCanvas(existingMap=null){
     const modelSpeed=activity?.sectionSpeedKmh??scenario.speed(s.id);
     updateCapacityDetails(activity);
     const flowInfo=$("detail-flow");
-    if(flowInfo)flowInfo.textContent=!activity?.reachable?
-      "Nicht mit Modellquellen verbunden":
-      "~"+Math.round(activity.sectionVph).toLocaleString("de-DE")+" Kfz/h · hier (2-Min.-Mittel, Modell)";
+    if(flowInfo)flowInfo.textContent=window.StauDashboard?.describeFlow(activity)??"—";
     $("detail-speed").textContent=!scenario.reachable(s.id)?
       "Teilnetz ohne Modellzufluss":modelSpeed===null?"Keine Modellwerte":
       Math.round(modelSpeed)+" km/h · berechnet";
@@ -649,9 +647,13 @@ async function startLegacyCanvas(existingMap=null){
   }
   function updateCapacityDetails(activity){
     const capacity=$("detail-capacity"),storage=$("detail-storage");
-    if(capacity)capacity.textContent=activity?
-      format(Math.round(activity.availableCapacityVph??activity.localDischargeRateVph??activity.localAdmissionRateVph??activity.operatingCapacityVph??activity.capacityVph))+" Kfz/h · aufnehmbar (max. "+
-      format(Math.round(activity.localDischargeLimitVph??activity.localAdmissionRateVph??activity.capacityVph))+")":"—";
+    if(capacity){
+      const available=activity?.availableCapacityVph??activity?.localDischargeRateVph??activity?.localAdmissionRateVph??activity?.operatingCapacityVph??activity?.capacityVph;
+      const limit=activity?.localDischargeLimitVph??activity?.localAdmissionRateVph??activity?.capacityVph;
+      capacity.textContent=!activity?"—":(available<.5&&!activity.flowClosed?
+        "Momentan kein Aufnahmeraum":format(Math.round(available))+" Kfz/h · aufnehmbar")+
+        " (max. "+format(Math.round(limit))+")";
+    }
     if(storage)storage.textContent=activity&&Number.isFinite(activity.storageVehicles)?
       format(Math.round(activity.vehicles))+" / "+format(Math.ceil(activity.storageVehicles))+" Kfz":"—";
   }
@@ -773,9 +775,7 @@ async function startLegacyCanvas(existingMap=null){
     if(selected){
       const flow=scenario.edgeActivity?.(selected.id,selectedOffsetM);
       updateCapacityDetails(flow);
-      if(flow&&$("detail-flow"))$("detail-flow").textContent=flow.reachable?
-        "~"+Math.round(flow.sectionVph).toLocaleString("de-DE")+" Kfz/h · hier (2-Min.-Mittel, Modell)":
-        "Nicht mit Modellquellen verbunden";
+      if(flow&&$("detail-flow"))$("detail-flow").textContent=window.StauDashboard?.describeFlow(flow)??"—";
       const modelSpeed=flow?.sectionSpeedKmh??scenario.speed(selected.id);
       if(modelSpeed!==null&&scenario.reachable(selected.id))
         $("detail-speed").textContent=Math.round(modelSpeed)+" km/h · berechnet";

@@ -79,6 +79,14 @@ test("Staukarten verwenden gemessene Modellwerte, Fahrtrichtung und verknüpfen 
  assert.equal(view.title,"A3 Richtung Köln");assert.equal(view.length,"2,4 km");
  const north=ui.describeJam(group,{...road,location:"bei Leverkusen",destination:"Düsseldorf"});
  assert.equal(north.title,"A3 Richtung Düsseldorf");assert.equal(north.mapTitle,"A3 → Düsseldorf");
+ const radio=ui.describeJam(group,{...road,routeOrigin:"Köln",routeDestination:"Frankfurt",cause:"Nach einem Unfall · 2 linke Fahrstreifen gesperrt"});
+ assert.equal(radio.title,"A3 Köln Richtung Frankfurt");
+ assert.equal(radio.mapTitle,"A3 Köln → Frankfurt");
+ assert.match(radio.cause,/Unfall/);
+ assert.equal(ui.describeFlow({reachable:true,flowSampled:false}),"Messung startet mit der Simulation");
+ assert.match(ui.describeFlow({reachable:true,flowSampled:true,sectionInflowVph:700,sectionVph:280}),/Zufluss: 700 Kfz\/h · Abfluss: 280 Kfz\/h/);
+ assert.doesNotMatch(ui.describeFlow({reachable:true,flowSampled:true,sectionInflowVph:0,sectionVph:.3}),/\b0 Kfz\/h/);
+ assert.match(ui.describeFlow({reachable:true,flowClosed:true}),/Gesperrt.*0 Kfz\/h/);
  assert.equal(view.delay,"+12 min");assert.equal(view.severity,"standstill");assert.equal(view.speed,"8 km/h");
  const exit=ui.describeJam(group,{ref:"A3",kind:"ramp",name:"AS Ransbach-Baumbach · Abfahrt von A3 → Köln"});
  assert.equal(exit.title,"A3 · Abfahrt Richtung Köln");

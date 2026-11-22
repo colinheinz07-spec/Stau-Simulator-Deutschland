@@ -49,31 +49,43 @@
     const states={slow:["Stockender Verkehr","#efae47"],jam:["Stau / Stop-and-Go","#e34f56"],standstill:["Stillstand / Kriechverkehr","#a85169"]};
     const [state,color]=states[severity];
     const signedDestination=road.kind==="ramp"&&road.name?.includes("→")?road.name.split("→").at(-1).trim():null;
-    const destination=road.destination||signedDestination||directionNames[road.direction];
+    const destination=road.routeDestination||road.destination||signedDestination||directionNames[road.direction];
     // A ramp's delay is its own waiting time, not the travel time of the
     // adjacent through motorway. Keep the route category visible on the map.
     const rampRole=road.kind==="ramp"?(road.rampRole||(/\bAbfahrt\b/.test(road.name||"")?"Abfahrt":
       /\bAuffahrt\b/.test(road.name||"")?"Auffahrt":/\b(?:AK|AD|Überleitung)\b/.test(road.name||"")?"Überleitung":"Rampe")):null;
     const ref=road.ref||"Autobahn";
-    const title=ref+(rampRole?" · "+rampRole:"")+(destination?" Richtung "+destination:"");
-    const routeTitle=ref+(destination?" → "+destination:"");
+    const corridor=ref+(road.routeOrigin?" "+road.routeOrigin:"");
+    const title=road.routeOrigin?corridor+(destination?" Richtung "+destination:"")+(rampRole?" · "+rampRole:""):
+      ref+(rampRole?" · "+rampRole:"")+(destination?" Richtung "+destination:"");
+    const routeTitle=corridor+(destination?" → "+destination:"");
     const mapTitle=rampRole?routeTitle+" · "+rampRole:road.bottleneck?routeTitle+" · Ausfahrtsrückstau":routeTitle;
     const km=(Math.max(0,Number(group.lengthM)||0)/1000).toLocaleString("de-DE",{minimumFractionDigits:1,maximumFractionDigits:1});
     const delay=Number.isFinite(group.delayMin)?Math.max(1,Math.round(group.delayMin)):null;
     const delayText=delay===null?null:(group.delayLowerBound?"≥ ":"")+"+"+
       (delay>=120?Math.floor(delay/60)+" h"+(delay%60?" "+delay%60+" min":""):delay+" min");
-    return {title,mapTitle,destination,bottleneck:road.bottleneck,location:road.location||road.name||(road.kind==="ramp"?"Auf-/Abfahrt oder Überleitung":"Autobahnabschnitt"),
+    const location=road.location||road.name||(road.kind==="ramp"?"Auf-/Abfahrt oder Überleitung":"Autobahnabschnitt");
+    const radioLocation=road.routeOrigin&&road.kind==="mainline"?location.replace(/\bAK\b/g,"Kreuz").replace(/\bAD\b/g,"Dreieck").replace(/\bAS\b/g,"Anschlussstelle"):location;
+    return {title,mapTitle,destination,bottleneck:road.bottleneck,cause:road.cause,location:radioLocation,
       ref,severity,state,color,length:km+" km",
       delay:delayText??"Nicht berechenbar",
       shortDelay:delayText??"Zeit offen",
       speed:known?(group.delayLowerBound?"≤ ":"")+Math.round(speed)+" km/h":"–"};
+  }
+  function describeFlow(activity){
+    if(!activity?.reachable)return "Nicht mit Modellquellen verbunden";
+    if(activity.flowClosed)return "Gesperrt · kein freigegebener Zufluss (0 Kfz/h)";
+    if(!activity.flowSampled)return "Messung startet mit der Simulation";
+    const rate=n=>Number.isFinite(n)&&n>0?(n<1?"unter 1 Kfz/h":Math.round(n).toLocaleString("de-DE")+" Kfz/h"):"derzeit kein Durchfluss";
+    return "Zufluss: "+rate(activity.sectionInflowVph)+" · Abfluss: "+rate(activity.sectionVph)+" (2-Min.-Mittel)";
   }
   function renderJams(groups,roadFor,focus){
     const list=$("jam-list"),count=$("jam-count");
     if(!list||!count)return;
     const sorted=[...groups].sort((a,b)=>b.delayMin-a.delayMin);
     count.textContent=String(sorted.length);
-    const key=JSON.stringify(sorted.map(g=>[g.edgeId,Math.round(g.offsetM),g.startEdgeId,g.endEdgeId,g.startOffsetM,g.endOffsetM,Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),g.delayLowerBound,Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2,Math.round(g.routeDelayMin??0),g.routeDelayLowerBound]));
+    const views=sorted.map(g=>describeJam(g,roadFor(g.edgeId,g.offsetM,g)||{}));
+    const key=JSON.stringify(sorted.map((g,i)=>[g.edgeId,Math.round(g.offsetM),g.startEdgeId,g.endEdgeId,g.startOffsetM,g.endOffsetM,Math.round(g.lengthM/100),g.delayMin===null?null:Math.round(g.delayMin),g.delayLowerBound,Math.round(g.meanKmh??g.worstKmh),Math.round(g.worstKmh),g.worstKmh<=10?0:g.worstKmh<=30?1:2,Math.round(g.routeDelayMin??0),g.routeDelayLowerBound,views[i].title,views[i].location,views[i].cause,views[i].bottleneck]));
     if(list.dataset.signature===key)return;
     list.dataset.signature=key;
     list.replaceChildren();
@@ -82,8 +94,8 @@
       list.append(el("p","empty-state","Keine Rückstaus im Modell."));
       return;
     }
-    for(const g of sorted){
-      const view=describeJam(g,roadFor(g.edgeId,g.offsetM,g)||{});
+    for(const [i,g] of sorted.entries()){
+      const view=views[i];
       const card=el("button","jam-card");
       card.type="button";card.style.setProperty("--severity",view.color);
       card.dataset.trafficState=view.severity;
@@ -91,6 +103,7 @@
       const header=el("div","jam-card-header"),heading=el("div","jam-card-heading");
       heading.append(el("strong","",view.title),el("span","",view.location));
       if(view.bottleneck)heading.append(el("span","jam-bottleneck",view.bottleneck));
+      if(view.cause)heading.append(el("span","jam-bottleneck",view.cause));
       header.append(el("span","jam-card-icon","▰"),heading,el("strong","jam-card-delay"+(g.delayMin===null?" is-unknown":""),view.delay));
       const metrics=el("div","jam-card-metrics");
       metrics.append(el("span","jam-card-state",view.state),el("span","",view.length),el("span","","Ø Geschwindigkeit: "+view.speed));
@@ -118,7 +131,7 @@
     }
     button?.setAttribute("aria-pressed",String(running));
   }
-  window.StauDashboard=Object.freeze({describeJam,renderJams,setClock,setRunning});
+  window.StauDashboard=Object.freeze({describeJam,describeFlow,renderJams,setClock,setRunning});
   const sidebar=document.querySelector(".sidebar"),button=$("mobile-panel-toggle"),hint=$("mobile-panel-hint"),chevron=$("mobile-panel-chevron");
   if(!sidebar||!button||!hint||!chevron)return;
   function setExpanded(expanded){

@@ -339,7 +339,7 @@ function navigationProject(axis,point){
   }
   return best;
 }
-function navigationDestination(ref,point,travelPoints){
+function navigationPosition(ref,point,travelPoints){
   if(!point||!travelPoints?.length||!travelPoints[0]||!travelPoints.at(-1))return undefined;
   let chosen=null;
   for(const axis of DESTINATION_AXES){
@@ -353,10 +353,42 @@ function navigationDestination(ref,point,travelPoints){
   const {axis,at}=chosen;
   const start=navigationProject(axis,travelPoints[0]),end=navigationProject(axis,travelPoints.at(-1));
   if(!start||!end||Math.abs(end.station-start.station)<1e-7)return undefined;
-  const forward=end.station>start.station;
+  return {axis,at,forward:end.station>start.station};
+}
+function navigationDestination(ref,point,travelPoints){
+  const position=navigationPosition(ref,point,travelPoints);
+  if(!position)return undefined;
+  const {axis,at,forward}=position;
   let pair=axis.initial;
   for(const [station,change] of Object.entries(axis.changes))if(at.station>=Number(station))pair=change;
   return pair[forward?0:1];
+}
+// Traffic radio reports use the two major destinations bounding the
+// motorway corridor, not whichever town happens to be nearest the queue.
+// These corridor pairs follow exactly the same directed axis as the map.
+function navigationRoute(ref,point,travelPoints){
+  const position=navigationPosition(ref,point,travelPoints);
+  if(!position)return undefined;
+  const {axis,at,forward}=position,s=at.station;
+  let pair;
+  switch(ref){
+    case "A3": pair=s>=18?["Köln","Oberhausen"]:["Frankfurt","Köln"];break;
+    case "A61": pair=s>=8?["Koblenz","Rheinböllen"]:["Mönchengladbach","Koblenz"];break;
+    case "A48": pair=s>=0?["Koblenz","Montabaur"]:["Trier","Koblenz"];break;
+    case "A4": pair=s>=6?["Köln","Olpe"]:["Aachen","Köln"];break;
+    case "A1": pair=s>=3?["Köln","Dortmund"]:["Euskirchen","Köln"];break;
+    case "A59": pair=axis.points[0][0]>51?["Leverkusen","Düsseldorf"]:["Bonn","Köln"];break;
+    case "A57": pair=["Köln","Krefeld"];break;
+    case "A555": pair=["Bonn","Köln"];break;
+    case "A559": pair=["Köln-Porz","Köln"];break;
+    case "A560": pair=["Bonn","Hennef"];break;
+    case "A562": pair=["Bonn-Bad Godesberg","Bonn-Beuel"];break;
+    case "A565": pair=["Bonn","Meckenheim"];break;
+    case "A571": pair=["Bad Neuenahr-Ahrweiler","Sinzig"];break;
+    case "A573": pair=["Remagen","Bad Neuenahr-Ahrweiler"];break;
+    default:return undefined;
+  }
+  return {origin:pair[forward?0:1],destination:pair[forward?1:0]};
 }
 // Sample the direction over real connected mainline Ways (including very
 // short, curving OSM fragments), never cross to the opposite carriageway.
@@ -442,6 +474,6 @@ function junctionEntryPeak(row){
 }
 const api=Object.freeze({REFERENCE_PEAKS,LOCAL_JUNCTION_PROFILES,
   referenceForRoad,junctionEntryPeak,junctionProfile,junctionCapacityFactor,profileFactor,motorwayDirection,localClock,WIDE_CORRIDORS,
-  calendarStatus,isPublicHoliday,schoolBreaks,navigationDestination,navigationTravelPoints});
+  calendarStatus,isPublicHoliday,schoolBreaks,navigationDestination,navigationRoute,navigationTravelPoints});
 root.StauTrafficReference=api;
 })(typeof window!=="undefined"?window:globalThis);
