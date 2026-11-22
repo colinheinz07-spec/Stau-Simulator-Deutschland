@@ -34,6 +34,7 @@
 .incident-form .event-error[hidden]{display:none!important}
 .planned-events{margin:10px 0;display:grid;gap:8px}
 .planned-events h3{margin:0;font-size:12px}
+.road-events:not([hidden]){display:grid;gap:8px;margin:0 0 18px}.road-events h3{margin:0}.events-grid button:disabled{opacity:.5;cursor:default}
 .planned-event{padding:10px;background:#1b3044;border:1px solid #41596d;border-radius:10px}
 .planned-event strong{display:block;font-size:12px}
 .planned-event small{display:block;color:#c3d5e2;font-size:10px;line-height:1.5;margin:5px 0}

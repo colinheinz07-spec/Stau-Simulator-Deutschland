@@ -117,6 +117,29 @@ test("iPhone incident editor saves exact lanes, shoulder, recurrence and edit/re
   handlers.get("event-form:submit")({preventDefault(){}});
   assert.equal(scenario.listEvents().length,1);
   assert.equal(scenario.listEvents()[0].lengthM,650);
+  // Two events on the same real Way are independent, even if their lanes
+  // and positions overlap. Change the accident in place via a type button.
+  const originalId=scenario.listEvents()[0].id;
+  editor.onRoadSelected({id:"a",kind:"mainline",lanes:3,meters:1000,shoulderTag:null},160);
+  handlers.get("button-accident:click")();
+  handlers.get("event-form:submit")({preventDefault(){}});
+  assert.equal(scenario.listEvents().length,2);
+  const accident=scenario.listEvents().find(e=>e.kind==="accident");
+  assert.ok(accident);
+  editor.onRoadSelected({id:"a",kind:"mainline",lanes:3,meters:1000,shoulderTag:null},160);
+  assert.equal(element("road-events").children.filter(x=>x.className==="planned-event").length,2);
+  assert.ok(editor.editEventById(accident.id));
+  handlers.get("button-roadworks:click")();
+  handlers.get("event-form:submit")({preventDefault(){}});
+  assert.equal(scenario.listEvents().length,2);
+  assert.equal(scenario.listEvents().find(e=>e.id===accident.id).kind,"roadworks");
+  editor.onRoadSelected({id:"a",kind:"mainline",lanes:3,meters:1000,shoulderTag:null},160);
+  handlers.get("button-none:click")();
+  assert.equal(scenario.listEvents().length,2,"no implicit bulk removal");
+  editor.editEventById(accident.id);
+  handlers.get("button-none:click")();
+  assert.equal(scenario.listEvents().length,1);
+  assert.equal(scenario.listEvents()[0].id,originalId);
   row=element("planned-events").children.find(x=>x.className==="planned-event");
   actions=row.children.find(x=>x.className==="event-list-actions");
   handlers.get(actions.children[1].id+":click")();

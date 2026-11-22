@@ -28,6 +28,23 @@ function conservation(s){
   assert.ok(Math.abs(n.conservationResidual)<1e-5,
     "no cars may disappear or be created inside the network");
 }
+test("overlapping roadworks and accident retain separate IDs and physical lane restrictions",async()=>{
+  const w=await model(),s=w.createLegacyTrafficScenario(fixture());
+  s.setSimulationStart(w.StauEventSchedule.localInstant("2026-11-10","18:00"));
+  s.setEvent(incident({closedLanes:[0],offsetM:0}));
+  const crash={id:"crash",edgeId:"c",kind:"accident",closedLanes:[1,2],speedKmh:40,lengthM:100,offsetM:20,hasShoulder:false};
+  s.setEvent(crash);
+  assert.deepEqual([...s.eventsOnRoad("c")].map(e=>e.id).sort(),["crash","roadworks1"]);
+  s.warmStart();s.advance(1);
+  assert.equal(s.edgeActivity("c",30).operatingCapacityVph,0);
+  s.removeEvent("crash");s.advance(1);
+  assert.ok(s.edgeActivity("c",30).operatingCapacityVph>0);
+  assert.equal(s.mode("c"),"roadworks");
+  s.setEvent(crash);s.setEvent({...crash,kind:"roadworks",closedLanes:[1],lengthM:100});
+  assert.equal(s.listEvents().length,2);
+  assert.equal(s.listEvents().find(e=>e.id==="crash").kind,"roadworks");
+  conservation(s);
+});
 test("Europe/Berlin recurring windows respect weekdays, midnight and DST",async()=>{
   const s=(await model()).StauEventSchedule;
   assert.equal(s.localInstant("2027-03-28","03:30")-

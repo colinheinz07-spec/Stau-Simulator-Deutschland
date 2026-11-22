@@ -18,6 +18,9 @@ function createOfflineEventEditor(options){
   const length=$("ev-length"),lengthField=$("ev-length-field"),speed=$("ev-speed"),schedule=$("ev-schedule");
   const error=$("ev-error"),startClock=$("sim-start");
   const list=$("planned-events");
+  const roadEvents=$("road-events");
+  const eventButtons=[...document.querySelectorAll(".event-actions [data-event]")];
+  const removeButton=eventButtons.find(b=>b.dataset.event==="none");
   let current=null,currentOffset=0,editingId=null,sequence=0;
   let nextClosureJunction=null;
   const nowRounded=Date.now()-Date.now()%60000;
@@ -46,7 +49,7 @@ function createOfflineEventEditor(options){
   }
   function failure(message){error.textContent=message;error.hidden=false;}
   function clearFailure(){error.textContent="";error.hidden=true;}
-  function closeForm(){form.hidden=true;editingId=null;clearFailure();}
+  function closeForm(){form.hidden=true;editingId=null;if(removeButton)removeButton.disabled=true;clearFailure();}
   function labels(){
     if(!current)return;
     lanes.replaceChildren();
@@ -144,6 +147,7 @@ function createOfflineEventEditor(options){
   function prepare(kindValue,event=null){
     if(!current)return;
     editingId=event?.id||null;
+    if(removeButton)removeButton.disabled=!editingId;
     kind.value=kindValue;
     labels();
     const count=current.lanes;
@@ -208,6 +212,29 @@ function createOfflineEventEditor(options){
     return result;
   }
   function afterReset(){persist();renderList();}
+  function removeSelected(id){
+    if(!id)return;
+    scenario.removeEvent(id);
+    if(editingId===id)closeForm();
+    persist();renderList();renderRoadEvents();redraw();
+  }
+  function renderRoadEvents(){
+    if(!roadEvents)return;
+    const values=current?(scenario.eventsOnRoad?.(current.id)||scenario.listEvents().filter(e=>e.edgeId===current.id)):[];
+    roadEvents.replaceChildren();roadEvents.hidden=!values.length;
+    if(!values.length)return;
+    const head=document.createElement("h3");head.textContent="Ereignisse auf diesem Abschnitt ("+values.length+")";roadEvents.append(head);
+    for(const ev of values){
+      const row=document.createElement("div");row.className="planned-event";
+      const title=document.createElement("strong");title.textContent=SYMBOLS[ev.kind]+" "+NAMES[ev.kind]+" · "+ev.lengthM+" m";
+      const buttons=document.createElement("div");buttons.className="event-list-actions";
+      const edit=document.createElement("button"),del=document.createElement("button");
+      edit.type=del.type="button";edit.textContent="Bearbeiten";del.textContent="Entfernen";
+      edit.addEventListener("click",()=>editEventById(ev.id));
+      del.addEventListener("click",()=>removeSelected(ev.id));
+      buttons.append(edit,del);row.append(title,buttons);roadEvents.append(row);
+    }
+  }
   function renderList(){
     list.replaceChildren();
     const values=scenario.listEvents();
@@ -267,14 +294,14 @@ function createOfflineEventEditor(options){
         prepare(ev.kind,ev);
       });
       del.addEventListener("click",()=>{
-        scenario.removeEvent(ev.id);persist();renderList();redraw();
+        removeSelected(ev.id);
       });
       buttons.append(edit,del);box.append(status,buttons);list.append(box);
     }
   }
   function save(ev){
     const result=scenario.setEvent(ev);
-    persist();renderList();redraw();closeForm();closeDrawer();
+    persist();renderList();renderRoadEvents();redraw();closeForm();closeDrawer();
     if(result.kind==="closure"){
       notify("Vollsperrung gespeichert: "+
         (result.closureFrom&&result.closureTo?
@@ -297,22 +324,30 @@ function createOfflineEventEditor(options){
   }
   function onRoadSelected(road,offsetM=0){
     current=road;currentOffset=Math.max(0,Math.min(road.meters-.001,offsetM));
-    closeForm();
+    closeForm();renderRoadEvents();
   }
   // A map pin opens this exact saved event in the same editor as the list.
   function editEventById(id){
     const event=scenario.listEvents().find(item=>item.id===id);
-    if(!event||!current||current.id!==event.edgeId)return false;
+    if(!event)return false;
+    // A closure gate or overlapping roadworks span can lie on a different
+    // Way. Edit the original anchor rather than moving or duplicating it.
+    if(!current||current.id!==event.edgeId)focusRoad(event.edgeId,event.offsetM);
+    if(!current||current.id!==event.edgeId)return false;
     prepare(event.kind,event);
     return true;
   }
-  for(const button of document.querySelectorAll(".event-actions [data-event]")){
+  for(const button of eventButtons){
     button.addEventListener("click",()=>{
       if(!current)return;
       if(button.dataset.event==="none"){
-        for(const event of scenario.listEvents().filter(x=>x.edgeId===current.id))
-          scenario.removeEvent(event.id);
-        persist();renderList();redraw();closeForm();
+        removeSelected(editingId);
+        return;
+      }
+      if(editingId){
+        kind.value=button.dataset.event;
+        refreshSpeed();refreshLength();refreshSchedule();
+        $("event-form-heading").textContent="Bearbeiten: "+NAMES[kind.value];
         return;
       }
       prepare(button.dataset.event);
@@ -344,6 +379,7 @@ function createOfflineEventEditor(options){
   kind.addEventListener("change",()=>{
     if(kind.value==="closure")for(const cb of laneInputs())cb.checked=true;
     refreshSpeed();refreshLength();refreshSchedule();
+    $("event-form-heading").textContent=(editingId?"Bearbeiten: ":"Neues Ereignis: ")+NAMES[kind.value];
   });
   lanes.addEventListener("change",()=>refreshSpeed());
   exists.addEventListener("change",()=>refreshSpeed());
@@ -358,7 +394,7 @@ function createOfflineEventEditor(options){
       notify("Simulationsbeginn: "+startClock.value.replace("T"," ")+" Uhr (Deutschland)");
     }catch(ex){notify("Ungültige Simulationszeit: "+ex.message);}
   });
-  load();renderList();
+  load();renderList();if(removeButton)removeButton.disabled=true;
   let lastMinute=-1;
   function updateStatus(){
     const minute=Math.floor(scenario.totals().simSeconds/60);

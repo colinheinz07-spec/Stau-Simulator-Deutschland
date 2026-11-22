@@ -718,8 +718,8 @@ async function startLegacyCanvas(existingMap=null){
     pointers.delete(e.pointerId);
     const p=local(e);
     if(!pointers.size&&!wasPinching&&tap&&Math.hypot(p[0]-tap.x,p[1]-tap.y)<10){
-      const event=eventTargets.find(target=>
-        Math.hypot(target.x-p[0],target.y-p[1])<=19);
+      const event=eventTargets.map(target=>({target,d:Math.hypot(target.x-p[0],target.y-p[1])}))
+        .filter(item=>item.d<=19).sort((a,b)=>a.d-b.d)[0]?.target;
       if(event){
         const road=segmentById.get(event.edgeId);
         if(road){

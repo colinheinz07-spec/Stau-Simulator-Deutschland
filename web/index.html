@@ -16,7 +16,7 @@
         <span class="brand-mark" aria-hidden="true">A</span>
         <div><strong>STAU SIMULATOR <span>DEUTSCHLAND</span></strong><small>Verkehrsmodell · Deutschland</small></div>
       </div>
-      <span class="version">VERSION <b>0.10.39</b></span>
+      <span class="version">VERSION <b>0.10.40</b></span>
     </header>
     <main class="workspace">
       <section class="map-command" aria-label="Simulation steuern">
@@ -113,10 +113,11 @@
       <div><dt>OSM-Way</dt><dd id="detail-osm">—</dd></div>
     </dl>
     <div class="event-actions">
+      <div id="road-events" class="road-events" hidden></div>
       <h3>Ereignis hinzufügen</h3>
       <p>Wähle den Ereignistyp und anschließend die betroffenen Fahrstreifen.</p>
       <div class="events-grid">
-        <button type="button" data-event="none">Ereignisse entfernen</button>
+        <button type="button" data-event="none">Ausgewähltes Ereignis entfernen</button>
         <button type="button" data-event="roadworks">🚧 Baustelle</button>
         <button type="button" data-event="accident">💥 Unfall</button>
         <button type="button" data-event="breakdown">🚛 Panne</button>

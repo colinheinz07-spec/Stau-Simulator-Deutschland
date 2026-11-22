@@ -110,6 +110,10 @@ test('several close exits independently divert from a severe remaining queue, in
   const length=s.edgeActivity('up').lengthM,used=new Set();let priorToTail=false;
   for(let i=0;i<85;i++){
     s.advance(12);
+    if(i===39){
+      assert.ok(s.edgeActivity('out5').diversionDemandFraction>0,'last free exit before the queue is used');
+      for(let j=0;j<5;j++)assert.equal(s.edgeActivity('out'+j).diversionDemandFraction,0,'earlier freely reachable exits remain normal');
+    }
     for(let j=0;j<6;j++){
       const at=length*(points[j+1]-7)/.25,a=s.edgeActivity('out'+j);
       if(s.routingDelayAhead('up',at)<59)assert.equal(a.diversionDemandFraction,0);
