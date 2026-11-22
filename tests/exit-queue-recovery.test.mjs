@@ -51,3 +51,22 @@ test('simultaneous Heumar north/south closures preserve normal Poll and Flughafe
   assert.ok(s.edgeActivity('extra-a4-olpe',gate-120).sectionVph>100,'actual vehicles reach the true last legal motorway fork');
   assert.equal(s.edgeActivity('extra-a4-olpe',gate+250).sectionVph,0,'no traffic crosses the closed mainline gate');
 });
+
+test('real A3 accident: Diez diverts before the next exit is itself an hour away',async()=>{
+  const s=await scenario([]);
+  s.setSimulationStart(Date.parse('2026-11-13T13:00:00Z'));s.setDemandPercent(140);s.warmStart();
+  s.setEvent({id:'incident',edgeId:'A3-35484178',offsetM:100,kind:'accident',lengthM:200,
+    closedLanes:[0,1],speedKmh:50,shoulder:'normal',hasShoulder:false});
+  const fork='A3-326086102',exit='extra-heumar-1382318961';
+  assert.ok(s.detourDestinations('incident').some(name=>name.includes('Ransbach-Baumbach')));
+  let timely=0,actual=0;
+  for(let i=0;i<45;i++){
+    s.advance(12);
+    const a=s.edgeActivity(exit),delay=s.routingDelayAhead(fork,0),next=s.routingDelayToNextExit(fork,0);
+    if(delay<59)assert.equal(a.diversionDemandFraction,0);
+    if(delay>=65&&next<30&&a.diversionDemandFraction>0.04){timely++;actual=Math.max(actual,a.divertedVehiclesOnEdge);}
+    assert.equal(s.edgeActivity('extra-heumar-1382318661').diversionDemandFraction,0,'opposite carriageway is not affected');
+    assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
+  }
+  assert.ok(timely>=3&&actual>5,'real additional Diez departures while the approach to Montabaur is still under 30 minutes');
+});

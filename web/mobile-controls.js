@@ -47,7 +47,7 @@
     const states={slow:["Stockender Verkehr","#efae47"],jam:["Stau / Stop-and-Go","#e34f56"],standstill:["Stillstand / Kriechverkehr","#a85169"]};
     const [state,color]=states[severity];
     const signedDestination=road.kind==="ramp"&&road.name?.includes("→")?road.name.split("→").at(-1).trim():null;
-    const destination=signedDestination||directionNames[road.direction];
+    const destination=signedDestination||road.destination||directionNames[road.direction];
     // A ramp's delay is its own waiting time, not the travel time of the
     // adjacent through motorway. Keep the route category visible on the map.
     const rampRole=road.kind==="ramp"?(road.rampRole||(/\bAbfahrt\b/.test(road.name||"")?"Abfahrt":

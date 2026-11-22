@@ -369,6 +369,11 @@ Die Logik ist nicht auf Verwaltungs-Vollsperrungen begrenzt: Auch bei Unfall, Ba
 - A3 ab AK Köln-Ost über AS Köln-Dellbrück, AS Köln-Mülheim und AS Leverkusen-Zentrum bis AK Leverkusen inklusive der realen A1-Verbindungsrampen und kurzer A1-Anschlussstücke. Die Netzgrenze liegt nördlich des Kreuzes, nicht erst an der nächsten Anschlussstelle. Originale OSM-Ways und Anschlussstellengeometrien; durchgehende vier Fahrstreifen je Richtung bis Leverkusen-Zentrum, anschließend drei gemäß dauerhaftem Querschnitt (siehe [Autobahn GmbH](https://www.autobahn.de/planen-bauen/projekt/a-bei-lev-ausbau-der-a1-und-a3-in-leverkusen)). Lokale Nachfrageprofile sind Modellwerte, keine gemessenen Stundenwerte.
 - Fahrzeuggewichtete, aus Zellbewegungen abgeleitete Geschwindigkeit mit 60 Sekunden Zeitkonstante; kurze Bremsphasen werden nicht als dauerhafter Stillstand hochgerechnet. Kapazitätsverlust und Rückstauwelle moderater kalibriert, ohne Mindestabfluss für gesperrte Streifen oder künstliche Mindestgeschwindigkeit. Die Zeitverlustberechnung verwendet diese tatsächliche Modellgeschwindigkeit. Bei sehr langen Wartezeiten ohne Abfluss an einer Vollsperrung wird keine scheinpräzise Reisezeit angezeigt.
 
+## Version 0.10.36 – Abfahrten bei langen Staus
+
+- Ab 60 Minuten verbleibender Verzögerung auf der betroffenen Richtungsfahrbahn können Fahrer bereits an der letzten freien Anschlussstelle vor dem Stau und an weiteren Anschlussstellen im Stau abfahren. Die kurze Fahrt zur nächsten AS muss nicht selbst eine Stunde dauern. Freie, weiter entfernte Ausfahrten und nicht betroffene Autobahnrichtungen behalten ihre normale Verkehrsaufteilung. Außerhalb des Netzes werden keine Rückkehranschlüsse erfunden.
+- Ortsbezogene Richtungsanzeige: A3 nordwärts ab Köln-Ost Richtung Düsseldorf im Bereich Leverkusen; die bisherigen richtungsbezogenen Verkehrsprofile bleiben unverändert.
+
 ## Version 0.10.35 – Abfahrtsrückstaus und normale Durchfahrt
 
 - Normale Abfahrtsziele und Durchgangsverkehr bleiben getrennt. Eine bloß vorbereitete Umleitung oder entfernte Sperrung deaktiviert die Fahrstreifentrennung nicht mehr; ein später erreichbares, offenes Autobahndreieck zählt als reale Ausweichmöglichkeit. An derselben Verzweigung wird eine Umleitung nicht doppelt auf den Verkehr angewandt.

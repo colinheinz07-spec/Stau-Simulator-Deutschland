@@ -26,6 +26,9 @@ test('A3 extends continuously through Dellbrück, Mülheim and Leverkusen to A1'
     assert.ok(ramps.length>4);assert.ok(ramps.every(r=>s.reachable(r[0])),name);
   }
   assert.equal(s.sourceProfiles().filter(p=>p.ref==='A3'&&p.kind==='mainline').length,2);
+  assert.equal(s.queueRoadInfo({edgeId:'A3-992501211',offsetM:10}).destination,'Düsseldorf');
+  assert.equal(s.queueRoadInfo({edgeId:'A3-126500248',offsetM:10}).direction,'A3-frankfurt');
+  assert.equal(s.queueRoadInfo({edgeId:'A3-25341152',offsetM:10}).destination,undefined,'Köln remains the destination south of the city');
   const road=data.roads.find(r=>r[0]==='A3-26493553');
   const ev=s.setEvent({id:'close',edgeId:road[0],offsetM:150,lengthM:5,kind:'closure',closedLanes:[0,1,2,3],
     speedKmh:0,hasShoulder:false,shoulder:'normal'});

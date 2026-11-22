@@ -77,6 +77,8 @@ test("Staukarten verwenden gemessene Modellwerte, Fahrtrichtung und verknüpfen 
  const road={ref:"A3",kind:"mainline",direction:"A3-koeln",location:"bei Montabaur"};
  const view=ui.describeJam(group,road);
  assert.equal(view.title,"A3 Richtung Köln");assert.equal(view.length,"2,4 km");
+ const north=ui.describeJam(group,{...road,location:"bei Leverkusen",destination:"Düsseldorf"});
+ assert.equal(north.title,"A3 Richtung Düsseldorf");assert.equal(north.mapTitle,"A3 → Düsseldorf");
  assert.equal(view.delay,"+12 min");assert.equal(view.severity,"standstill");assert.equal(view.speed,"8 km/h");
  const exit=ui.describeJam(group,{ref:"A3",kind:"ramp",name:"AS Ransbach-Baumbach · Abfahrt von A3 → Köln"});
  assert.equal(exit.title,"A3 · Abfahrt Richtung Köln");
