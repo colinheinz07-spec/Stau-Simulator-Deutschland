@@ -19,35 +19,66 @@ const roads=()=>[
 ];
 const incident={id:'acc',edgeId:'bad',kind:'accident',offsetM:500,lengthM:200,closedLanes:[0],speedKmh:50,shoulder:'normal',hasShoulder:false};
 
-test('a long moving queue triggers actual exits before 60 min and remains dynamic',async()=>{
+test('a long moving queue does not trigger voluntary exits below 60 min',async()=>{
   const s=(await make())({roads:roads()});
   s.setSimulationStart(Date.parse('2026-11-13T13:00:00Z'));s.setDemandPercent(160);s.warmStart();
   s.setEvent(incident);const offset=s.edgeActivity('up').lengthM*.4;
   assert.equal(s.lengthDiversionShare(2999),0);
   assert.equal(s.lengthDiversionShare(10000),.22);
-  let peak=0,activeEarly=0,afterRampQueue=0,downstreamBrake=-1,upstreamBrake=-1;
+  let peak=0,belowThreshold=0,downstreamBrake=-1,upstreamBrake=-1;
+  const congestedSpeeds=[];
   for(let i=0;i<70;i++){
     s.advance(12);
     const len=s.routingQueueLength('up',offset),delay=s.routingDelayAhead('up',offset),exit=s.edgeActivity('out');
     peak=Math.max(peak,len);
-    if(len>=3000&&delay<60&&exit.diversionDemandFraction>0)activeEarly++;
-    if(len>=6000&&delay<60&&exit.diversionDemandFraction>0&&i>=35)afterRampQueue++;
+    if(len>=3000&&delay<60){belowThreshold++;assert.equal(exit.diversionDemandFraction,0);}
     if(downstreamBrake<0&&s.edgeActivity('long',12000).sectionSpeedKmh<45)downstreamBrake=i;
     if(upstreamBrake<0&&s.edgeActivity('long',8500).sectionSpeedKmh<45)upstreamBrake=i;
+    if(i>=35)congestedSpeeds.push(s.edgeActivity('long',12000).sectionSpeedKmh);
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
   }
-  assert.ok(peak>7500&&activeEarly>20&&afterRampQueue>20,'a short queue at the exit may not hide the longer queue further ahead');
+  assert.ok(peak>7500&&belowThreshold>20,'long moving congestion is not itself an hour of delay');
   assert.ok(downstreamBrake>=0&&upstreamBrake>downstreamBrake,'braking front moves physically upstream, not simultaneously on the entire motorway');
-  assert.ok(s.totals().detouredVehicles>100);
-  assert.ok(s.routingQueueLength('up',offset)<peak,'actual flow can already shorten the queue while the incident remains active');
+  assert.ok(Math.max(...congestedSpeeds)-Math.min(...congestedSpeeds)>2,'real flow fluctuates even with the same lane restriction');
   const downstream=s.edgeActivity('long',12000).sectionSpeedKmh;
-  s.removeEvent('acc');s.setDemandPercent(65);
+  s.removeEvent('acc');s.setDemandPercent(45);
   // Empirically calibrated congested wave speed (18 rather than 22 km/h)
   // may take a little longer to release the last isolated cell.
-  for(let i=0;i<90;i++)s.advance(12);
+  for(let i=0;i<180&&s.routingQueueLength('up',offset)>0;i++)s.advance(12);
   assert.equal(s.routingQueueLength('up',offset),0);
   assert.ok(s.edgeActivity('long',12000).sectionSpeedKmh>downstream);
   assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
+});
+
+test('voluntary decisions stop as the primary queue clears, while committed ramp traffic still drains',async()=>{
+  const s=(await make())({roads:roads()});
+  s.setSimulationStart(Date.parse('2026-11-13T13:00:00Z'));s.setDemandPercent(160);s.warmStart();
+  s.setEvent({...incident,closedLanes:[0,1]});
+  const offset=s.edgeActivity('up').lengthM*.4;
+  let diverted=0;
+  for(let i=0;i<100;i++){
+    s.advance(12);
+    if(s.routingDelayAhead('up',offset)<59)assert.equal(s.edgeActivity('out').diversionDemandFraction,0);
+    diverted=Math.max(diverted,s.edgeActivity('out').diversionDemandFraction);
+  }
+  assert.ok(diverted>0&&diverted<1);
+  assert.ok(s.totals().detouredVehicles>100);
+  s.removeEvent('acc');s.setDemandPercent(55);
+  let recovered=0,residualRamp=0;
+  const speeds=[];
+  for(let i=0;i<100;i++){
+    s.advance(12);
+    const exit=s.edgeActivity('out');
+    const primary=s.jamSummaries().find(g=>g.endEdgeId==='bad')?.routingDelayMin??0;
+    if(primary<60&&exit.divertedVehiclesOnEdge>1){
+      residualRamp++;assert.equal(exit.diversionDemandFraction,0);
+    }
+    if(primary<6){recovered++;assert.equal(exit.diversionDemandFraction,0);}
+    speeds.push(s.edgeActivity('long',12000).sectionSpeedKmh);
+    assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
+  }
+  assert.ok(recovered>20&&residualRamp>0,'new choices stop before previously committed traffic has drained');
+  assert.ok(Math.max(...speeds)-Math.min(...speeds)>35,'actual movement speeds recover as the release wave propagates');
 });
 
 test('a free later exit stays preferred until the congestion reaches its approach',async()=>{

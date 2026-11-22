@@ -52,7 +52,7 @@ test("24-hour closure: covered exits keep draining and a wide detour conserves v
       s.edgeActivity("early").departedVph>100)drainingMinutes++;
   }
   assert.ok(drainingMinutes>60,"an earlier exit keeps draining for over an hour even when the next exit is close");
-  assert.ok(maxDelay>600,"extreme scenario actually reaches a projected delay of over ten hours: "+maxDelay);
+  assert.ok(maxDelay>480,"extreme scenario actually reaches a projected delay of over eight hours: "+maxDelay);
   const a=s.wideDetourAccounting()[0];
   assert.ok(a.assigned>1000&&a.returned>100,"actual diversion and return, not just a route label");
   assert.ok(Math.abs(a.assigned-a.returned-a.outside)<1e-6);

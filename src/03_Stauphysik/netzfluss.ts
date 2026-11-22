@@ -10,7 +10,7 @@ import type {RoadEdge,RoadNetwork,SpeedSample,TrafficCellBand} from '../model.js
 import {activeEvent,activeNetworkClosures,type SimEvent,type CorridorClosure}
   from '../04_Ereignisse.js';
 
-type CellEdge={edge:RoadEdge;lengthM:number;vehicles:Float64Array;jamCellVehicles:number;operatingVph:Float64Array;brakeMemory:Float64Array;speedMovement:Float64Array;speedExposure:Float64Array;stepOut:Float64Array};
+type CellEdge={edge:RoadEdge;lengthM:number;vehicles:Float64Array;jamCellVehicles:number;operatingVph:Float64Array;brakeMemory:Float64Array;platoonProgress:Float64Array;speedMovement:Float64Array;speedExposure:Float64Array;stepOut:Float64Array};
 export interface FlowSettings {
   /** Spatial granularity; every original directed OSM edge remains separate. */
   targetCellLengthM?:number;
@@ -70,9 +70,11 @@ export class NetworkFlowEngine {
   private readonly turnStock=new Map<string,Map<string,number>>();
   private readonly localExitMoves=new Map<string,Move[]>();
   private readonly delayCache=new Map<string,number>();
+  private readonly decisionCache=new Map<string,number>();
   private readonly lengthCache=new Map<string,number>();
   private readonly closedDisplay=new Map<string,Array<{fromM:number;toM:number}>>();
   private delayMinute=-1;
+  private decisionEventStamp='';
   private readonly openBoundarySinks=new Set<string>();
   private readonly sourceIds:string[]=[];
   private readonly sourceBacklog=new Map<string,number>();
@@ -97,7 +99,7 @@ export class NetworkFlowEngine {
       const cellLength=edge.lengthM/count;
       this.cells.set(edge.id,{
         edge,lengthM:cellLength,vehicles:new Float64Array(count),speedMovement:new Float64Array(count),speedExposure:new Float64Array(count),stepOut:new Float64Array(count),
-        operatingVph:new Float64Array(count).fill(edge.lanes*edge.capacityPerLaneVph),brakeMemory:new Float64Array(count),
+        operatingVph:new Float64Array(count).fill(edge.lanes*edge.capacityPerLaneVph),brakeMemory:new Float64Array(count),platoonProgress:new Float64Array(count),
         jamCellVehicles:130*edge.lanes*cellLength/1000
       });
     }
@@ -215,7 +217,7 @@ export class NetworkFlowEngine {
    * Do not count a queue behind the exit or on an unrelated motorway arm. */
   routingDelayAhead(edgeId:string):number{
     const minute=Math.floor(this.elapsed/60);
-    if(this.delayMinute!==minute){this.delayMinute=minute;this.delayCache.clear();this.lengthCache.clear();}
+    if(this.delayMinute!==minute){this.delayMinute=minute;this.delayCache.clear();this.decisionCache.clear();this.lengthCache.clear();}
     const cached=this.delayCache.get(edgeId);
     if(cached!==undefined)return cached;
     let current=this.cells.get(edgeId),delay=0;
@@ -238,6 +240,40 @@ export class NetworkFlowEngine {
     }
     this.delayCache.set(edgeId,delay);
     return delay;
+  }
+  /** Only the connected congestion at the relevant bottleneck qualifies for
+   * voluntary routing. A separated queue left behind at an off-ramp must not
+   * keep redirecting new traffic after the actual incident has eased. */
+  private decisionDelayAhead(edgeId:string,events:ReadonlyMap<string,SimEvent[]>):number{
+    const cached=this.decisionCache.get(edgeId);if(cached!==undefined)return cached;
+    let current=this.cells.get(edgeId),cluster=0,gap=0,best=0,incidentDelay:number|undefined;
+    const seen=new Set<string>([edgeId]);
+    outer:while(current){
+      const next=(this.moves.get(current.edge.id)??[]).filter(m=>{
+        const target=this.cells.get(m.toId)!.edge;
+        return target.kind==='mainline'&&target.motorwayRef===current!.edge.motorwayRef;
+      });
+      if(next.length!==1||seen.has(next[0]!.toId))break;
+      current=this.cells.get(next[0]!.toId)!;seen.add(current.edge.id);
+      const incident=(events.get(current.edge.id)??[]).filter(e=>e.kind!=='closure')
+        .reduce((m,e)=>Math.min(m,e.fromM),Infinity);
+      const exitBackedUp=(this.localExitMoves.get(current.edge.id)??[]).some(m=>{
+        const ramp=this.cells.get(m.toId)!;
+        return ramp.vehicles[0]!>.25*ramp.jamCellVehicles;
+      });
+      for(let k=0;k<current.vehicles.length;k++){
+        const count=current.vehicles[k]!,speed=this.cellSpeed(current,k);
+        if(count>=Math.max(2,current.edge.lanes*1.2)&&count/current.jamCellVehicles>.23&&speed<=65){
+          cluster+=current.lengthM*.06*(1/Math.max(1,speed)-1/current.edge.freeSpeedKmh);gap=0;
+        }else if((gap+=current.lengthM)>600){
+          if(!exitBackedUp)best=Math.max(best,cluster);cluster=0;
+        }
+        if((k+1)*current.lengthM>=incident){incidentDelay=cluster;break outer;}
+      }
+      if(exitBackedUp){cluster=0;gap=0;}
+    }
+    const result=incidentDelay??Math.max(best,cluster);
+    this.decisionCache.set(edgeId,result);return result;
   }
   /** Length of the largest relevant congestion complex on the directed approach
    * to the next AS. Short flowing gaps do not break stop-and-go recognition. */
@@ -370,6 +406,10 @@ export class NetworkFlowEngine {
       entries.push(event);
       activeById.set(event.edgeId,entries);
     }
+    const decisionEventStamp=JSON.stringify([...activeById]);
+    if(decisionEventStamp!==this.decisionEventStamp){
+      this.decisionEventStamp=decisionEventStamp;this.decisionCache.clear();this.delayCache.clear();this.lengthCache.clear();
+    }
     const closedByEvent=new Set<string>();
     const closureEdges=new Set(corridor.blockedEdgeIds);
     this.closedDisplay.clear();
@@ -424,7 +464,11 @@ export class NetworkFlowEngine {
         const pressure=edge.kind==='mainline'?clamp01((density-.28)/.35)*clamp01((.70-relativeSpeed)/.55):0;
         const previous=state.brakeMemory[i]!,tau=pressure>previous?12:45;
         state.brakeMemory[i]=previous+(pressure-previous)*(1-Math.exp(-dt/tau));
-        capacity*=dynamic.capacityFactor*restart*(1-.05*state.brakeMemory[i]!);
+        const platoon=edge.kind==='mainline'?clamp01((density-.23)/.30)*
+          clamp01((.80-this.cellSpeed(state,i)/edge.freeSpeedKmh)/.55):0;
+        const groupPhase=platoon>0?Math.sin(state.platoonProgress[i]!*Math.PI*2):0;
+        const headway=1-.14*platoon*(.5+.5*groupPhase);
+        capacity*=dynamic.capacityFactor*restart*headway*(1-.05*state.brakeMemory[i]!);
         state.operatingVph[i]=forbiddenEntry||corridor.blockedEdgeIds.has(id)||closedByEvent.has(id)?0:capacity;
         const freeTravelFraction=Math.min(1,(edge.freeSpeedKmh*dynamic.speedFactor/3.6)*dt/lengthM);
         if(i===vehicles.length-1)motion.set(id,freeTravelFraction);
@@ -432,7 +476,7 @@ export class NetworkFlowEngine {
         outs[i]=Math.min(vehicles[i]!,cap,vehicles[i]!*freeTravelFraction);
         const room=Math.max(0,jamCellVehicles-vehicles[i]!);
         const waveKmh=edge.kind==='mainline'?this.waveKmh*(1-4/22*clamp01((density-.25)/.30)):this.waveKmh;
-        const waveFraction=Math.min(1,(waveKmh/3.6)*dt/lengthM);
+        const waveFraction=Math.min(1,(waveKmh*(1+.24*platoon*groupPhase)/3.6)*dt/lengthM);
         // Corridor closures are enforced at real directed boundaries below.
         // Do not prevent exiting a closed OSM Way into the next closed Way.
         ins[i]=forbiddenEntry?0:Math.min(room,cap,room*waveFraction);
@@ -470,17 +514,19 @@ export class NetworkFlowEngine {
       let outsideWeight=this.openBoundarySinks.has(id)?20:0;
       const localExits=this.localExitMoves.get(id);
       const exitIds=new Set(localExits?.map(m=>m.toId));
-      const observed=localExits?this.routingDelayAhead(id):0;
-      const lastDensity=state.vehicles[state.vehicles.length-1]!/Math.max(.001,state.jamCellVehicles);
+      const observed=localExits?Math.min(this.routingDelayAhead(id),this.decisionDelayAhead(id,activeById)):0;
       const nextQueued=choices.some(m=>{
         const target=this.cells.get(m.toId)!;
         return target.edge.kind==='mainline'&&target.edge.motorwayRef===state.edge.motorwayRef&&
           target.vehicles[0]!/Math.max(.001,target.jamCellVehicles)>.65&&this.cellSpeed(target,0)<=65;
       });
-      const queueAtExit=lastDensity>.65&&this.cellSpeed(state,state.vehicles.length-1)<=65||nextQueued;
+      // A queued incoming fork alone is not evidence that the *through*
+      // motorway is queued. The later exit remains preferred when the
+      // downstream continuation is flowing (including an off-ramp backup).
+      const queueAtExit=nextQueued;
       const lengthShare=localExits?lengthDiversionShare(this.routingQueueLength(id,closureEdges,corridor.blockedMovementKeys)):0;
-      const divert=Math.max(lengthShare,observed>=60?diversionShare(queueAtExit?observed:
-        Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys))):0);
+      const eligible=queueAtExit?observed:Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys));
+      const divert=eligible>=60?Math.max(Math.min(diversionShare(eligible)*1.15,lengthShare),diversionShare(eligible)):0;
       if(localExits&&divert>0){
         const openExits=choices.filter(m=>localExits.includes(m));
         if(openExits.length){
@@ -591,13 +637,14 @@ export class NetworkFlowEngine {
       this.sourceBacklog.set(id,waiting-admitted);
     }
     // Atomically apply all previously allocated, storage-safe transfers.
-    const speedAlpha=1-Math.exp(-dt/60);
+    const speedAlpha=1-Math.exp(-dt/30);
     for(const [id,state] of this.cells){
       const changes=delta.get(id)!;
       for(let i=0;i<changes.length;i++){
         const count=state.vehicles[i]!,free=state.edge.freeSpeedKmh;
         if(count>=.3){
           const movement=Math.min(count*free,state.stepOut[i]!*Math.max(state.lengthM,free*dt/3.6)*3.6/dt);
+          state.platoonProgress[i]=(state.platoonProgress[i]!+state.stepOut[i]!/Math.max(12,state.edge.lanes*18))%1;
           if(state.speedExposure[i]!<.01){state.speedMovement[i]=movement;state.speedExposure[i]=count;}
           else{
             state.speedMovement[i]=state.speedMovement[i]!+speedAlpha*(movement-state.speedMovement[i]!);
