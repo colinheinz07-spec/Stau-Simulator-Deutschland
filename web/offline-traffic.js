@@ -3432,8 +3432,15 @@ function createLegacyTrafficScenario(data){
     const distance=anyClosureActive?closureDistanceAhead(edge,offset,Infinity):Infinity;
     const signedRoute=preferredTransfer(edge,offset,null);
     const signedApproach=!!signedRoute&&!legalTurns.some(t=>designatedTransfers.has(edge.index+":"+t.to));
-    const closureShare=signedApproach?closureExposureAhead(edge,offset,Infinity,signedRoute.plan.closureId):Number.isFinite(distance)?1:
-      anyClosureActive&&!hasOpenTransferToExit(edge,offset)?closureExposureAhead(edge,offset,Infinity):0;
+    // A closure on ONE downstream motorway arm is not a mandate to
+    // leave an upstream, still OPEN motorway at an arbitrary local AS.
+    // The affected flow takes the open motorway option at its real fork.
+    // Mandatory LOCAL departure is only for a closure physically reachable
+    // on the current directed throughway, or a specifically assigned feeder
+    // route. Do not infer compulsion from an unrelated distant closure.
+    const closureShare=signedApproach?
+      closureExposureAhead(edge,offset,Infinity,signedRoute.plan.closureId):
+      Number.isFinite(distance)?1:0;
     const currentAlternatives=legalTurns.filter(link=>{
       const next=edges[link.to];
       return (next.kind==="ramp"||next.kind==="mainline"&&next.ref!==edge.ref)&&isUsableEscape(edge,link);

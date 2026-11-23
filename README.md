@@ -1,5 +1,13 @@
 # 🚗 Stau-Simulator Deutschland
 
+## Version 0.10.43 – Vollsperrungs-Ausleitung nicht mehr an beliebiger früher AS
+- Eine **Teilsperrung am Autobahndreieck** (z. B. A48 mit A3-Frankfurt-Arm gesperrt, A3-Köln-Arm offen) zwingt nicht mehr automatisch Fahrer an einer vorherigen **lokalen AS** von der Autobahn. Die offene physische Autobahnverbindung bleibt befahrbar.
+- Ursache: Der bisherige Fallback von `closureForkDecision` verwendete die Sperrung eines entfernten Abzweiges als Verpflichtung zum lokalen Abfahren. In einem reproduzierbaren Test wurden bei **9 Minuten Gesamtzeitverlust 50 %** in die lokale AS umgeleitet. Dieser Fallback ist entfernt.
+- **Unverändert:** Letzte zulässige Abfahrt vor einer tatsächlich unvermeidbaren Vollsperrung zwingend; freiwillige lokale Umleitung erst ab 60 Minuten Verlust zwischen den folgenden zwei AS; unveränderte Fahreranteile; normale Ausfahrten und Autobahnüberleitungen bleiben durch physikalische Aufnahmekapazität begrenzt.
+- Regressionstests: Sperrung nur eines Autobahnastes, zwingende letzte Ausfahrt und exakte bisherige 60-Minuten-Prozentskala.
+- **Noch nicht behoben:** Bestehende weitere Fehler in Gesamttests, teilweise unvollständige OSM-Verbindungen und großräumige Umleitungsrouten; kein Anspruch auf bundesweit fehlerfreie Navigation.
+
+
 ## Version 0.10.42 – Verkehr an AK/AS und langsame Rampen
 - **AK/AD:** Normale Fahrzeugströme nutzen größere Anteile tatsächlich verbundener Autobahnüberleitungen. Ein- und zweistreifige Transferäste werden gegenüber lokalen Ausfahrten unterschiedlich gewichtet. Es werden keine neuen Quellen am AK und keine zusätzlichen Fahrzeuge erzeugt.
 - **Größere Anschlussstellen:** Bereits hinterlegte reguläre Abfahrtsanteile (`exitPercent`) werden auch ohne gesonderten `exitCapacity`-Eintrag angewendet. Die Geschwindigkeit und der tatsächliche Abfluss bleiben physikalisch begrenzt.
