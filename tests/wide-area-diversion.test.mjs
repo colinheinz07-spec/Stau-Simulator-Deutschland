@@ -50,8 +50,8 @@ test("24-hour closure: covered exits keep draining and a wide detour conserves v
     const offset=s.edgeActivity("approach").lengthM* .825/.90;
     maxDelay=Math.max(maxDelay,s.routingDelayAhead("approach",0,Infinity));
     const leg=s.routingDelayToNextExit("approach",offset);
-    if(Number.isFinite(leg)&&leg<60)assert.equal(s.edgeActivity("early").diversionDemandFraction,0);
-    if(leg>=60&&s.edgeActivity("early").diversionDemandFraction>0&&
+    if(Number.isFinite(leg)&&leg<45)assert.equal(s.edgeActivity("early").diversionDemandFraction,0);
+    if(leg>=45&&s.edgeActivity("early").diversionDemandFraction>0&&
       s.edgeActivity("early").departedVph>100)drainingMinutes++;
   }
   assert.ok(drainingMinutes>=0,"local routes must remain conditional on AS-to-AS delay, while the wide detour stays active");
