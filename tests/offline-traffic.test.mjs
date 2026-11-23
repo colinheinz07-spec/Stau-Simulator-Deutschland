@@ -488,7 +488,9 @@ test("route choice grows gradually with actual delay",async()=>{
   assert.equal(scenario.diversionShare(0),0);
   assert.equal(scenario.diversionShare(10),0);
   assert.equal(scenario.diversionShare(40),0);
-  assert.equal(scenario.diversionShare(59.99),0);
+  assert.equal(scenario.diversionShare(44.99),0);
+  assert.equal(scenario.diversionShare(45),.01);
+  assert.ok(scenario.diversionShare(59.99)>0);
   assert.equal(scenario.diversionShare(60),.02);
   assert.ok(Math.abs(scenario.diversionShare(88)-(.02+.13*28/30))<1e-9);
   assert.equal(scenario.diversionShare(120),.32);
