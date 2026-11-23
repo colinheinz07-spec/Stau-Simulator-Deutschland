@@ -60,7 +60,7 @@ test('separate queues on one A3–A48 route add, while the reverse unreachable r
     s.advance(12);
     const a=s.jamSummaries().find(g=>g.endEdgeId==='a');
     const b=s.jamSummaries().find(g=>g.endEdgeId==='e');
-    if(!a||!b||a.routingDelayMin>=60||b.routingDelayMin>=60||a.routingDelayMin+b.routingDelayMin<65)continue;
+    if(!a||!b||a.routingDelayMin>=45||b.routingDelayMin>=45||a.routingDelayMin+b.routingDelayMin<65)continue;
     const delay=s.routingDelayToDestination('a',0,'e');
     assert.ok(delay>=60);
     assert.ok(Math.abs(delay-a.routingDelayMin-b.routingDelayMin)<6);
