@@ -1,5 +1,15 @@
 # 🚗 Stau-Simulator Deutschland
 
+## Version 0.10.44 – Kombination Leverkusen und Gremberg, kurze Staurampen und Kartenbedienung
+
+- **A4 Gremberg–Heumar bleibt offen**, auch wenn A3 Leverkusen-Zentrum–AK Leverkusen (beide Richtungen) und A1 Köln-Niehl–AK Leverkusen (beide Richtungen, mit Leverkusen-West) gesperrt werden. Eine Sperrung erst auf einer anschließend erreichten *anderen* Autobahn darf den gesamten durchgehenden Verkehr der A4 nicht an einer früheren lokalen Abfahrt herauszwingen.
+- Der vorherige `closureDistanceAhead`-Graphensprung über eine andere Autobahn wird **nur bei der lokalen Pflichtabfahrtsentscheidung** unterbunden. Die sonstige Sperrungsausbreitung, eigentliche Sperrgates und die Weiterleitung betroffener Ziele bleiben getrennt.
+- **Kurze Rampen:** Verkehrsfarbe aus tatsächlich belegter Länge und Geschwindigkeit; keine absolute 0,8-Fahrzeug-Grenze, die belegte Mikrosegmente grün lässt. Ein 250-Kfz/h-Beispiel bei knapp 10 km/h zeigt eine Staufarbe, die gleiche Rampe ohne Beschränkung bleibt grün.
+- **iPhone-Bedienung:** Physikslices werden nicht mehr mit 0 ms ohne Luft dazwischen abgearbeitet; Touch/Pinch sowie Zoom bekommen einen kurzen Render-Vorrang. Kachelcache speicherschonender. Diese Änderungen sind keine Behauptung eines auf allen iOS-Geräten gemessenen Performance-Werts.
+- **Fest unverändert:** 60 Minuten lokale Schwelle zwischen zwei Anschlussstellen, Fahreranteile, Pflicht zur letzten legalen Ausfahrt bei tatsächlicher Vollsperrung, regulärer Verkehr.
+- Reproduktionsfall mit sechs tatsächlichen gerichteten Sperrabschnitten: Nach vier simulierten Minuten A4 bei Gremberg rund 2.850 Kfz/h statt zuvor etwa 36, weiterhin mehr als 2.700 Kfz/h auf der A4 bei Heumar, Fahrzeugbilanz 0. Andere frühere Gesamttests haben weiterhin bekannte Fehler.
+
+
 ## Version 0.10.43 – Vollsperrungs-Ausleitung nicht mehr an beliebiger früher AS
 - Eine **Teilsperrung am Autobahndreieck** (z. B. A48 mit A3-Frankfurt-Arm gesperrt, A3-Köln-Arm offen) zwingt nicht mehr automatisch Fahrer an einer vorherigen **lokalen AS** von der Autobahn. Die offene physische Autobahnverbindung bleibt befahrbar.
 - Ursache: Der bisherige Fallback von `closureForkDecision` verwendete die Sperrung eines entfernten Abzweiges als Verpflichtung zum lokalen Abfahren. In einem reproduzierbaren Test wurden bei **9 Minuten Gesamtzeitverlust 50 %** in die lokale AS umgeleitet. Dieser Fallback ist entfernt.

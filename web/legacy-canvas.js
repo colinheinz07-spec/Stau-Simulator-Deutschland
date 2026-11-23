@@ -126,6 +126,9 @@ async function startLegacyCanvas(existingMap=null){
   let eventTargets=[];
   let eventEditor=null;
   let timer=null,simRunning=false,sliceTimer=null,sliceRemaining=0,pendingWarmStart=false;
+  // A mobile pinch/drag must not compete with a tight 0-ms simulation
+  // callback loop. Give the browser a brief painting/gesture window.
+  let interactionUntil=0;
   const mainlines=segments.filter(x=>x.kind!=="ramp");
   const ramps=segments.filter(x=>x.kind==="ramp");
   $("chip-roads").textContent=format(segments.length)+" Fahrwege";
@@ -179,6 +182,7 @@ async function startLegacyCanvas(existingMap=null){
     return roadWorld(road,road.points.length-1);
   }
   function zoomAt(x,y,step){
+    interactionUntil=Date.now()+160;
     const oldScale=2**zoom;
     const anchor=[center[0]+(x-width/2)/oldScale,
       center[1]+(y-height/2)/oldScale];
@@ -198,8 +202,9 @@ async function startLegacyCanvas(existingMap=null){
     if(x<0||y<0||x>=n||y>=n)return null;
     const key=z+"/"+x+"/"+y;
     if(tiles.has(key))return tiles.get(key);
-    if(tiles.size>140){
-      for(const k of tiles.keys()){tiles.delete(k);if(tiles.size<100)break;}
+    // Reduce decoded raster memory pressure in iOS WKWebView.
+    if(tiles.size>96){
+      for(const k of tiles.keys()){tiles.delete(k);if(tiles.size<72)break;}
     }
     const item={image:new Image(),ready:false,error:false};
     tiles.set(key,item);
@@ -689,7 +694,11 @@ async function startLegacyCanvas(existingMap=null){
   };
   canvas.addEventListener("pointerdown",e=>{
     if(e.pointerType==="mouse"&&e.button!==0)return;
-    canvas.setPointerCapture(e.pointerId);
+    // Suspend the NEXT queued physics slice immediately on touch; the
+    // already-running synchronous step finishes by itself.
+    interactionUntil=Date.now()+180;
+    if(sliceTimer!==null){clearTimeout(sliceTimer);sliceTimer=null;}
+    try{canvas.setPointerCapture(e.pointerId);}catch(error){/* gesture cancelled by WebKit */}
     const p=local(e);
     pointers.set(e.pointerId,p);
     if(pointers.size===1){tap={x:p[0],y:p[1]};wasPinching=false;}
@@ -697,6 +706,7 @@ async function startLegacyCanvas(existingMap=null){
   });
   canvas.addEventListener("pointermove",e=>{
     if(!pointers.has(e.pointerId))return;
+    interactionUntil=Date.now()+180;
     const old=pointers.get(e.pointerId);
     const before=[...pointers.values()];
     const p=local(e);
@@ -731,7 +741,7 @@ async function startLegacyCanvas(existingMap=null){
         if(hit)open(hit.road,Math.min(hit.road.meters-.001,hit.offsetM));
       }
     }
-    if(!pointers.size){tap=null;wasPinching=false;resumeSlice();}
+    if(!pointers.size){tap=null;wasPinching=false;requestDraw();resumeSlice();}
   }
   canvas.addEventListener("pointerup",endPointer);
   // A native gesture interruption is never a tap. Drop stale captures so
@@ -799,18 +809,22 @@ async function startLegacyCanvas(existingMap=null){
   function runSlice(){
     sliceTimer=null;
     if(!simRunning||!sliceRemaining||document.hidden||pointers.size)return;
+    if(Date.now()<interactionUntil){
+      sliceTimer=setTimeout(runSlice,Math.max(16,interactionUntil-Date.now()));
+      return;
+    }
     try{
       // Yield to touch, drawing and browser painting between short physics
       // tasks. A slow phone never accumulates overlapping minute batches.
       if(pendingWarmStart){
         pendingWarmStart=false;scenario.warmStart?.();displayStats();requestDraw();
-        sliceTimer=setTimeout(runSlice,0);return;
+        sliceTimer=setTimeout(runSlice,24);return;
       }
       const started=Date.now();
       do{
         scenario.step(5,sliceRemaining===1);sliceRemaining--;
       }while(sliceRemaining>0&&Date.now()-started<8);
-      if(sliceRemaining>0)sliceTimer=setTimeout(runSlice,0);
+      if(sliceRemaining>0)sliceTimer=setTimeout(runSlice,24);
       else{displayStats();requestDraw();}
     }catch(error){
       sliceRemaining=0;
@@ -821,7 +835,7 @@ async function startLegacyCanvas(existingMap=null){
   }
   function resumeSlice(){
     if(simRunning&&sliceRemaining&&sliceTimer===null&&!document.hidden&&!pointers.size)
-      sliceTimer=setTimeout(runSlice,0);
+      sliceTimer=setTimeout(runSlice,Math.max(16,interactionUntil-Date.now()));
   }
   function tick(){
     if(!simRunning||sliceRemaining||document.hidden||pointers.size)return;

@@ -1708,7 +1708,12 @@ function createLegacyTrafficScenario(data){
     return {count:(pending.get(fork.throughKey)||0)+fresh*share,storage:edge.jamPerCell*share};
   }
   function measuredCellSpeed(edge,k,count,storage){
-    if(count<.8)return edge.freeKmh;
+    // An OSM ramp fragment may physically hold less than one vehicle.
+    // A universal .8-vehicle cutoff would call even slow 200 Kfz/h traffic
+    // free flowing on such links. Keep a proportional evidence minimum.
+    const minimum=edge.kind==="ramp"?
+      Math.min(.8,Math.max(.15,130*edge.lanes*edge.cellLength/1000*.05)):.8;
+    if(count<minimum)return edge.freeKmh;
     const density=clamp01(count/Math.max(.001,storage));
     // Before receiving a meaningful flow sample (e.g. initial inventory),
     // use the density-based estimate. Once measured, do not apply a second
@@ -1722,12 +1727,13 @@ function createLegacyTrafficScenario(data){
     // actual geometry, observed flow and density. Otherwise leave
     // uncongested tiny connectors on the previous numerical speed.
     if(edge.kind==="ramp"&&edge.cellLength>=12&&edge.cellLength<=120&&
-      count>=.25&&count>=130*edge.lanes*edge.cellLength/1000*.22&&
+      count>=.25&&count>=130*edge.lanes*edge.cellLength/1000*.12&&
       edge.cellThroughVph[k]>75){
       const limited=(activeEffects.get(edge.id)||NO_EFFECTS).some(x=>
         x.fromM<(k+1)*edge.cellLength-.001&&x.toM>k*edge.cellLength+.001&&
         x.event.speedKmh>0&&x.event.speedKmh<=45);
-      if(limited||sampled<edge.freeKmh*.65)
+      if(limited||sampled<edge.freeKmh*.65||
+        edge.cellReceivingVph[k]<edge.lanes*edge.capacityPerLane*.65)
         return Math.min(sampled,edge.cellThroughVph[k]*edge.cellLength/(1000*count));
     }
     return sampled;
@@ -1792,8 +1798,12 @@ function createLegacyTrafficScenario(data){
         const physicalStorage=130*edge.lanes*edge.cellLength/1000;
         const physicalOccupancy=count/Math.max(.001,physicalStorage);
         const observedFloor=Math.min(2,Math.max(.18,physicalStorage*.16));
-        const congested=count>=observedFloor&&
-          (fraction>.30||physicalOccupancy>.22&&measured<=45);
+        // Low-volume 3–10 km/h movement can be genuinely congested too.
+        // Require measured slow travel PLUS real physical occupancy;
+        // a single unrestricted car does not become a phantom red queue.
+        const congested=count>=Math.min(observedFloor,Math.max(.15,physicalStorage*.07))&&
+          (fraction>.30||physicalOccupancy>.22&&measured<=45||
+            physicalOccupancy>.12&&measured<=15);
         const color=congested?colourForSpeed(measured):"free";
         if(color!=="free"){
           // Evacuating/trapped stock still exists physically, but the
@@ -2255,7 +2265,7 @@ function createLegacyTrafficScenario(data){
   function closureMatches(effect,eventId){
     return !eventId||effect.event.id===eventId||effect.contributingClosureIds?.includes(eventId);
   }
-  function closureDistanceAhead(edge,offsetM,maxDistance=16000,eventId=null){
+  function closureDistanceAhead(edge,offsetM,maxDistance=16000,eventId=null,stayOnRef=false){
     let current=edge,from=Math.max(0,offsetM),travelled=0;
     const visited=new Set();
     for(let hops=0;hops<1200&&travelled<=maxDistance;hops++){
@@ -2277,7 +2287,10 @@ function createLegacyTrafficScenario(data){
       const through=current.next.filter(link=>
         edges[link.to].kind==="mainline"&&!visited.has(edges[link.to].id));
       const same=through.filter(link=>edges[link.to].ref===current.ref);
-      const next=same.length===1?same:!same.length&&through.length===1?through:[];
+      // A remote barrier reached only after CHANGING motorway number is not
+      // a mandatory local off-ramp departure on the original carriageway.
+      // Closure propagation elsewhere still uses the ordinary graph walk.
+      const next=same.length===1?same:!stayOnRef&&!same.length&&through.length===1?through:[];
       if(next.length!==1)return Infinity;
       travelled+=current.lengthM-from;
       current=edges[next[0].to];from=0;
@@ -3429,7 +3442,7 @@ function createLegacyTrafficScenario(data){
   // Use the same concrete fork decision for physics and route selection.
   function closureForkDecision(edge,k,legalTurns,anyClosureActive){
     const offset=k*edge.cellLength;
-    const distance=anyClosureActive?closureDistanceAhead(edge,offset,Infinity):Infinity;
+    const distance=anyClosureActive?closureDistanceAhead(edge,offset,Infinity,null,true):Infinity;
     const signedRoute=preferredTransfer(edge,offset,null);
     const signedApproach=!!signedRoute&&!legalTurns.some(t=>designatedTransfers.has(edge.index+":"+t.to));
     // A closure on ONE downstream motorway arm is not a mandate to
