@@ -3150,14 +3150,53 @@ function createLegacyTrafficScenario(data){
   // A different motorway arm remains an additional escape at the interchange
   // for vehicles still continuing; it is not a later AS on the original road.
   // Only excess time TO the next local exit can justify shifting upstream.
+  // Between two AS only: the nearest next interchange may have an off-ramp
+  // OR just an on-ramp in a clipped OSM extract. Never carry the downstream
+  // incident's entire loss backward across four or five free junctions.
+  // This is geometric directed motorway continuity; NO invented local road.
   function nextDecisionDelay(road,offset){
     const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
     if(nextDecisionStamp!==stamp){nextDecisionMemo.clear();nextDecisionStamp=stamp;}
     const key=road.id+":"+Math.round(offset*100);
     if(nextDecisionMemo.has(key))return nextDecisionMemo.get(key);
-    const later=firstLocalExit(road,offset+.06);
-    const delay=later?corridorDelayBetween(road,offset,later.road,later.metre):Infinity;
-    nextDecisionMemo.set(key,delay);return delay;
+    const here=new Set(road.links.filter(t=>Math.abs(t.fromM-offset)<.2&&localTerminal(edges[t.to]))
+      .map(t=>junctionLabel(edges[t.to]).toLowerCase()));
+    let current=road,start=offset,total=0;const seen=new Set();
+    const loss=(edge,a,b)=>{
+      let delay=0;
+      for(let k=Math.floor(a/edge.cellLength);k<edge.n&&k*edge.cellLength<b;k++){
+        const metres=Math.max(0,Math.min(b,(k+1)*edge.cellLength)-Math.max(a,k*edge.cellLength));
+        if(metres>0)delay+=metres*.06*(1/routingCellSpeed(edge,k)-1/edge.freeKmh);
+      }
+      return Math.max(0,delay);
+    };
+    let found=false;
+    while(current&&!seen.has(current.id)&&seen.size<1200){
+      seen.add(current.id);
+      let nextAt=Infinity;
+      for(const t of current.links){
+        if(t.fromM<=start+.06||t.fromM>current.lengthM+.05)continue;
+        const target=edges[t.to];
+        if(localTerminal(target)&&!here.has(junctionLabel(target).toLowerCase()))
+          nextAt=Math.min(nextAt,t.fromM);
+      }
+      for(const {from,turn} of incomingTurns[current.index]){
+        if(from.kind!=="ramp"||!isLocalEntrance(from)||turn.toM<=start+.06)continue;
+        if(!here.has(junctionLabel(from).toLowerCase()))nextAt=Math.min(nextAt,turn.toM);
+      }
+      if(Number.isFinite(nextAt)){
+        total+=loss(current,start,nextAt);found=true;break;
+      }
+      total+=loss(current,start,current.lengthM);
+      // Find the NEXT signed AS along this physical directed carriageway.
+      // A temporarily blocked incident must not erase that geometry.
+      const links=current.next.filter(t=>edges[t.to].kind==="mainline"&&
+        edges[t.to].ref===road.ref&&directedCorridorIds.get(t.to)===directedCorridorIds.get(road.index));
+      if(links.length!==1)break;
+      current=edges[links[0].to];start=links[0].toM;
+    }
+    const result=found?total:Infinity; // unknown next AS is NOT proof of 60 min
+    nextDecisionMemo.set(key,result);return result;
   }
   const unplannedExitMemo=new Map();let unplannedExitStamp="";
   // At a map boundary an actual exit may exist without a mapped return
@@ -3183,10 +3222,13 @@ function createLegacyTrafficScenario(data){
       if(next.length!==1)break;
       current=edges[next[0].to];from=next[0].toM;
     }
-    for(const group of groups){
+    // Recurrent congestion obeys the SAME local AS-to-AS threshold.
+    const legDelay=nextDecisionDelay(road,offset);
+    if(Number.isFinite(legDelay)&&legDelay>=VOLUNTARY_START_MIN)for(const group of groups){
       const head=byId.get(group.endEdgeId);
       const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
-      if(Number.isFinite(remaining))share=Math.max(share,diversionShare(Math.min(remaining,group.routingDelayMin)));
+      if(Number.isFinite(remaining))share=Math.max(share,
+        diversionShare(Math.min(remaining,group.routingDelayMin,legDelay)));
     }
     unplannedExitMemo.set(key,share);return share;
   }
@@ -3246,56 +3288,21 @@ function createLegacyTrafficScenario(data){
     }
     lengthMemo.set(key,best);return best;
   }
+  // Local AS decisions use ONLY delay from THIS exit to the next AS.
+  // Long total queues are handled independently by real motorway alternatives.
+  // 60-minute threshold / calibrated shares remain unchanged.
   function localDiversionShare(road,offset,observed,plan){
-    // With a partial obstruction require a direction-correct return plan.
-    // In a real full closure the mapped local exit may lead outside the
-    // extract; the normal last legal exit remains mandatory regardless.
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
     if(!Number.isFinite(observed)||observed<VOLUNTARY_START_MIN)return 0;
-    const preferred=preferredTransferDelay(road,offset,plan);
-    const distanceShare=Math.min(diversionShare(observed)*1.15,lengthDiversionShare(routingQueueLength(road,offset)));
-    // On the affected carriageway the LAST exit before the queue must also
-    // be usable BEFORE its fork backs up. The hour threshold applies to
-    // the remaining journey, not to the short segment until the next AS.
-    // This is especially important with several AS inside a long queue.
-    // Keep feeder/transfer decisions tied to their real open alternatives.
-    const cause=plan?.causeEdgeId&&byId.get(plan.causeEdgeId);
-    const sameCorridor=cause?.kind==="mainline"&&cause.ref===road.ref&&
-      directedCorridorIds.get(cause.index)===directedCorridorIds.get(road.index);
-    // Apply the established last-clear-exit rule to partial obstructions
-    // as well. A remote queue is not a reason to activate every free AS.
-    if(sameCorridor&&plan?.kind!=="closure"&&!queueAtExit(road,offset)&&
-      routingQueueLength(road,offset)<500&&hasClearLaterExit(road,offset,true))return 0;
-    if(preferred===null&&!derivedFeederGateAhead(road,offset)&&
-      (sameCorridor||!plan&&Number.isFinite(closureDistanceAhead(road,offset,Infinity)))){
-      if(routingQueueLength(road,offset)>=500)return Math.max(diversionShare(observed),distanceShare);
-      // A real route with >=60 min remaining loss can already be avoided
-      // before its tail reaches this exit, if the later cost comparison
-      // demonstrates a benefit. A clear approach is not a zero trip delay.
-      if(sameCorridor&&plan?.kind!=="closure")return diversionShare(observed)*.8;
-    }
-    // A driver whose actual route passes multiple independent queues can
-    // make a voluntary decision on their combined delay at a legal exit.
-    // An unrelated feeder arm still uses its own next-decision comparison.
-    if(preferred===null&&sameCorridor&&plan?.kind!=="closure"&&
-      observed>=VOLUNTARY_START_MIN&&queueAtExit(road,offset))return diversionShare(observed);
-    // Once the queue covers this AS, waiting motorists continue making
-    // local escape decisions based on the remaining trip delay. Never
-    // turn the off-ramp off because the queue has advanced past it.
-    if(queueAtExit(road,offset)){
-      const remaining=preferred===null?observed:Math.min(observed,preferred);
-      if(remaining>=VOLUNTARY_START_MIN)return Math.max(diversionShare(remaining),Math.min(distanceShare,diversionShare(remaining)*1.15));
-    }
-    if(preferred!==null)return diversionShare(Math.min(preferred,observed,nextDecisionDelay(road,offset)));
+    const legDelay=nextDecisionDelay(road,offset);
+    if(!Number.isFinite(legDelay)||legDelay<VOLUNTARY_START_MIN)return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
-    // At a motorway end (e.g. a feeder joining A3), the next usable exit
-    // is often on the receiving motorway. A free approach to that exit
-    // cannot justify leaving the feeder 80 km before the actual accident.
-    const sameRoad=plan?.kind==="closure"||!plan?nextClosureDecisionDelay(road,offset):nextDecisionDelay(road,offset);
-    const next=plan?.causeEdgeId&&plan.kind!=="closure"?
-      Math.min(sameRoad,directedDelayToCause(road,offset,plan.causeEdgeId,null,true)):sameRoad;
-    const eligible=Math.min(observed,next),share=diversionShare(eligible);
-    return eligible<VOLUNTARY_START_MIN?0:Math.max(Math.min(distanceShare,share*1.15),share);
+    const preferred=preferredTransferDelay(road,offset,plan);
+    const eligible=Math.min(observed,legDelay,preferred??Infinity);
+    if(eligible<VOLUNTARY_START_MIN)return 0;
+    const base=diversionShare(eligible);
+    // Queue length can strengthen a valid local decision, never initiate one.
+    return Math.max(base,Math.min(base*1.15,lengthDiversionShare(routingQueueLength(road,offset))));
   }
   // An open signed motorway arm is the primary route to the last useful
   // exit (e.g. A48 -> A3 north -> Ransbach). Only the excess travel time TO

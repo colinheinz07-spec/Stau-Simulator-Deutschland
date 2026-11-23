@@ -97,7 +97,7 @@ test('a free later exit stays preferred until the congestion reaches its approac
   assert.equal(s.routingQueueLength('up',s.edgeActivity('up').lengthM*.4),0);
 });
 
-test('several close exits independently divert from a severe remaining queue, including before its tail',async()=>{
+test('a 90-minute total queue does NOT trigger five preceding AS exits with free interchanges',async()=>{
   const points=[7,7.015,7.03,7.045,7.06,7.075,7.09,7.25];
   const network=[['up','mainline','A3',3,points.map(x=>[50,x]),'',1],
     ['bad','mainline','A3',3,[[50,7.25],[50,7.26]],'',2],
@@ -107,28 +107,27 @@ test('several close exits independently divert from a severe remaining queue, in
   const s=(await make())({roads:network});
   s.setSimulationStart(Date.parse('2026-11-13T13:00:00Z'));s.setDemandPercent(160);s.warmStart();
   s.setEvent({...incident,offsetM:100,closedLanes:[0,1]});
-  const length=s.edgeActivity('up').lengthM,used=new Set();let priorToTail=false;
-  for(let i=0;i<85;i++){
+  const length=s.edgeActivity('up').lengthM;
+  let lastUsed=false,tooEarly=0,largeTotal=0;
+  for(let i=0;i<90;i++){
     s.advance(12);
-    if(i===39){
-      assert.ok(s.edgeActivity('out5').diversionDemandFraction>0,'last free exit before the queue is used');
-      for(let j=0;j<5;j++)assert.equal(s.edgeActivity('out'+j).diversionDemandFraction,0,'earlier freely reachable exits remain normal');
-    }
     for(let j=0;j<6;j++){
-      const at=length*(points[j+1]-7)/.25,a=s.edgeActivity('out'+j);
-      if(s.routingDelayAhead('up',at)<59)assert.equal(a.diversionDemandFraction,0);
-      if(a.diversionDemandFraction>0.04&&a.divertedVehiclesOnEdge>1){
-        used.add(j);
-        if(!s.queueAtExit('up',at)&&s.routingDelayToNextExit('up',at)<10&&s.routingDelayAhead('up',at)>=60)priorToTail=true;
-      }
+      const at=length*(points[j+1]-7)/.25;
+      const leg=s.routingDelayToNextExit('up',at),total=s.routingDelayAhead('up',at);
+      const extra=s.edgeActivity('out'+j).diversionDemandFraction;
+      if(total>60&&j<5)largeTotal++;
+      if(Number.isFinite(leg)&&leg<60&&extra>0){tooEarly++;assert.equal(extra,0,'no local diversion until this exact AS-to-AS interval exceeds 60 min');}
+      if(j===5&&leg>=60&&extra>0)lastUsed=true;
     }
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
   }
-  assert.ok(priorToTail,'a last exit before the tail is eligible, not just exits already surrounded by stopped cars');
-  assert.ok(used.size>=4,'multiple actual exit movements, not one assigned last exit');
+  assert.ok(largeTotal>50,'test needs severe distant total delay');
+  assert.equal(tooEarly,0);
+  assert.ok(lastUsed,'the last local AS has an hour of delay to the next real interchange');
+  assert.equal(s.diversionShare(60),.02);
 });
 
-test('a real exit before a severe queue at the map boundary does not require an invented return',async()=>{
+test('a map-boundary exit without a mapped next AS is not automatically a local bypass',async()=>{
   const network=roads().filter(r=>r[0]!=='in');
   const s=(await make())({roads:network});
   s.setSimulationStart(Date.parse('2026-11-13T13:00:00Z'));s.setDemandPercent(160);s.warmStart();
@@ -141,7 +140,7 @@ test('a real exit before a severe queue at the map boundary does not require an 
     share=Math.max(share,a.diversionDemandFraction);
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
   }
-  assert.ok(share>0.05&&share<1);
+  assert.equal(share,0,'the next AS is unknown; the distant total delay cannot be used as an AS-to-AS estimate');
   assert.equal(s.detourPlans().length,0,'no invented reentry or off-network trip');
 });
 

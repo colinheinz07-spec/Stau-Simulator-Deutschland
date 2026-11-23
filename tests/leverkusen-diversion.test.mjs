@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
-test('A3 Leverkusen: actual northbound queue uses the nearest legal exit, not an unrelated A1 transfer queue',()=>{
+test('A3 Leverkusen: long total congestion never activates freely reachable early local exits',()=>{
   const w={};
   for(const file of ['traffic-reference','legacy-geometry','offline-traffic'])
     new Function('window',readFileSync(`web/${file}.js`,'utf8'))(w);
@@ -12,16 +12,16 @@ test('A3 Leverkusen: actual northbound queue uses the nearest legal exit, not an
   s.setEvent({id:'lev',edgeId:'A3-126500245',offsetM:250,kind:'accident',closedLanes:[0,1,2],lengthM:100,speedKmh:0});
   assert.ok(s.detourDestinations('lev').some(s=>s.includes('Leverkusen-Opladen')));
   for(let i=0;i<20;i++)s.advance(12);
-  assert.ok(s.edgeActivity('OSM-link-215665874').diversionDemandFraction>.15);
+  assert.equal(s.edgeActivity('OSM-link-215665874').diversionDemandFraction,0,'severe downstream totals do not activate local exits before their own one-hour AS leg');
   assert.equal(s.edgeActivity('OSM-link-49142413').diversionDemandFraction,0,'still clear earlier exit');
   assert.equal(s.edgeActivity('extra-osm-ramp-gap-2a232fbd3c75').diversionDemandFraction,0);
   for(let i=20;i<40;i++)s.advance(12);
   const q=s.jamSummaries().find(g=>g.endEdgeId==='A3-126500245');
   assert.ok(q&&q.routingDelayMin>=120,'actual multihour queue');
   const exit=s.edgeActivity('OSM-link-215665874');
-  assert.ok(exit.diversionDemandFraction>.15&&exit.diversionDemandFraction<1);
+  assert.equal(exit.diversionDemandFraction,0,'the distant Leverkusen queue must not automatically activate this freely reachable AS');
   assert.ok(exit.enteredVph>100&&exit.departedVph>100);
-  assert.ok(s.totals().detouredVehicles>100);
+  assert.ok(s.jamSummaries().length>0,'congestion still grows in the actual network');
   assert.equal(s.edgeActivity('extra-osm-ramp-gap-2a232fbd3c75').diversionDemandFraction,0,'still clear earlier exit');
   assert.equal(s.diversionShare(59.99),0);assert.equal(s.diversionShare(60),.02);
   assert.equal(s.diversionShare(240),.70);assert.equal(s.diversionShare(480),.90);
