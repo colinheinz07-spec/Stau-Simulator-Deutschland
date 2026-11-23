@@ -71,7 +71,7 @@ test('queue to an earlier motorway exit triggers choice only after the local 45-
     'excess vehicles cannot disappear at a congested exit');
 });
 
-test('a formerly merged heavy queue shrinks after discharge recovers, releasing early departures without losing vehicles',()=>{
+test('a heavy closure queue shrinks after discharge recovers, releasing early departures without losing vehicles',()=>{
   const s=scenario();
   for(let i=0;i<76;i++)s.advance(12);
   const length=s.edgeActivity('approach').lengthM;
