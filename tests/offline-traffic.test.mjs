@@ -2012,14 +2012,16 @@ test("A48-like motorway approach: a multihour queue diverts at earlier AS onto t
 });
 
 
-test("nationwide voluntary route choice starts at one hour and never forces all drivers off",async()=>{
+test("nationwide voluntary route choice starts at 45 minutes and never forces all drivers off",async()=>{
   const make=await engine();
   const sim=make({roads:[
     ["main","mainline","A7",3,[[50,8],[50,8.03]],"",1],
     ["exit","ramp","A7",1,[[50,8.03],[50.005,8.03]],"AS Beispiel · Abfahrt von A7",2]
   ]});
   const curve=sim.diversionShare;
-  for(const minutes of [0,10,20,30,40,45,59.99])assert.equal(curve(minutes),0);
+  for(const minutes of [0,10,20,30,40,44.99])assert.equal(curve(minutes),0);
+  assert.equal(curve(45),.01);
+  assert.ok(curve(59.99)>.01&&curve(59.99)<.02);
   for(const [minutes,expected] of [[60,.02],[88,.02+.13*28/30],[90,.15],[120,.32],[150,.44],[180,.55],[240,.70],[360,.82],[480,.90]])
     assert.ok(Math.abs(curve(minutes)-expected)<1e-9);
   for(const minutes of [480,720,1440])assert.equal(curve(minutes),.90);
@@ -2054,7 +2056,7 @@ test("real interchange: A3 Frankfurt accident creates A48 exits AND route over o
     for(const [exit,road] of regional){
       const delay=s.routingDelayToNextExit(road,s.edgeActivity(road).lengthM);
       const offset=s.edgeActivity(road).lengthM;
-      if(delay>=60||s.queueAtExit(road,offset)&&s.routingDelayAhead(road,offset)>=60||s.routingQueueLength(road,offset)>=3000)eligible.add(exit);
+      if(delay>=45||s.queueAtExit(road,offset)&&s.routingDelayAhead(road,offset)>=45||s.routingQueueLength(road,offset)>=3000)eligible.add(exit);
       if(!eligible.has(exit))assert.ok((accounting.find(a=>a.terminalEdgeId===exit)?.assigned??0)<1,
         "the actual delay to the next exit must justify "+exit+": "+delay);
     }
@@ -2101,10 +2103,10 @@ test("real interchange: complete Frankfurt closure transfers blocked cohort to K
     s.advance(12);
     const delay=s.routingDelayToPreferredTransferExit(feeder,fork);
     assert.ok(delay!==null,"the real open Köln arm is a signed alternative");
-    reachedThreshold ||= delay>=60||s.routingQueueLength(feeder,fork)>=3000;
+    reachedThreshold ||= delay>=45||s.routingQueueLength(feeder,fork)>=3000;
     const early=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-26923440");
     if(!reachedThreshold)assert.ok((early?.assigned??0)<1,
-      "no Frankfurt diversion at Höhr until delay TO Ransbach reaches one hour: "+delay);
+      "no Frankfurt diversion at Höhr until the local 45-minute threshold or real queue length is reached: "+delay);
   }
   const via=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-4452557");
   assert.ok(via?.assigned>100,"a blocked Frankfurt-bound cohort must take the legal Köln branch");
