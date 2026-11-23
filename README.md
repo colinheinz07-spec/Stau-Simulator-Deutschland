@@ -1,5 +1,15 @@
 # 🚗 Stau-Simulator Deutschland
 
+## Version 0.10.41 – Lokale AS-Schwelle getrennt von großräumigen Autobahnumleitungen
+
+- **Lokale freiwillige Abfahrten:** Maßgeblich ist ausschließlich der tatsächlich modellierte zusätzliche Zeitverlust bis zur **nächsten real verbundenen Anschlussstelle** derselben gerichteten Autobahn. Nur ab **60 Minuten** beginnt die bisherige prozentuale freiwillige Abfahrt. Ein fünfstündiger Stau viele Anschlussstellen weiter genügt nicht.
+- Eine nur über die **Auffahrt** im OSM-Teilnetz erfasste nächste AS wird ebenfalls als Grenze erkannt. Fehlt eine zuverlässige nächste AS, wird aus dem entfernten Gesamtstau keine künstliche AS-zu-AS-Verzögerung abgeleitet.
+- Für wiederkehrende Staus ohne Ereignis gilt dieselbe Schwelle; Staulänge verstärkt ausschließlich bereits berechtigte lokale Entscheidungen.
+- **Unverändert:** Prozentsätze der Fahrer, zwingende letzte Abfahrt bei Vollsperrung, normaler Zielverkehr, reale Alternativen über andere Autobahnen und physikalischer Rampenrückstau.
+- Regression: Sechs Ausfahrten vor einem schweren Stau, ferner Vollsperrung mit letzter Pflichtausfahrt. Bei über 90 Minuten Gesamtverzögerung bleiben fünf vorherige, noch frei erreichbare AS ohne zusätzlichen freiwilligen Umleitungsverkehr; der Abschnitt der letzten AS erreicht selbst über 60 Minuten.
+- **Grenze:** Das vorhandene OSM-Teilnetz ist noch nicht bundesweit vollständig und erlaubt ohne vollständig modellierte Quell-Ziel-Matrix keine Garantie für jede großräumige Verbindung.
+
+
 **Neuaufbau (nicht Kopie des alten Traffic-Sinulator-Codes)** – saubere, nachvollziehbare Basis für eine zukünftige deutschlandweite Autobahn-Verkehrssimulation.
 
 ## Sechs Hauptbereiche
