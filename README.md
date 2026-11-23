@@ -1,5 +1,14 @@
 # 🚗 Stau-Simulator Deutschland
 
+## Version 0.10.42 – Verkehr an AK/AS und langsame Rampen
+- **AK/AD:** Normale Fahrzeugströme nutzen größere Anteile tatsächlich verbundener Autobahnüberleitungen. Ein- und zweistreifige Transferäste werden gegenüber lokalen Ausfahrten unterschiedlich gewichtet. Es werden keine neuen Quellen am AK und keine zusätzlichen Fahrzeuge erzeugt.
+- **Größere Anschlussstellen:** Bereits hinterlegte reguläre Abfahrtsanteile (`exitPercent`) werden auch ohne gesonderten `exitCapacity`-Eintrag angewendet. Die Geschwindigkeit und der tatsächliche Abfluss bleiben physikalisch begrenzt.
+- **Langsame Rampen:** Bei belegten kurzen OSM-Stücken werden für Stauanzeige und gemessene Geschwindigkeit die wirkliche Länge und beobachtete Fahrzeugflüsse berücksichtigt. Virtuelle CTM-Speicherlängen bleiben für die numerische Stabilität. Frei fahrbare kurze Rampen bleiben grün.
+- **Unverändert:** Lokale freiwillige Abfahrten erst ab 60 Minuten zwischen den nächsten zwei Anschlussstellen, Fahreranteile, alternative Autobahnen und Pflichtumleitung bei Vollsperrung.
+- Synthetische Tests: A3→A4-Überleitung ~1.017 Kfz/h ohne Engpass; bei 10 km/h ~696 Kfz/h und sichtbarer Rückstau. AS 38 Troisdorf 226 statt 158 Kfz/h reguläre Abfahrt. Das sind modellierte Szenarien, keine gezählten Verkehrswerte.
+- **Weiterhin offen:** Vollständige historische CI-Tests sowie bundesweit lückenlose Herkunft-Ziel-Daten und lokale Straßen.
+
+
 ## Version 0.10.41 – Lokale AS-Schwelle getrennt von großräumigen Autobahnumleitungen
 
 - **Lokale freiwillige Abfahrten:** Maßgeblich ist ausschließlich der tatsächlich modellierte zusätzliche Zeitverlust bis zur **nächsten real verbundenen Anschlussstelle** derselben gerichteten Autobahn. Nur ab **60 Minuten** beginnt die bisherige prozentuale freiwillige Abfahrt. Ein fünfstündiger Stau viele Anschlussstellen weiter genügt nicht.

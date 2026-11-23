@@ -1716,7 +1716,21 @@ function createLegacyTrafficScenario(data){
     if(edge.cellSpeedExposure[k]<.8)return edge.freeKmh*
       trafficOperatingState(density,0,edge.kind==="mainline").speedFactor*
       (density<=.23?1:Math.max(.04,1-Math.pow((density-.23)/.77,1.45)));
-    return Math.max(0,Math.min(edge.freeKmh,edge.cellFlowSpeeds[k]));
+    const sampled=Math.max(0,Math.min(edge.freeKmh,edge.cellFlowSpeeds[k]));
+    // Micro-OSM edges have longer VIRTUAL CTM buffers for numerical
+    // stability. At genuinely slow, occupied ramps measure speed using
+    // actual geometry, observed flow and density. Otherwise leave
+    // uncongested tiny connectors on the previous numerical speed.
+    if(edge.kind==="ramp"&&edge.cellLength>=12&&edge.cellLength<=120&&
+      count>=.25&&count>=130*edge.lanes*edge.cellLength/1000*.22&&
+      edge.cellThroughVph[k]>75){
+      const limited=(activeEffects.get(edge.id)||NO_EFFECTS).some(x=>
+        x.fromM<(k+1)*edge.cellLength-.001&&x.toM>k*edge.cellLength+.001&&
+        x.event.speedKmh>0&&x.event.speedKmh<=45);
+      if(limited||sampled<edge.freeKmh*.65)
+        return Math.min(sampled,edge.cellThroughVph[k]*edge.cellLength/(1000*count));
+    }
+    return sampled;
   }
   // A lane-resolved fork has two different measured streams. Keep its
   // through speed for navigation, but paint a physically occupied exit
@@ -1773,8 +1787,13 @@ function createLegacyTrafficScenario(data){
         // All mapped ramp types use the same occupation/velocity rule.
         // Tiny OSM connectors have finite numerical storage too; two cars
         // is already a queue there. A slow but almost empty road is not.
-        const congested=count>=Math.min(2,edge.jamPerCell*.18)&&
-          (fraction>.30||fraction>.18&&measured<=30);
+        // Display congestion using ACTUAL road metres, not enlarged
+        // numerical CTM storage. A short occupied crawling ramp is not green.
+        const physicalStorage=130*edge.lanes*edge.cellLength/1000;
+        const physicalOccupancy=count/Math.max(.001,physicalStorage);
+        const observedFloor=Math.min(2,Math.max(.18,physicalStorage*.16));
+        const congested=count>=observedFloor&&
+          (fraction>.30||physicalOccupancy>.22&&measured<=45);
         const color=congested?colourForSpeed(measured):"free";
         if(color!=="free"){
           // Evacuating/trapped stock still exists physically, but the
@@ -3023,7 +3042,7 @@ function createLegacyTrafficScenario(data){
       const terminal=localTerminal(edges[turn.to]);
       if(!terminal)continue;
       const profile=traffic.junctionProfile(terminal.ref,terminal.name);
-      if(!profile?.exitCapacity)continue;
+      if(!profile?.exitPercent)continue;
       const key=profile.road+":"+profile.ref;
       const group=groups.get(key)||{profile,turns:[]};
       group.turns.push(turn);groups.set(key,group);
@@ -3033,6 +3052,17 @@ function createLegacyTrafficScenario(data){
       const next=main.next.find(t=>t.to===turn.to&&t.fromCell===turn.fromCell);
       if(next)next.weight=turn.weight;
     }
+  }
+  // An AK/AD motorway transfer is not a small local AS exit. Reallocate
+  // existing vehicles to genuine direction-connected motorway arms;
+  // never create an extra junction source or bypass physical receiving.
+  for(const main of edges)if(main.kind==="mainline")for(const turn of main.links){
+    const ramp=edges[turn.to];
+    if(ramp.kind!=="ramp"||localTerminal(ramp))continue;
+    if(!rampMainlineArrivals(ramp).some(a=>a.road.ref!==main.ref))continue;
+    turn.weight=Math.max(turn.weight,ramp.lanes>=2?8:5);
+    const next=main.next.find(t=>t.to===turn.to&&t.fromCell===turn.fromCell);
+    if(next)next.weight=turn.weight;
   }
   // Actual exit-ramp storage, not a nominal motorway-sized cell for every
   // tiny OSM Way. Retain a two-tick numerical minimum on micro-connectors;
