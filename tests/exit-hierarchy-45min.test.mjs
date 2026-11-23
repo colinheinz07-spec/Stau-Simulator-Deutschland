@@ -70,3 +70,32 @@ test('queue to an earlier motorway exit triggers choice only after the local 45-
   assert.ok(s.edgeActivity('last').vehicles>0,
     'excess vehicles cannot disappear at a congested exit');
 });
+
+test('a formerly merged heavy queue shrinks after discharge recovers, releasing early departures without losing vehicles',()=>{
+  const s=scenario();
+  for(let i=0;i<76;i++)s.advance(12);
+  const length=s.edgeActivity('approach').lengthM;
+  const offset=length*.03/.145;
+  const peak=s.totals().vehiclesOnNetwork;
+  assert.ok(peak>3000,'test first builds a genuinely large stored queue');
+  assert.ok(s.edgeActivity('early').diversionDemandFraction>0,
+    'an earlier exit was chosen while its next leg exceeded 45 minutes');
+  s.removeEvent('closure');
+  s.setDemandPercent(25);
+  let hasRecovered=false;
+  for(let i=0;i<100;i++){
+    s.advance(12);
+    assert.ok(Math.abs(s.totals().conservationResidual)<1e-6,
+      'removing the closure does not delete vehicles, even during recovery');
+    const leg=s.routingDelayToNextExit('approach',offset);
+    if(leg<45&&i>0){
+      assert.equal(s.edgeActivity('early').diversionDemandFraction,0,
+        'previously congested exit approach is no longer a reason to depart early');
+      hasRecovered=true;
+    }
+  }
+  assert.ok(hasRecovered,'upstream 45-minute approach delay must actually recede');
+  assert.ok(s.totals().vehiclesOnNetwork<peak*.4,
+    'greater discharge than intake shrinks the physically stored motorway queue');
+  assert.equal(s.jamSummaries().length,0,'the former closure queue dissolves');
+});
