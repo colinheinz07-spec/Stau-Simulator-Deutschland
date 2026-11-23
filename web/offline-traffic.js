@@ -2001,7 +2001,7 @@ function createLegacyTrafficScenario(data){
             const bands=navigationQueueBands.get(segment.edgeId)||[];
             bands.push({...segment,group:publicGroup});navigationQueueBands.set(segment.edgeId,bands);
           }
-        if(headRoad?.kind==="mainline"&&g.delayMin>=60&&!exitBacklogAtHead(headRoad,head.toM))
+        if(headRoad?.kind==="mainline"&&g.delayMin>=45&&!exitBacklogAtHead(headRoad,head.toM))
           for(const segment of segments){
             const items=severeQueueSegments.get(segment.edgeId)||[];
             items.push({segment,group:publicGroup});severeQueueSegments.set(segment.edgeId,items);
@@ -2436,11 +2436,11 @@ function createLegacyTrafficScenario(data){
   }
   // Willingness depends on observed delay, not ramp receiving capacity.
   // Ordinary destinations and mandatory road closures are handled separately.
-  const VOLUNTARY_START_MIN=60;
+  const VOLUNTARY_START_MIN=45;
   function diversionShare(delayMin){
     if(delayMin>=480)return .90;
     if(!Number.isFinite(delayMin)||delayMin<VOLUNTARY_START_MIN)return 0;
-    const anchors=[[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[240,.70],[360,.82],[480,.90]];
+    const anchors=[[45,.01],[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[240,.70],[360,.82],[480,.90]];
     for(let i=1;i<anchors.length;i++){
       const [end,upper]=anchors[i], [start,lower]=anchors[i-1];
       if(delayMin<=end){
@@ -2465,7 +2465,7 @@ function createLegacyTrafficScenario(data){
   // through traffic prefers a genuinely available regional alternative.
   function wideDiversionShare(delay){
     if(!(delay>=VOLUNTARY_START_MIN))return 0;
-    const anchors=[[60,.02],[120,.05],[180,.08],[240,.25],[360,.55],[480,.78],[600,.90]];
+    const anchors=[[45,.005],[60,.02],[120,.05],[180,.08],[240,.25],[360,.55],[480,.78],[600,.90]];
     for(let i=1;i<anchors.length;i++){
       const [lo,a]=anchors[i-1],[hi,b]=anchors[i];
       if(delay<=hi)return a+(b-a)*(delay-lo)/(hi-lo);
@@ -3238,7 +3238,7 @@ function createLegacyTrafficScenario(data){
       if(links.length!==1)break;
       current=edges[links[0].to];start=links[0].toM;
     }
-    const result=found?total:Infinity; // unknown next AS is NOT proof of 60 min
+    const result=found?total:Infinity; // no later AS: evaluate the observed bottleneck, not a fictional next-AS delay
     nextDecisionMemo.set(key,result);return result;
   }
   const unplannedExitMemo=new Map();let unplannedExitStamp="";
@@ -3267,7 +3267,7 @@ function createLegacyTrafficScenario(data){
     }
     // Recurrent congestion obeys the SAME local AS-to-AS threshold.
     const legDelay=nextDecisionDelay(road,offset);
-    if(Number.isFinite(legDelay)&&legDelay>=VOLUNTARY_START_MIN)for(const group of groups){
+    if((!Number.isFinite(legDelay)||legDelay>=VOLUNTARY_START_MIN))for(const group of groups){
       const head=byId.get(group.endEdgeId);
       const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
       if(Number.isFinite(remaining))share=Math.max(share,
@@ -3333,12 +3333,15 @@ function createLegacyTrafficScenario(data){
   }
   // Local AS decisions use ONLY delay from THIS exit to the next AS.
   // Long total queues are handled independently by real motorway alternatives.
-  // 60-minute threshold / calibrated shares remain unchanged.
+  // Voluntary local choice begins at 45 minutes; the next-AS delay is independent of the main queue.
   function localDiversionShare(road,offset,observed,plan){
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
     if(!Number.isFinite(observed)||observed<VOLUNTARY_START_MIN)return 0;
     const legDelay=nextDecisionDelay(road,offset);
-    if(!Number.isFinite(legDelay)||legDelay<VOLUNTARY_START_MIN)return 0;
+    // A real downstream AS with a short approach remains preferable, even if
+    // the incident farther ahead causes hours of loss. If there is NO later
+    // AS, the current exit is the last lawful local diversion opportunity.
+    if(Number.isFinite(legDelay)&&legDelay<VOLUNTARY_START_MIN)return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
     const eligible=Math.min(observed,legDelay,preferred??Infinity);
