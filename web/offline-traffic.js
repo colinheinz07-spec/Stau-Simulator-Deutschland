@@ -3072,8 +3072,19 @@ function createLegacyTrafficScenario(data){
   for(const main of edges)if(main.kind==="mainline")for(const turn of main.links){
     const ramp=edges[turn.to];
     if(ramp.kind!=="ramp"||localTerminal(ramp))continue;
-    if(!rampMainlineArrivals(ramp).some(a=>a.road.ref!==main.ref))continue;
-    turn.weight=Math.max(turn.weight,ramp.lanes>=2?8:5);
+    const arrivals=rampMainlineArrivals(ramp);
+    const sameDirection=a=>a.road.ref===main.ref&&
+      traffic.referenceForRoad(rowById.get(a.road.id)).key===traffic.referenceForRoad(rowById.get(main.id)).key;
+    // An interchange can represent the continuing motorway as a chain of
+    // motorway_link Ways. At an end-of-Way fork this is through demand,
+    // not a minor exit. Never promote a local AS or a reversal.
+    const throughConnector=turn.fromM>=main.lengthM-.05&&
+      /\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(ramp.name)&&
+      arrivals.length>0&&arrivals.every(sameDirection)&&
+      !main.linksFrom[turn.fromCell].some(t=>edges[t.to].kind==="mainline"&&edges[t.to].ref===main.ref);
+    if(throughConnector)turn.weight=20;
+    else if(arrivals.some(a=>a.road.ref!==main.ref))turn.weight=Math.max(turn.weight,ramp.lanes>=2?8:5);
+    else continue;
     const next=main.next.find(t=>t.to===turn.to&&t.fromCell===turn.fromCell);
     if(next)next.weight=turn.weight;
   }
