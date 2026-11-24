@@ -32,14 +32,14 @@ const safeNonnegative=(v:number)=>Number.isFinite(v)&&v>=0;
 const clamp01=(x:number)=>Math.max(0,Math.min(1,x));
 /** Same nationwide response curve as the offline engine. */
 export function diversionShare(delay:number):number{
-  if(delay>=480)return .90;
+  if(delay>=300)return 1;
   if(!Number.isFinite(delay)||delay<45)return 0;
-  const anchors=[[45,.01],[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[240,.70],[360,.82],[480,.90]] as const;
+  const anchors=[[45,.01],[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[210,.65],[240,.80],[270,.95],[300,1]] as const;
   for(let i=1;i<anchors.length;i++){
     const [end,upper]=anchors[i]!,[start,lower]=anchors[i-1]!;
     if(delay<=end)return lower+(upper-lower)*(delay-start)/(end-start);
   }
-  return .90;
+  return 1;
 }
 export function lengthDiversionShare(metres:number):number{
   if(!Number.isFinite(metres)||metres<3000)return 0;
