@@ -99,3 +99,19 @@ test('a heavy closure queue shrinks after discharge recovers, releasing early de
     'greater discharge than intake shrinks the physically stored motorway queue');
   assert.equal(s.jamSummaries().length,0,'the former closure queue dissolves');
 });
+
+
+test('next signed AS at the start of a following OSM Way is a real local decision',()=>{
+  const window={};
+  for(const name of ['traffic-reference','offline-traffic'])
+    new Function('window',readFileSync('web/'+name+'.js','utf8'))(window);
+  const sim=window.createLegacyTrafficScenario({roads:[
+    ['a','mainline','A3',3,[[50,7],[50,7.01],[50,7.02]],'',1],
+    ['b','mainline','A3',3,[[50,7.02],[50,7.04]],'',2],
+    ['c','mainline','A3',3,[[50,7.04],[50,7.06]],'',3],
+    ['out','ramp','A3',1,[[50,7.01],[50.006,7.01]],'AS 1 · Abfahrt',4],
+    ['in','ramp','A3',1,[[50.006,7.02],[50,7.02]],'AS 2 · Auffahrt',5]
+  ]});
+  assert.equal(sim.routingDelayToNextExit('a',sim.edgeActivity('a').lengthM/2),0,
+    'a free downstream entrance at a Way boundary must not appear to be infinitely far away');
+});
