@@ -2002,10 +2002,10 @@ test("A48-like motorway approach: a multihour queue diverts at earlier AS onto t
   assert.ok(first?.assigned>40,
     "earlier A48 exit activates after growing time loss, not merely the last exit: "+
     JSON.stringify({last,first}));
-  // The last exit is close enough to the bottleneck that its remaining
-  // measured delay stays below the new voluntary threshold.
+  // The shorter last leg may now trigger a small voluntary share at 45 min.
+  // It must still divert fewer vehicles than the severe earlier leg.
   assert.ok(blocked.routingDelayAhead("up",length*.875)<60);
-  if(blocked.routingQueueLength("up",length*.875)<3000)assert.equal(last?.assigned??0,0);
+  assert.ok((last?.assigned??0)<first.assigned,"the much shorter last leg should divert fewer vehicles");
   assert.ok(blocked.edgeActivity("bad").enteredVph<free.edgeActivity("bad").enteredVph*.2,
     "the physical queue and progressively increasing diversions reduce traffic feeding the incident");
   conservation(free.totals());conservation(blocked.totals());
