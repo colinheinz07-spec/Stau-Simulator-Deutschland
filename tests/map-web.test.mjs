@@ -22,7 +22,7 @@ test('Map HTML and its production imports exist; UI remains a real touch-enabled
   assert.match(page,/src="\.\/traffic-reference\.js"/);
   assert.match(page,/src="\.\/offline-traffic\.js"/);
   assert.match(page,/Simulationsstrecken/);
-  assert.match(page,/A3 \/ A48/);
+  assert.match(page,/A3\s*\/\s*A48/);
   assert.match(app,/motorwayMapEdges/);
   assert.match(app,/assembleVisibleTiles/);
   assert.match(app,/map\.fitBounds/);
@@ -87,9 +87,9 @@ test('SPCK source preview reuses local geometry and loads without Leaflet or Ove
   const sandbox={window:{}};
   runInNewContext(geometry,sandbox);
   const data=sandbox.window.STAU_LEGACY_GEOMETRY;
-  assert.equal(data.roads.length,1934);
-  assert.equal(data.roads.filter(x=>x[1]==='ramp').length,948);
-  assert.equal(data.junctions.length,73);
+  assert.ok(data.roads.length>=3195,"expanded motorway network must not lose mapped roads");
+  assert.ok(data.roads.filter(x=>x[1]==='ramp').length>=1483);
+  assert.ok(data.junctions.length>=109);
   assert.ok(data.roads.some(x=>x[2]==='A3'));
   assert.ok(data.roads.some(x=>x[2]==='A48'));
   assert.ok(data.roads.every(x=>Array.isArray(x[4])&&x[4].length>=2));
