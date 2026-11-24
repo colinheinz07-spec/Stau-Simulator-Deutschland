@@ -959,7 +959,7 @@ test("A3 Heumar–Köln-Ost closes the A59 exactly from AD Porz, including the w
     runInNewContext(await readFile(path,"utf8"),{window:w});
   const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
   const closure=sim.setEvent({id:"heumar-a3",edgeId:"A3-132624375",kind:"closure",
-    closedLanes:[0,1,2],offsetM:3,lengthM:200,
+    closedLanes:[0,1,2,3],offsetM:3,lengthM:200,
     speedKmh:0,shoulder:"normal",hasShoulder:false});
   assert.match(closure.closureFrom,/A3 28 AD Köln-Heumar/);
   assert.match(closure.closureTo,/A3 27 AK Köln-Ost/);
@@ -1396,8 +1396,8 @@ test("48 reversed A3/A48 OSM Ways are normalized into continuous directed motorw
     "the old import left exact endpoint-connected motorway segments pointing backward");
   const main=w.STAU_LEGACY_GEOMETRY.roads.filter(r=>
     r[1]==="mainline"&&(r[2]==="A3"||r[2]==="A48"));
-  assert.equal(main.length,970);
-  assert.equal(main.filter(r=>scenario.reachable(r[0])).length,970,
+  assert.ok(main.length>=970,"expanded network retains at least the original A3/A48 mainlines");
+  assert.equal(main.filter(r=>scenario.reachable(r[0])).length,main.length,
     "real A3 and A48 OSM carriageways must not become dead-end subgraphs");
   assert.equal(scenario.edgeActivity("A48-1308398832").source,false,"A48 starts at the A3 transfer, not a new map boundary");
   assert.ok(scenario.sourceProfiles().some(p=>p.direction==="A48-dernbach"));
