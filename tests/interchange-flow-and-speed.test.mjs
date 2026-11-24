@@ -54,7 +54,8 @@ test('700 Kfz/h at 10 km/h forms a physically displayed ramp queue, without losi
   assert.ok(slow.edgeActivity('feed').vehicles>free.edgeActivity('feed').vehicles+100);
   assert.equal(free.visualBands('link').length,0);
   assert.ok(Math.abs(slow.totals().conservationResidual)<1e-6);
-  assert.equal(slow.diversionShare(59.99),0);
+  assert.equal(slow.diversionShare(44.99),0);
+  assert.equal(slow.diversionShare(45),.01);
   assert.equal(slow.diversionShare(60),.02);
   assert.equal(slow.diversionShare(240),.70);
 });
