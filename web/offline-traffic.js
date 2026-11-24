@@ -277,7 +277,7 @@ function createLegacyTrafficScenario(data){
       voluntaryWaiting:Array(count).fill(null),
       bypassStock:new Float64Array(count),
       // User-defined unrestricted motorway service, not a speed threshold.
-       capacityPerLane:row[1]==="ramp"?1500:1800,
+       capacityPerLane:1800,
       freeKmh:row[1]==="ramp"?75:120,
       // CTM cell storage must cover at least one five-second free-flow
       // distance. Many original OSM Ways are only 3-25m long. Treating such
@@ -301,8 +301,8 @@ function createLegacyTrafficScenario(data){
       cellThroughVph:new Float64Array(count),
       cellIncomingVph:new Float64Array(count),
       cellMotion:new Float64Array(count),
-      cellCapacityVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:1800)),
-      cellReceivingVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:1800)),
+      cellCapacityVph:new Float64Array(count).fill(lanes*(1800)),
+      cellReceivingVph:new Float64Array(count).fill(lanes*(1800)),
       links:[],linksFrom:Array.from({length:count},()=>[]),
       enteredVph:0,departedVph:0,
       referencePeakVph:0,directionKey:"",lastProfileMinute:-1,profileFactor:0
@@ -2756,7 +2756,7 @@ function createLegacyTrafficScenario(data){
   }
   function exitTravelMinutes(link,plan){
     const first=edges[link.to],terminal=edges[plan.terminal];
-    const nominal=localDischargeRate(terminal);
+    const nominal=effectiveJunctionCapacity(terminal,localDischargeVph(terminal)??Infinity);
     const service=terminal.stock[terminal.n-1]>terminal.jamPerCell*.35?
       Math.min(nominal,Math.max(30,terminal.departedVph)):nominal;
     const waiting=[...terminal.stock].reduce((a,b)=>a+b,0)*60/service;
@@ -2983,13 +2983,24 @@ function createLegacyTrafficScenario(data){
     }
     localTerminalMemo.set(first.index,end);return end;
   }
+  // Imported OSM control metadata keyed by directed terminal edge ID.
+  // Unknown controls remain unknown; do not infer signals from ramp width.
+  const junctionControls=data.junctionControls||{};
+  function junctionControl(edge){
+    return junctionControls[edge.id]|| (localRoundaboutBoundaries.has(edge.index)?{type:"roundabout"}:null);
+  }
   function localDischargeVph(edge){
     return edge?.kind==="ramp"&&localTerminal(edge)===edge?
-      junctionCapacity(edge,false,localRoundaboutBoundaries.has(edge.index)?1:Math.min(2,edge.lanes)):null;
+      junctionCapacity(edge,false,edge.lanes):null;
   }
   function junctionCapacity(edge,entry,lanes){
+    const control=junctionControl(edge);
+    if(control?.type==="traffic_signals")return 2000*lanes/3;
+    if(control?.type==="roundabout")return lanes>1?950:800;
+    if(control?.type==="stop")return 400*lanes;
+    if(control?.type==="give_way")return 600*lanes;
     const profile=traffic.junctionProfile(edge.ref,edge.name);
-    return ((entry?profile?.entryCapacity:profile?.exitCapacity)??700)*lanes;
+    return ((entry?profile?.entryCapacity:profile?.exitCapacity)??600)*Math.min(2,lanes);
   }
   let capacityMinute=-1,exitRelief=1,entryRelief=1;
   function capacityRelief(entry){
@@ -3012,6 +3023,11 @@ function createLegacyTrafficScenario(data){
   function localDischargeRate(edge){
     const dayCapacity=localDischargeVph(edge);
     if(dayCapacity===null)return Infinity;
+    const control=junctionControl(edge);
+    if(control?.type==="traffic_signals"){
+      const phase=((Math.floor(clockMs()/1000)+(Number(control.offsetSeconds)||0))%90+90)%90;
+      return phase<30?Math.min(edge.capacityPerLane*edge.lanes,2000*edge.lanes):0;
+    }
     const nominal=effectiveJunctionCapacity(edge,dayCapacity);
     // Exactly the same junction physics with or without an event. A past
     // detour must not permanently change a ramp's discharge.
@@ -4676,7 +4692,7 @@ function createLegacyTrafficScenario(data){
     const terminalBudgets=new Map();
     for(const {members,capacity,first} of localExitGroups){
       const demands=members.map(e=>Math.min(send[e.index][e.n-1],localDischargeRate(e)*dt/3600));
-      const total=demands.reduce((a,b)=>a+b,0),limit=effectiveJunctionCapacity(first,capacity)*dt/3600;
+      const total=demands.reduce((a,b)=>a+b,0),limit=(members.some(e=>junctionControl(e)?.type==="traffic_signals")?Math.max(...members.map(e=>localDischargeRate(e))):effectiveJunctionCapacity(first,capacity))*dt/3600;
       if(total<=limit)continue;
       members.forEach((e,i)=>terminalBudgets.set(e.index,Math.min(terminalBudgets.get(e.index)??Infinity,demands[i]*limit/total)));
     }
