@@ -59,17 +59,17 @@ test('unavoidable motorway closure still mandates the last lawful AS',async()=>{
   'the real last legal local AS is mandatory');
  for(let i=0;i<60;i++){
   s.advance(12);
-  if(s.routingDelayToNextExit('up',715)<60)
+  if(s.routingDelayToNextExit('up',715)<45)
     assert.equal(s.edgeActivity('early').diversionDemandFraction,0);
   assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
  }
  assert.ok(s.edgeActivity('closed').enteredVph<1);
 });
-test('ordinary voluntary thresholds and shares are unchanged',async()=>{
+test('ordinary voluntary thresholds start at 45 minutes',async()=>{
  const s=await create([
   ['main','mainline','A3',3,[[50,7],[50,7.02]],'',1],
   ['out','ramp','A3',1,[[50,7.02],[50.005,7.02]],'AS 1 · Abfahrt',2]
  ]);
- for(const [delay,share] of [[0,0],[10,0],[59.99,0],[60,.02],[90,.15],[120,.32],[240,.70],[480,.90]])
+ for(const [delay,share] of [[0,0],[10,0],[44.99,0],[45,.01],[60,.02],[90,.15],[120,.32],[240,.70],[480,.90]])
   assert.ok(Math.abs(s.diversionShare(delay)-share)<1e-9);
 });
