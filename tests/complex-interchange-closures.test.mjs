@@ -211,7 +211,7 @@ test("real Siebengebirge–Bonn/Siegburg leaves downstream motorway exits and A5
   for(const file of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
     runInNewContext(await readFile(file,"utf8"),{window,Date,Intl,console});
   const sim=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
-  const evt=closure(sim,"siegburg-end","A3-37264385",650,2);
+  const evt=closure(sim,"siegburg-end","A3-37264385",650,3);
   assert.match(evt.closureFrom,/Siebengebirge/);
   assert.match(evt.closureTo,/Bonn\/Siegburg/);
   assert.equal(state(sim,"A3-37264385"),true);
