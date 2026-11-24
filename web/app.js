@@ -152,7 +152,8 @@ function drawJamCallouts(rendered,byId,showMap=true){
   for(const item of rendered){
     const edge=byId.get(item.edgeId);
     if(!edge)continue;
-    if(edge.kind==="ramp"&&(/\bAS\b/i.test(edge.name||"")||/\b(?:Auf|Ab)fahrt\b/i.test(edge.name||""))&&!/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(edge.name||""))continue;
+    if(edge.kind==="ramp"&&!/Überleitung|\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(edge.name||""))continue;
+    if(edge.kind==="ramp"&&/Auf[ -]?fahrt|Ab[ -]?fahrt/i.test(edge.name||""))continue;
     const bands=[...(item.trafficBands??[])].filter(x=>x.colour!=="free")
       .sort((a,b)=>a.fromM-b.fromM);
     const row=[];
