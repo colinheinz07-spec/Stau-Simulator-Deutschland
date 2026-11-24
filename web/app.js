@@ -147,9 +147,12 @@ function drawIncidentPins(rendered,byId){
 // claim: every queue has to contain actual simulated slowdown samples.
 function drawJamCallouts(rendered,byId,showMap=true){
   const pieces=[],perEdge=new Map();
+  // Local AS ramps retain traffic colours and physical queues, but never
+  // generate separate map callouts or dashboard congestion entries.
   for(const item of rendered){
     const edge=byId.get(item.edgeId);
     if(!edge)continue;
+    if(edge.kind==="ramp"&&(/\bAS\b/i.test(edge.name||"")||/\b(?:Auf|Ab)fahrt\b/i.test(edge.name||""))&&!/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(edge.name||""))continue;
     const bands=[...(item.trafficBands??[])].filter(x=>x.colour!=="free")
       .sort((a,b)=>a.fromM-b.fromM);
     const row=[];
