@@ -1484,7 +1484,7 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
   sim.advance(1);
   const plans=sim.detourPlans();
   for(const terminal of ["extra-heumar-8298586","extra-heumar-4452557","extra-heumar-25149856"])
-    assert.ok(plans.some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-243834109"),
+    assert.ok(plans.some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-30449962"&&p.reentryMainlineIds.includes("A3-23875986")),
       "physical exit "+terminal+" must return at the first open Montabaur AS");
   assert.ok(sim.designatedDetourRoutes("full-montabaur").some(s=>/A48.*Ransbach-Baumbach.*Montabaur/.test(s)));
   let initialFallbackAssigned=0;
@@ -1554,7 +1554,7 @@ test("simultaneous Diez and Dernbach closures never assign A48 Frankfurt traffic
   const plans=sim.detourPlans();
   assert.ok(sim.designatedDetourRoutes("montabaur").some(s=>/A48.*Ransbach-Baumbach.*Montabaur/.test(s)));
   assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-4452557"&&
-    p.reentryEdgeId==="extra-heumar-243834109"&&p.closureId==="montabaur"));
+    p.reentryEdgeId==="extra-heumar-30449962"&&p.reentryMainlineIds.includes("A3-23875986")&&p.closureId==="montabaur"));
   assert.ok(!plans.some(p=>p.closureId==="diez"&&
     ["extra-heumar-26923440","extra-heumar-25149856","extra-heumar-4452557"].includes(p.terminalEdgeId)),
     "unrelated opposite-direction closure must never claim these exits");
@@ -1735,7 +1735,7 @@ test("Dernbach Köln closure: A48 has lawful bypass choices returning beyond Ran
   assert.match(e.closureFrom,/AD Dernbach/);assert.match(e.closureTo,/Ransbach/);
   for(let i=0;i<25;i++)sim.advance(12);
   const terminal="extra-heumar-26923440";
-  const plans=sim.detourPlans().filter(p=>p.closureId==="north"&&p.reentryEdgeId==="extra-heumar-807709861");
+  const plans=sim.detourPlans().filter(p=>p.closureId==="north"&&p.reentryEdgeId==="extra-heumar-4452558"&&p.reentryMainlineIds.includes("A3-1322908527"));
   assert.ok(plans.some(p=>p.terminalEdgeId===terminal),"Höhr is a real possible bypass, not a fixed assignment");
   assert.ok(sim.detourRouteAccounting().some(a=>plans.some(p=>p.terminalEdgeId===a.terminalEdgeId)&&a.arrived>100));
   assert.ok(sim.edgeActivity(terminal).departedVph<=705);
@@ -2067,10 +2067,10 @@ test("real interchange: A3 Frankfurt accident creates A48 exits AND route over o
   }
   const plans=s.detourPlans();
   assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-26923440"&&
-    p.reentryEdgeId==="extra-heumar-243834109"),
+    p.reentryEdgeId==="extra-heumar-30449962"&&p.reentryMainlineIds.includes("A3-23875986")),
     "A48 local Höhr exit must re-enter the ORIGINAL A3 Frankfurt destination");
   assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-4452557"&&
-    p.reentryEdgeId==="extra-heumar-243834109"),
+    p.reentryEdgeId==="extra-heumar-30449962"&&p.reentryMainlineIds.includes("A3-23875986")),
     "open Köln motorway arm must offer first usable A3 AS and Frankfurt reentry");
   const via=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-4452557");
   const hoehr=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-26923440");
