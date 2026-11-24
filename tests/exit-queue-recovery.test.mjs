@@ -52,7 +52,7 @@ test('simultaneous Heumar north/south closures preserve normal Poll and Flughafe
   assert.equal(s.edgeActivity('extra-a4-olpe',gate+250).sectionVph,0,'no traffic crosses the closed mainline gate');
 });
 
-test('real A3 accident: Diez does not voluntarily divert while the next AS is less than an hour away',async()=>{
+test('real A3 accident: Diez does not voluntarily divert while the next AS is less than 45 minutes away',async()=>{
   const s=await scenario([]);
   s.setSimulationStart(Date.parse('2026-11-13T13:00:00Z'));s.setDemandPercent(140);s.warmStart();
   s.setEvent({id:'incident',edgeId:'A3-35484178',offsetM:100,kind:'accident',lengthM:200,
@@ -63,7 +63,7 @@ test('real A3 accident: Diez does not voluntarily divert while the next AS is le
   for(let i=0;i<45;i++){
     s.advance(12);
     const a=s.edgeActivity(exit),delay=s.routingDelayAhead(fork,0),next=s.routingDelayToNextExit(fork,0);
-    if(delay<59)assert.equal(a.diversionDemandFraction,0);
+    if(delay<45)assert.equal(a.diversionDemandFraction,0);
     if(delay>=65&&next<30){observed++;assert.equal(a.diversionDemandFraction,0,'remote queue totals are not local AS-to-AS delay');}
     assert.equal(s.edgeActivity('extra-heumar-1382318661').diversionDemandFraction,0,'opposite carriageway is not affected');
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);

@@ -4,11 +4,11 @@ import {Strassennetz,Stauphysik,Ereignisse} from '../dist/index.js';
 import {sampleNetwork} from './fixture.mjs';
 import {diversionShare,lengthDiversionShare} from '../dist/03_Stauphysik/netzfluss.js';
 
-test('Freiwillige Abfahrten beginnen nach 60 Minuten, selbst bei vier Stunden bleibt Durchgangsverkehr',()=>{
-  for(const [delay,share] of [[59.99,0],[60,.02],[90,.15],[120,.32],[180,.55],[240,.70],[360,.82],[480,.90],[720,.90]])
+test('Freiwillige Abfahrten beginnen ab 45 Minuten, selbst bei vier Stunden bleibt Durchgangsverkehr',()=>{
+  for(const [delay,share] of [[44.99,0],[45,.01],[60,.02],[90,.15],[120,.32],[180,.55],[240,.70],[360,.82],[480,.90],[720,.90]])
     assert.ok(Math.abs(diversionShare(delay)-share)<1e-9);
 });
-test('Staulänge ist ein ergänzendes progressives Signal nach Erreichen der 60-Minuten-Schwelle',()=>{
+test('Staulänge ist ein ergänzendes progressives Signal nach Erreichen der 45-Minuten-Schwelle',()=>{
   for(const [m,share] of [[2999,0],[3000,.02],[5000,.07],[10000,.22],[20000,.45],[30000,.65],[100000,.65]])
     assert.ok(Math.abs(lengthDiversionShare(m)-share)<1e-9);
 });

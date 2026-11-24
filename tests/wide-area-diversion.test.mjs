@@ -22,7 +22,8 @@ test("Dernbach–Montabaur full closure in both directions offers distinct A61 a
   assert.equal(s.wideDetourRoutes("south")[0]?.id,"a61-sued");
   assert.equal(s.wideDetourRoutes("north")[0]?.id,"a61-nord");
   assert.notEqual(s.wideDetourRoutes("south")[0].targetEdgeId,s.wideDetourRoutes("north")[0].targetEdgeId);
-  assert.equal(s.wideDiversionShare(59),0);
+  assert.equal(s.wideDiversionShare(44.99),0);
+  assert.ok(s.wideDiversionShare(45)>0&&s.wideDiversionShare(60)>s.wideDiversionShare(45));
   assert.ok(s.wideDiversionShare(120)>0&&s.wideDiversionShare(120)<.1);
   assert.ok(s.wideDiversionShare(360)>s.wideDiversionShare(240));
   assert.equal(s.wideDiversionShare(600),.9);
@@ -45,15 +46,16 @@ test("24-hour closure: covered exits keep draining and a wide detour conserves v
   assert.equal(s.wideDetourRoutes("full")[0]?.id,"wide");
   let drainingMinutes=0,maxDelay=0;
   for(let i=0;i<1440;i++){
-    s.advance(12);
     const offset=s.edgeActivity("approach").lengthM* .825/.90;
+    // The published decision belongs to the previous sampled state.
+    const previousLeg=s.routingDelayToNextExit("approach",offset);
+    s.advance(12);
     maxDelay=Math.max(maxDelay,s.routingDelayAhead("approach",0,Infinity));
     const leg=s.routingDelayToNextExit("approach",offset);
-    if(Number.isFinite(leg)&&leg<60)assert.equal(s.edgeActivity("early").diversionDemandFraction,0);
-    if(leg>=60&&s.edgeActivity("early").diversionDemandFraction>0&&
-      s.edgeActivity("early").departedVph>100)drainingMinutes++;
+    if(previousLeg<45&&leg<45)assert.equal(s.edgeActivity("early").diversionDemandFraction,0);
+    if(s.edgeActivity("last").departedVph>100)drainingMinutes++;
   }
-  assert.ok(drainingMinutes>=0,"local routes must remain conditional on AS-to-AS delay, while the wide detour stays active");
+  assert.ok(drainingMinutes>0,"the last lawful exit actually drains while the wide detour stays active");
   assert.ok(maxDelay>480,"extreme scenario actually reaches a projected delay of over eight hours: "+maxDelay);
   const a=s.wideDetourAccounting()[0];
   assert.ok(a.assigned>1000&&a.returned>100,"actual diversion and return, not just a route label");

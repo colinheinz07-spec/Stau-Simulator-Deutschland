@@ -488,7 +488,9 @@ test("route choice grows gradually with actual delay",async()=>{
   assert.equal(scenario.diversionShare(0),0);
   assert.equal(scenario.diversionShare(10),0);
   assert.equal(scenario.diversionShare(40),0);
-  assert.equal(scenario.diversionShare(59.99),0);
+  assert.equal(scenario.diversionShare(44.99),0);
+  assert.equal(scenario.diversionShare(45),.01);
+  assert.ok(scenario.diversionShare(59.99)>0);
   assert.equal(scenario.diversionShare(60),.02);
   assert.ok(Math.abs(scenario.diversionShare(88)-(.02+.13*28/30))<1e-9);
   assert.equal(scenario.diversionShare(120),.32);
@@ -957,7 +959,7 @@ test("A3 Heumar–Köln-Ost closes the A59 exactly from AD Porz, including the w
     runInNewContext(await readFile(path,"utf8"),{window:w});
   const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
   const closure=sim.setEvent({id:"heumar-a3",edgeId:"A3-132624375",kind:"closure",
-    closedLanes:[0,1,2],offsetM:3,lengthM:200,
+    closedLanes:[0,1,2,3],offsetM:3,lengthM:200,
     speedKmh:0,shoulder:"normal",hasShoulder:false});
   assert.match(closure.closureFrom,/A3 28 AD Köln-Heumar/);
   assert.match(closure.closureTo,/A3 27 AK Köln-Ost/);
@@ -1394,8 +1396,8 @@ test("48 reversed A3/A48 OSM Ways are normalized into continuous directed motorw
     "the old import left exact endpoint-connected motorway segments pointing backward");
   const main=w.STAU_LEGACY_GEOMETRY.roads.filter(r=>
     r[1]==="mainline"&&(r[2]==="A3"||r[2]==="A48"));
-  assert.equal(main.length,970);
-  assert.equal(main.filter(r=>scenario.reachable(r[0])).length,970,
+  assert.ok(main.length>=970,"expanded network retains at least the original A3/A48 mainlines");
+  assert.equal(main.filter(r=>scenario.reachable(r[0])).length,main.length,
     "real A3 and A48 OSM carriageways must not become dead-end subgraphs");
   assert.equal(scenario.edgeActivity("A48-1308398832").source,false,"A48 starts at the A3 transfer, not a new map boundary");
   assert.ok(scenario.sourceProfiles().some(p=>p.direction==="A48-dernbach"));
@@ -1482,7 +1484,7 @@ test("Dernbach Frankfurt: Ransbach from both A3 and A48, Höhr fallback after pr
   sim.advance(1);
   const plans=sim.detourPlans();
   for(const terminal of ["extra-heumar-8298586","extra-heumar-4452557","extra-heumar-25149856"])
-    assert.ok(plans.some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-243834109"),
+    assert.ok(plans.some(p=>p.terminalEdgeId===terminal&&p.reentryEdgeId==="extra-heumar-30449962"&&p.reentryMainlineIds.includes("A3-23875986")),
       "physical exit "+terminal+" must return at the first open Montabaur AS");
   assert.ok(sim.designatedDetourRoutes("full-montabaur").some(s=>/A48.*Ransbach-Baumbach.*Montabaur/.test(s)));
   let initialFallbackAssigned=0;
@@ -1552,7 +1554,7 @@ test("simultaneous Diez and Dernbach closures never assign A48 Frankfurt traffic
   const plans=sim.detourPlans();
   assert.ok(sim.designatedDetourRoutes("montabaur").some(s=>/A48.*Ransbach-Baumbach.*Montabaur/.test(s)));
   assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-4452557"&&
-    p.reentryEdgeId==="extra-heumar-243834109"&&p.closureId==="montabaur"));
+    p.reentryEdgeId==="extra-heumar-30449962"&&p.reentryMainlineIds.includes("A3-23875986")&&p.closureId==="montabaur"));
   assert.ok(!plans.some(p=>p.closureId==="diez"&&
     ["extra-heumar-26923440","extra-heumar-25149856","extra-heumar-4452557"].includes(p.terminalEdgeId)),
     "unrelated opposite-direction closure must never claim these exits");
@@ -1733,7 +1735,7 @@ test("Dernbach Köln closure: A48 has lawful bypass choices returning beyond Ran
   assert.match(e.closureFrom,/AD Dernbach/);assert.match(e.closureTo,/Ransbach/);
   for(let i=0;i<25;i++)sim.advance(12);
   const terminal="extra-heumar-26923440";
-  const plans=sim.detourPlans().filter(p=>p.closureId==="north"&&p.reentryEdgeId==="extra-heumar-807709861");
+  const plans=sim.detourPlans().filter(p=>p.closureId==="north"&&p.reentryEdgeId==="extra-heumar-4452558"&&p.reentryMainlineIds.includes("A3-1322908527"));
   assert.ok(plans.some(p=>p.terminalEdgeId===terminal),"Höhr is a real possible bypass, not a fixed assignment");
   assert.ok(sim.detourRouteAccounting().some(a=>plans.some(p=>p.terminalEdgeId===a.terminalEdgeId)&&a.arrived>100));
   assert.ok(sim.edgeActivity(terminal).departedVph<=705);
@@ -2000,24 +2002,26 @@ test("A48-like motorway approach: a multihour queue diverts at earlier AS onto t
   assert.ok(first?.assigned>40,
     "earlier A48 exit activates after growing time loss, not merely the last exit: "+
     JSON.stringify({last,first}));
-  // The last exit is close enough to the bottleneck that its remaining
-  // measured delay stays below the new voluntary threshold.
+  // The shorter last leg may now trigger a small voluntary share at 45 min.
+  // It must still divert fewer vehicles than the severe earlier leg.
   assert.ok(blocked.routingDelayAhead("up",length*.875)<60);
-  if(blocked.routingQueueLength("up",length*.875)<3000)assert.equal(last?.assigned??0,0);
+  assert.ok((last?.assigned??0)<first.assigned,"the much shorter last leg should divert fewer vehicles");
   assert.ok(blocked.edgeActivity("bad").enteredVph<free.edgeActivity("bad").enteredVph*.2,
     "the physical queue and progressively increasing diversions reduce traffic feeding the incident");
   conservation(free.totals());conservation(blocked.totals());
 });
 
 
-test("nationwide voluntary route choice starts at one hour and never forces all drivers off",async()=>{
+test("nationwide voluntary route choice starts at 45 minutes and never forces all drivers off",async()=>{
   const make=await engine();
   const sim=make({roads:[
     ["main","mainline","A7",3,[[50,8],[50,8.03]],"",1],
     ["exit","ramp","A7",1,[[50,8.03],[50.005,8.03]],"AS Beispiel · Abfahrt von A7",2]
   ]});
   const curve=sim.diversionShare;
-  for(const minutes of [0,10,20,30,40,45,59.99])assert.equal(curve(minutes),0);
+  for(const minutes of [0,10,20,30,40,44.99])assert.equal(curve(minutes),0);
+  assert.equal(curve(45),.01);
+  assert.ok(curve(59.99)>.01&&curve(59.99)<.02);
   for(const [minutes,expected] of [[60,.02],[88,.02+.13*28/30],[90,.15],[120,.32],[150,.44],[180,.55],[240,.70],[360,.82],[480,.90]])
     assert.ok(Math.abs(curve(minutes)-expected)<1e-9);
   for(const minutes of [480,720,1440])assert.equal(curve(minutes),.90);
@@ -2052,7 +2056,7 @@ test("real interchange: A3 Frankfurt accident creates A48 exits AND route over o
     for(const [exit,road] of regional){
       const delay=s.routingDelayToNextExit(road,s.edgeActivity(road).lengthM);
       const offset=s.edgeActivity(road).lengthM;
-      if(delay>=60||s.queueAtExit(road,offset)&&s.routingDelayAhead(road,offset)>=60||s.routingQueueLength(road,offset)>=3000)eligible.add(exit);
+      if(delay>=45||s.queueAtExit(road,offset)&&s.routingDelayAhead(road,offset)>=45||s.routingQueueLength(road,offset)>=3000)eligible.add(exit);
       if(!eligible.has(exit))assert.ok((accounting.find(a=>a.terminalEdgeId===exit)?.assigned??0)<1,
         "the actual delay to the next exit must justify "+exit+": "+delay);
     }
@@ -2063,10 +2067,10 @@ test("real interchange: A3 Frankfurt accident creates A48 exits AND route over o
   }
   const plans=s.detourPlans();
   assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-26923440"&&
-    p.reentryEdgeId==="extra-heumar-243834109"),
+    p.reentryEdgeId==="extra-heumar-30449962"&&p.reentryMainlineIds.includes("A3-23875986")),
     "A48 local Höhr exit must re-enter the ORIGINAL A3 Frankfurt destination");
   assert.ok(plans.some(p=>p.terminalEdgeId==="extra-heumar-4452557"&&
-    p.reentryEdgeId==="extra-heumar-243834109"),
+    p.reentryEdgeId==="extra-heumar-30449962"&&p.reentryMainlineIds.includes("A3-23875986")),
     "open Köln motorway arm must offer first usable A3 AS and Frankfurt reentry");
   const via=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-4452557");
   const hoehr=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-26923440");
@@ -2099,10 +2103,10 @@ test("real interchange: complete Frankfurt closure transfers blocked cohort to K
     s.advance(12);
     const delay=s.routingDelayToPreferredTransferExit(feeder,fork);
     assert.ok(delay!==null,"the real open Köln arm is a signed alternative");
-    reachedThreshold ||= delay>=60||s.routingQueueLength(feeder,fork)>=3000;
+    reachedThreshold ||= delay>=45||s.routingQueueLength(feeder,fork)>=3000;
     const early=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-26923440");
     if(!reachedThreshold)assert.ok((early?.assigned??0)<1,
-      "no Frankfurt diversion at Höhr until delay TO Ransbach reaches one hour: "+delay);
+      "no Frankfurt diversion at Höhr until the local 45-minute threshold or real queue length is reached: "+delay);
   }
   const via=s.detourRouteAccounting().find(x=>x.terminalEdgeId==="extra-heumar-4452557");
   assert.ok(via?.assigned>100,"a blocked Frankfurt-bound cohort must take the legal Köln branch");

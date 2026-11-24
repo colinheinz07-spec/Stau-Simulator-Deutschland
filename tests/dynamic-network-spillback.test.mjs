@@ -59,19 +59,19 @@ test('separate queues on one A3–A48 route add, while the reverse unreachable r
   for(let i=0;i<25;i++){
     s.advance(12);
     const a=s.jamSummaries().find(g=>g.endEdgeId==='a');
-    const b=s.jamSummaries().find(g=>g.endEdgeId==='e');
-    if(!a||!b||a.routingDelayMin>=60||b.routingDelayMin>=60||a.routingDelayMin+b.routingDelayMin<65)continue;
+    const b=s.jamSummaries().find(g=>g.endEdgeId==='d');
+    if(!a||!b||a.routingDelayMin>=45||b.routingDelayMin>=45||a.routingDelayMin+b.routingDelayMin<45)continue;
     const delay=s.routingDelayToDestination('a',0,'e');
-    assert.ok(delay>=60);
+    assert.ok(delay>=45);
     assert.ok(Math.abs(delay-a.routingDelayMin-b.routingDelayMin)<6);
-    assert.ok(a.routeDelayMin>=60,'the unambiguous continuing route reports its cumulative delay');
+    assert.ok(a.routeDelayMin>=45,'the unambiguous continuing route reports its cumulative delay');
     assert.equal(s.routingDelayToDestination('f',0,'a'),Infinity);
     assert.ok(s.diversionShare(delay)>0);
     assert.equal(s.diversionShare(a.routingDelayMin),0);
     assert.equal(s.diversionShare(b.routingDelayMin),0);
     checked=true;break;
   }
-  assert.ok(checked,'two individually sub-threshold queues together exceed one hour');
+  assert.ok(checked,'two individually sub-threshold queues together exceed 45 minutes');
   assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
 });
 

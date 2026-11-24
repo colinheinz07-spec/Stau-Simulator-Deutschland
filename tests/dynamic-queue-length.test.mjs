@@ -19,7 +19,7 @@ const roads=()=>[
 ];
 const incident={id:'acc',edgeId:'bad',kind:'accident',offsetM:500,lengthM:200,closedLanes:[0],speedKmh:50,shoulder:'normal',hasShoulder:false};
 
-test('a long moving queue does not trigger voluntary exits below 60 min',async()=>{
+test('a long moving queue does not trigger voluntary exits below 45 min',async()=>{
   const s=(await make())({roads:roads()});
   s.setSimulationStart(Date.parse('2026-11-13T13:00:00Z'));s.setDemandPercent(160);s.warmStart();
   s.setEvent(incident);const offset=s.edgeActivity('up').lengthM*.4;
@@ -31,13 +31,13 @@ test('a long moving queue does not trigger voluntary exits below 60 min',async()
     s.advance(12);
     const len=s.routingQueueLength('up',offset),delay=s.routingDelayAhead('up',offset),exit=s.edgeActivity('out');
     peak=Math.max(peak,len);
-    if(len>=3000&&delay<60){belowThreshold++;assert.equal(exit.diversionDemandFraction,0);}
+    if(len>=3000&&delay<45){belowThreshold++;assert.equal(exit.diversionDemandFraction,0);}
     if(downstreamBrake<0&&s.edgeActivity('long',12000).sectionSpeedKmh<45)downstreamBrake=i;
     if(upstreamBrake<0&&s.edgeActivity('long',8500).sectionSpeedKmh<45)upstreamBrake=i;
     if(i>=35)congestedSpeeds.push(s.edgeActivity('long',12000).sectionSpeedKmh);
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
   }
-  assert.ok(peak>7500&&belowThreshold>20,'long moving congestion is not itself an hour of delay');
+  assert.ok(peak>7500&&belowThreshold>20,'long moving congestion is not itself 45 minutes of delay');
   assert.ok(downstreamBrake>=0&&upstreamBrake>downstreamBrake,'braking front moves physically upstream, not simultaneously on the entire motorway');
   assert.ok(Math.max(...congestedSpeeds)-Math.min(...congestedSpeeds)>2,'real flow fluctuates even with the same lane restriction');
   const downstream=s.edgeActivity('long',12000).sectionSpeedKmh;
@@ -58,7 +58,7 @@ test('voluntary decisions stop as the primary queue clears, while committed ramp
   let diverted=0,waiting=0;
   for(let i=0;i<100;i++){
     s.advance(12);
-    if(s.routingDelayAhead('up',offset)<59)assert.equal(s.edgeActivity('out').diversionDemandFraction,0);
+    if(s.routingDelayAhead('up',offset)<44)assert.equal(s.edgeActivity('out').diversionDemandFraction,0);
     diverted=Math.max(diverted,s.edgeActivity('out').diversionDemandFraction);
     waiting=Math.max(waiting,s.edgeActivity('up').voluntaryWaitingVehicles);
   }
@@ -74,7 +74,7 @@ test('voluntary decisions stop as the primary queue clears, while committed ramp
     // The head moves upstream after reopening. Its old edge can already be
     // free while kilometres of real remaining through congestion persist.
     const remaining=s.routingDelayToDestination('up',offset,'bad');
-    if(remaining<59&&exit.divertedVehiclesOnEdge>1){
+    if(remaining<44&&exit.divertedVehiclesOnEdge>1){
       residualRamp++;assert.equal(exit.diversionDemandFraction,0);
       assert.ok(s.edgeActivity('up').voluntaryWaitingVehicles<1e-6,'waiting drivers who have not yet exited resume the original road');
     }
@@ -116,14 +116,14 @@ test('a 90-minute total queue does NOT trigger five preceding AS exits with free
       const leg=s.routingDelayToNextExit('up',at),total=s.routingDelayAhead('up',at);
       const extra=s.edgeActivity('out'+j).diversionDemandFraction;
       if(total>60&&j<5)largeTotal++;
-      if(Number.isFinite(leg)&&leg<60&&extra>0){tooEarly++;assert.equal(extra,0,'no local diversion until this exact AS-to-AS interval exceeds 60 min');}
-      if(j===5&&leg>=60&&extra>0)lastUsed=true;
+      if(Number.isFinite(leg)&&leg<45&&extra>0){tooEarly++;assert.equal(extra,0,'no local diversion until this exact AS-to-AS interval reaches 45 min');}
+      if(j===5&&leg>=45&&extra>0)lastUsed=true;
     }
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
   }
   assert.ok(largeTotal>50,'test needs severe distant total delay');
   assert.equal(tooEarly,0);
-  assert.ok(lastUsed,'the last local AS has an hour of delay to the next real interchange');
+  assert.ok(lastUsed,'the last local AS has 45 minutes of delay to the next real interchange');
   assert.equal(s.diversionShare(60),.02);
 });
 
@@ -136,7 +136,7 @@ test('a map-boundary exit without a mapped next AS is not automatically a local 
   for(let i=0;i<80;i++){
     s.advance(12);
     const a=s.edgeActivity('out');
-    if(s.routingDelayAhead('up',s.edgeActivity('up').lengthM*.4)<59)assert.equal(a.diversionDemandFraction,0);
+    if(s.routingDelayAhead('up',s.edgeActivity('up').lengthM*.4)<44)assert.equal(a.diversionDemandFraction,0);
     share=Math.max(share,a.diversionDemandFraction);
     assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
   }
