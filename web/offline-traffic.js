@@ -3267,7 +3267,7 @@ function createLegacyTrafficScenario(data){
     }
     // Recurrent congestion obeys the SAME local AS-to-AS threshold.
     const legDelay=nextDecisionDelay(road,offset);
-    if((!Number.isFinite(legDelay)||legDelay>=VOLUNTARY_START_MIN))for(const group of groups){
+    if(Number.isFinite(legDelay)&&legDelay>=VOLUNTARY_START_MIN)for(const group of groups){
       const head=byId.get(group.endEdgeId);
       const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
       if(Number.isFinite(remaining))share=Math.max(share,
@@ -3340,8 +3340,8 @@ function createLegacyTrafficScenario(data){
     const legDelay=nextDecisionDelay(road,offset);
     // A real downstream AS with a short approach remains preferable, even if
     // the incident farther ahead causes hours of loss. If there is NO later
-    // AS, the current exit is the last lawful local diversion opportunity.
-    if(Number.isFinite(legDelay)&&legDelay<VOLUNTARY_START_MIN)return 0;
+    // AS, require a proven detour plan before treating it as the last local opportunity.
+    if((!Number.isFinite(legDelay)&&!plan)||legDelay<VOLUNTARY_START_MIN)return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
     const eligible=Math.min(observed,legDelay,preferred??Infinity);
