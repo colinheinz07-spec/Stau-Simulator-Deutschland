@@ -5533,6 +5533,10 @@ function createLegacyTrafficScenario(data){
     detourPlans:()=>[...exitDetours.values(),...fallbackExits.values()].map(plan=>({
       terminalEdgeId:edges[plan.terminal].id,
       reentryEdgeId:edges[plan.reentry].id,
+      // A local return may start at an upstream public-road ramp fragment.
+      // Report its actual directed motorway arrivals, not just its entry ID.
+      reentryMainlineIds:[...new Set((edges[plan.reentry].kind==="mainline"?[{road:edges[plan.reentry]}]:
+        rampMainlineArrivals(edges[plan.reentry],(a,b)=>!blockedMovement(a,b))).map(a=>a.road.id))],
       delaySeconds:plan.durationS,closureId:plan.closureId,
       kind:plan.kind,
       reentries:plan.entries.map(entry=>({
