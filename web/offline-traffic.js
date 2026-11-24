@@ -3295,7 +3295,7 @@ function createLegacyTrafficScenario(data){
       current=edges[next[0].to];from=next[0].toM;
     }
     // A connected through queue can span several closely spaced AS.
-    const connected=connectedQueueDelay(road,offset);
+    const connected=remainingConnectedQueueDelay(road,offset);
     const legDelay=nextDecisionDelay(road,offset);
     share=diversionShare(connected);
     if(Number.isFinite(legDelay)&&legDelay>=VOLUNTARY_START_MIN)for(const group of groups){
@@ -3363,7 +3363,7 @@ function createLegacyTrafficScenario(data){
     lengthMemo.set(key,best);return best;
   }
   // Connected through queues remain one decision unit across junctions.
-  function connectedQueueDelay(road,offset){
+  function remainingConnectedQueueDelay(road,offset){
     if(!queueAtExit(road,offset))return 0;
     const candidates=[...(navigationQueueBands.get(road.id)||[]).filter(b=>
       b.fromM<=offset+.05&&b.toM>offset+.05)];
@@ -3385,7 +3385,7 @@ function createLegacyTrafficScenario(data){
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
     if(!Number.isFinite(observed)||observed<VOLUNTARY_START_MIN)return 0;
     const legDelay=nextDecisionDelay(road,offset);
-    const connected=connectedQueueDelay(road,offset);
+    const connected=remainingConnectedQueueDelay(road,offset);
     if((!Number.isFinite(legDelay)&&!plan&&connected<VOLUNTARY_START_MIN)||
       Math.max(legDelay,connected)<VOLUNTARY_START_MIN)return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
@@ -3523,7 +3523,11 @@ function createLegacyTrafficScenario(data){
     // The real public-road exit remains usable even if no return is mapped.
     // A verified cross-motorway return with a positive route choice must
     // retain its destination cohort instead of disappearing at the boundary.
-    if(plan?.kind==="closure"||plan?.sameCorridor||plan&&exitChoiceShare(edge,link,plan)>0||closureFingerprint&&
+    if(plan&&exitChoiceShare(edge,link,plan)>0)return 0;
+    if(!localTerminal(edges[link.to])||!isUsableEscape(edge,link))return 0;
+    const connected=remainingConnectedQueueDelay(edge,link.fromM);
+    if(connected>=VOLUNTARY_START_MIN)return diversionShare(connected);
+    if(plan?.kind==="closure"||plan?.sameCorridor||closureFingerprint&&
       Number.isFinite(closureDistanceAhead(edge,link.fromM,Infinity)))return 0;
     return unplannedExitShare(edge,link.fromM);
   }
