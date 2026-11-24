@@ -2438,9 +2438,9 @@ function createLegacyTrafficScenario(data){
   // Ordinary destinations and mandatory road closures are handled separately.
   const VOLUNTARY_START_MIN=45;
   function diversionShare(delayMin){
-    if(delayMin>=480)return .90;
+    if(delayMin>=300)return 1;
     if(!Number.isFinite(delayMin)||delayMin<VOLUNTARY_START_MIN)return 0;
-    const anchors=[[45,.01],[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[240,.70],[360,.82],[480,.90]];
+    const anchors=[[45,.01],[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[210,.65],[240,.80],[270,.95],[300,1]];
     for(let i=1;i<anchors.length;i++){
       const [end,upper]=anchors[i], [start,lower]=anchors[i-1];
       if(delayMin<=end){
@@ -2448,7 +2448,7 @@ function createLegacyTrafficScenario(data){
         return lower+(upper-lower)*t;
       }
     }
-    return .90;
+    return 1;
   }
   // Distance can strengthen an already eligible decision, never initiate it.
   function lengthDiversionShare(metres){
