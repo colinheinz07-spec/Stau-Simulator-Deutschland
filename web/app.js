@@ -276,14 +276,19 @@ function drawJamCallouts(rendered,byId,showMap=true){
       location:left&&right&&left!==right?"zwischen "+left+" und "+right:left||right?"bei "+(left||right):undefined,
       direction:traffic?.motorwayDirection(ref,[a,b],edge.name||""),destination,routeOrigin:route?.origin,routeDestination:route?.destination};
   };
-  window.StauDashboard?.renderJams(qualified,roadInfo,(id,offset)=>{
+  const visibleJams=qualified.filter(g=>{
+    const info=roadInfo(g.edgeId,g.offsetM,g);
+    const view=window.StauDashboard?.describeJam(g,info);
+    return !/auf[ -]?fahrt|ab[ -]?fahrt/i.test([info.name,view?.mapTitle,view?.title].filter(Boolean).join(" "));
+  });
+  window.StauDashboard?.renderJams(visibleJams,roadInfo,(id,offset)=>{
     const edge=byId.get(id);if(!edge)return;
     map.setView(pointOnEdge(edge,offset),Math.max(11,map.getZoom()));
     $("map").scrollIntoView?.({block:"center",behavior:"smooth"});
   });
   if(!showMap||map.getZoom()<8.5)return;
   const boxes=[];
-  for(const g of qualified){
+  for(const g of visibleJams){
     if(boxes.length>=4)break;
     const edge=byId.get(g.edgeId);if(!edge)continue;
     const position=pointOnEdge(edge,g.offsetM);
