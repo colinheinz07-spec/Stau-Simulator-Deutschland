@@ -3218,13 +3218,15 @@ function createLegacyTrafficScenario(data){
       seen.add(current.id);
       let nextAt=Infinity;
       for(const t of current.links){
-        if(t.fromM<=start+.06||t.fromM>current.lengthM+.05)continue;
+        // At the start of a subsequent OSM Way, a distinct AS is ahead,
+        // not the current fork. Only exclude the original decision offset.
+        if((current===road?t.fromM<=start+.06:t.fromM<start-.05)||t.fromM>current.lengthM+.05)continue;
         const target=edges[t.to];
         if(localTerminal(target)&&!here.has(junctionLabel(target).toLowerCase()))
           nextAt=Math.min(nextAt,t.fromM);
       }
       for(const {from,turn} of incomingTurns[current.index]){
-        if(from.kind!=="ramp"||!isLocalEntrance(from)||turn.toM<=start+.06)continue;
+        if(from.kind!=="ramp"||!isLocalEntrance(from)||(current===road?turn.toM<=start+.06:turn.toM<start-.05))continue;
         if(!here.has(junctionLabel(from).toLowerCase()))nextAt=Math.min(nextAt,turn.toM);
       }
       if(Number.isFinite(nextAt)){
