@@ -277,7 +277,7 @@ function createLegacyTrafficScenario(data){
       voluntaryWaiting:Array(count).fill(null),
       bypassStock:new Float64Array(count),
       // User-defined unrestricted motorway service, not a speed threshold.
-       capacityPerLane:row[1]==="ramp"?1500:2200,
+       capacityPerLane:row[1]==="ramp"?1500:1800,
       freeKmh:row[1]==="ramp"?75:120,
       // CTM cell storage must cover at least one five-second free-flow
       // distance. Many original OSM Ways are only 3-25m long. Treating such
@@ -301,8 +301,8 @@ function createLegacyTrafficScenario(data){
       cellThroughVph:new Float64Array(count),
       cellIncomingVph:new Float64Array(count),
       cellMotion:new Float64Array(count),
-      cellCapacityVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:2200)),
-      cellReceivingVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:2200)),
+      cellCapacityVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:1800)),
+      cellReceivingVph:new Float64Array(count).fill(lanes*(row[1]==="ramp"?1500:1800)),
       links:[],linksFrom:Array.from({length:count},()=>[]),
       enteredVph:0,departedVph:0,
       referencePeakVph:0,directionKey:"",lastProfileMinute:-1,profileFactor:0
