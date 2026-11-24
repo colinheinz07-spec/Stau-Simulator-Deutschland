@@ -3278,8 +3278,10 @@ function createLegacyTrafficScenario(data){
       if(next.length!==1)break;
       current=edges[next[0].to];from=next[0].toM;
     }
-    // Recurrent congestion obeys the SAME local AS-to-AS threshold.
+    // A connected through queue can span several closely spaced AS.
+    const connected=connectedQueueDelay(road,offset);
     const legDelay=nextDecisionDelay(road,offset);
+    share=diversionShare(connected);
     if(Number.isFinite(legDelay)&&legDelay>=VOLUNTARY_START_MIN)for(const group of groups){
       const head=byId.get(group.endEdgeId);
       const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
@@ -3344,23 +3346,37 @@ function createLegacyTrafficScenario(data){
     }
     lengthMemo.set(key,best);return best;
   }
-  // Local AS decisions use ONLY delay from THIS exit to the next AS.
-  // Long total queues are handled independently by real motorway alternatives.
-  // Voluntary local choice begins at 45 minutes; the next-AS delay is independent of the main queue.
+  // Connected through queues remain one decision unit across junctions.
+  function connectedQueueDelay(road,offset){
+    if(!queueAtExit(road,offset))return 0;
+    const candidates=[...(navigationQueueBands.get(road.id)||[]).filter(b=>
+      b.fromM<=offset+.05&&b.toM>offset+.05)];
+    for(const t of road.links){
+      const dest=edges[t.to];
+      if(Math.abs(t.fromM-offset)>.1||dest.kind!=="mainline"||dest.ref!==road.ref||blockedMovement(road,t))continue;
+      candidates.push(...(navigationQueueBands.get(dest.id)||[]).filter(b=>b.fromM<=t.toM+.05&&b.toM>t.toM+.05));
+    }
+    let delay=0;
+    for(const {group} of candidates){
+      const head=byId.get(group.endEdgeId);
+      if(!head)continue;
+      const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
+      if(Number.isFinite(remaining))delay=Math.max(delay,Math.min(remaining,group.routingDelayMin));
+    }
+    return delay;
+  }
   function localDiversionShare(road,offset,observed,plan){
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
     if(!Number.isFinite(observed)||observed<VOLUNTARY_START_MIN)return 0;
     const legDelay=nextDecisionDelay(road,offset);
-    // A real downstream AS with a short approach remains preferable, even if
-    // the incident farther ahead causes hours of loss. If there is NO later
-    // AS, require a proven detour plan before treating it as the last local opportunity.
-    if((!Number.isFinite(legDelay)&&!plan)||legDelay<VOLUNTARY_START_MIN)return 0;
+    const connected=connectedQueueDelay(road,offset);
+    if((!Number.isFinite(legDelay)&&!plan&&connected<VOLUNTARY_START_MIN)||
+      Math.max(legDelay,connected)<VOLUNTARY_START_MIN)return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
-    const eligible=Math.min(observed,legDelay,preferred??Infinity);
+    const eligible=Math.min(observed,Math.max(legDelay,connected),preferred??Infinity);
     if(eligible<VOLUNTARY_START_MIN)return 0;
     const base=diversionShare(eligible);
-    // Queue length can strengthen a valid local decision, never initiate one.
     return Math.max(base,Math.min(base*1.15,lengthDiversionShare(routingQueueLength(road,offset))));
   }
   // An open signed motorway arm is the primary route to the last useful
