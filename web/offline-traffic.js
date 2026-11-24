@@ -3476,7 +3476,9 @@ function createLegacyTrafficScenario(data){
     // A return on another motorway must not displace an actual severe
     // through queue on the original road just because that road is cropped.
     // The real public-road exit remains usable even if no return is mapped.
-    if(plan?.kind==="closure"||plan?.sameCorridor||closureFingerprint&&
+    // A verified cross-motorway return with a positive route choice must
+    // retain its destination cohort instead of disappearing at the boundary.
+    if(plan?.kind==="closure"||plan?.sameCorridor||plan&&exitChoiceShare(edge,link,plan)>0||closureFingerprint&&
       Number.isFinite(closureDistanceAhead(edge,link.fromM,Infinity)))return 0;
     return unplannedExitShare(edge,link.fromM);
   }
