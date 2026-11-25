@@ -626,7 +626,7 @@ async function startLegacyCanvas(existingMap=null){
     $("detail-heading").textContent=s.name||s.ref||"Autobahnabschnitt";
     $("detail-type").textContent=s.kind==="ramp"?
       "Auf-/Abfahrt oder Autobahn-Überleitung":"Autobahn-Hauptfahrbahn";
-    $("detail-lanes").textContent=s.lanes+" Fahrstreifen";
+    $("detail-lanes").textContent=(scenario.edgeActivity?.(s.id,offsetM)?.lanes??s.lanes)+" Fahrstreifen";
     $("detail-length").textContent=s.meters>=1000?
       (s.meters/1000).toLocaleString("de-DE",{maximumFractionDigits:2})+" km":
       Math.round(s.meters)+" m";
