@@ -2436,12 +2436,12 @@ function createLegacyTrafficScenario(data){
   }
   // Willingness depends on observed delay, not ramp receiving capacity.
   // Ordinary destinations and mandatory road closures are handled separately.
-  const VOLUNTARY_START_MIN=45;
+  const VOLUNTARY_START_MIN=60;
   function diversionShare(delayMin,standstill=false){
     if(delayMin>=300)return 1;
     if(!Number.isFinite(delayMin)||delayMin<VOLUNTARY_START_MIN)return 0;
     const base=standstill?.20:.10;
-    return Math.min(1,delayMin>285&&!standstill?.90+(delayMin-285)/150:base+(delayMin-45)/300);
+    return Math.min(1,delayMin>285&&!standstill?.90+(delayMin-285)/150:base+(delayMin-60)/300);
   }
   // Distance can strengthen an already eligible decision, never initiate it.
   function lengthDiversionShare(metres){
@@ -2458,7 +2458,7 @@ function createLegacyTrafficScenario(data){
   // through traffic prefers a genuinely available regional alternative.
   function wideDiversionShare(delay){
     if(!(delay>=VOLUNTARY_START_MIN))return 0;
-    const anchors=[[45,.005],[60,.02],[120,.05],[180,.08],[240,.25],[360,.55],[480,.78],[600,.90]];
+    const anchors=[[60,.02],[120,.05],[180,.08],[240,.25],[360,.55],[480,.78],[600,.90]];
     for(let i=1;i<anchors.length;i++){
       const [lo,a]=anchors[i-1],[hi,b]=anchors[i];
       if(delay<=hi)return a+(b-a)*(delay-lo)/(hi-lo);
@@ -2932,7 +2932,7 @@ function createLegacyTrafficScenario(data){
     if(wideDecisionCache.has(source.index))return wideDecisionCache.get(source.index);
     let best=null;
     for(const {route,road,metre} of options){
-      const delay=observedPlanDelay(road,metre,route),willing=wideDiversionShare(delay);
+      const delay=observedPlanDelay(road,metre,route),willing=route.kind==="closure"?Math.max(.72,wideDiversionShare(delay)):wideDiversionShare(delay);
       if(!willing||!wideRouteOpen(route))continue;
       const durationS=wideTravelSeconds(source,route,true);
       const waiting=Math.max(0,(wideBookings.get(route.id)||0)-elapsed)/60;
@@ -3377,7 +3377,9 @@ function createLegacyTrafficScenario(data){
   function localDiversionShare(road,offset,observed,plan){
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
     if(!Number.isFinite(observed)||observed<VOLUNTARY_START_MIN)return 0;
-    if(!queueAtExit(road,offset)&&hasClearLaterExit(road,offset,true))return 0;
+    if(hasClearLaterExit(road,offset,true))return 0;
+    const nextLeg=nextDecisionDelay(road,offset);
+    if(firstLocalExit(road,offset+.06)&&Number.isFinite(nextLeg)&&nextLeg<VOLUNTARY_START_MIN&&queueAtExit(road,offset))return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
     const eligible=Math.min(observed,preferred??Infinity);
