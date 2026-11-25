@@ -31,15 +31,10 @@ const approximately=(x:number)=>Math.abs(x)<1e-9?0:x;
 const safeNonnegative=(v:number)=>Number.isFinite(v)&&v>=0;
 const clamp01=(x:number)=>Math.max(0,Math.min(1,x));
 /** Same nationwide response curve as the offline engine. */
-export function diversionShare(delay:number):number{
+export function diversionShare(delay:number,standstill=false):number{
   if(delay>=300)return 1;
   if(!Number.isFinite(delay)||delay<45)return 0;
-  const anchors=[[45,.01],[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[210,.65],[240,.80],[270,.95],[300,1]] as const;
-  for(let i=1;i<anchors.length;i++){
-    const [end,upper]=anchors[i]!,[start,lower]=anchors[i-1]!;
-    if(delay<=end)return lower+(upper-lower)*(delay-start)/(end-start);
-  }
-  return 1;
+  return Math.min(1,!standstill&&delay>285?.90+(delay-285)/150:(standstill?.20:.10)+(delay-45)/300);
 }
 export function lengthDiversionShare(metres:number):number{
   if(!Number.isFinite(metres)||metres<3000)return 0;
