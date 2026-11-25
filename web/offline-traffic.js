@@ -1630,7 +1630,11 @@ function createLegacyTrafficScenario(data){
           ...(byTurn.get(turn)||[])
         ];
         let changed=true;
-        while(changed){
+        // Each pass must move at least one closure gate upstream. Bound the
+        // fixed-point iteration so malformed topology cannot freeze the UI.
+        let passes=0;
+        const maxPasses=edges.reduce((n,e)=>n+e.links.length+1,0);
+        while(changed&&passes++<maxPasses){
           changed=false;
           for(const edge of edges){
             const existing=bands(edge.id).sort((a,b)=>a.fromM-b.fromM)[0];
@@ -1643,6 +1647,7 @@ function createLegacyTrafficScenario(data){
             const lastEscape=Math.max(0,...edge.links.filter(t=>
               t.fromM<=gate+.05&&!blocked(t)).map(t=>t.fromM));
             if(lastEscape>=gate-.05)continue;
+            if(bands(edge.id).some(s=>s.fromM<=lastEscape+.05&&s.toM>=gate-.05))continue;
             const span={edgeId:edge.id,fromM:lastEscape,toM:gate,gate:true,
               derivedRampClosure:edge.kind==="ramp",derivedFeederClosure:true,event,
               contributingClosureIds:[...new Set(existing?
