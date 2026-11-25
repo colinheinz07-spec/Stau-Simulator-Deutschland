@@ -1397,6 +1397,7 @@ function createLegacyTrafficScenario(data){
     const id=String(raw.id||"");
     if(!id||id.length>100||!/^[a-zA-Z0-9_-]+$/.test(id))
       throw Error("Ungültige Ereignis-ID");
+    const localWidth=lanesAt(edge,Math.max(0,Math.min(edge.n-1,Math.floor((Number(raw.offsetM)||0)/edge.cellLength))));
     const closedLanes=raw.closedLanes;
     if(!Array.isArray(closedLanes)||new Set(closedLanes).size!==closedLanes.length||
       !closedLanes.every(n=>Number.isInteger(n)&&n>=0&&n<edge.lanes))
@@ -1407,7 +1408,7 @@ function createLegacyTrafficScenario(data){
     if(shoulder==="open"&&(!hasShoulder||edge.kind==="ramp"||edge.shoulderTag==="no"))
       throw Error("Standstreifen-Freigabe nur nach bestätigter Verfügbarkeit auf Hauptfahrbahn");
     if(kind==="closure"&&
-      (closedLanes.length!==edge.lanes||shoulder==="open"))
+      (closedLanes.length<localWidth||shoulder==="open"))
       throw Error("Vollsperrung muss sämtliche vorhandenen Fahrstreifen schließen");
     // For closures the physical AS-to-AS graph defines the length, NOT an
     // editor-supplied metre cap. This also supports very short or long AS
@@ -1419,7 +1420,7 @@ function createLegacyTrafficScenario(data){
       throw Error("Ereignislänge muss zwischen 1 und "+max+" Metern liegen");
     if(!Number.isFinite(offset)||offset<0||offset>=edge.lengthM)
       throw Error("Ereignisposition liegt außerhalb des OSM-Fahrwegs");
-    const open=edge.lanes-closedLanes.length+Number(shoulder==="open");
+    const open=localWidth-closedLanes.filter(lane=>lane<localWidth).length+Number(shoulder==="open");
     const speed=Number(raw.speedKmh);
     if(!Number.isInteger(speed)||speed<0||speed>130||speed%10!==0||
       (kind==="closure"&&speed!==0)||(!open&&speed!==0)||
@@ -1432,7 +1433,7 @@ function createLegacyTrafficScenario(data){
       throw Error("Ungültiger Zeitplan oder Wiederholung");
     if(schedule?.mode==="repeat"&&!["roadworks","closure"].includes(kind))
       throw Error("Wiederkehrende Termine nur für Baustellen und Vollsperrungen");
-    const spec={id,edgeId:edge.id,kind,closedLanes:[...closedLanes].sort((a,b)=>a-b),
+    const spec={id,edgeId:edge.id,kind,closedLanes:kind==="closure"?Array.from({length:edge.lanes},(_,i)=>i):[...closedLanes].sort((a,b)=>a-b),
       shoulder,hasShoulder,lengthM:length,offsetM:offset,speedKmh:speed,
       schedule: schedule?structuredCloneSchedule(schedule):null};
     // In the real road snapshot a motorway closure ALWAYS covers the exact
