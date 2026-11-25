@@ -4503,6 +4503,11 @@ function createLegacyTrafficScenario(data){
   }
   function enqueueDetour(plan,amount,dt){
     if(!plan||!(amount>0))return;
+    const weightSum=plan.entries.reduce((sum,e)=>sum+Math.max(0,e.weight),0);
+    if(!Number.isFinite(weightSum)||weightSum<=0){
+      // No valid return itinerary: account for the departure at the network boundary.
+      exited+=amount;return;
+    }
     outsideVehicles+=amount;detouredVehicles+=amount;
     for(const primary of plan.entries){
       if(primary.weight<=0)continue;
@@ -4522,7 +4527,7 @@ function createLegacyTrafficScenario(data){
         if(!isOpen(option))continue;
         if(cost(option)+10<cost(entry))entry=option;
       }
-      const vehicles=amount*primary.weight;
+      const vehicles=amount*primary.weight/weightSum;
       if(vehicles<=0)continue;
       let departure=elapsed+dt;
       const wide=entry.wideRoute;
@@ -5290,7 +5295,7 @@ function createLegacyTrafficScenario(data){
           detourBatchIndex.delete(trip.key);
           trip.readyAt=Math.ceil((elapsed+Math.max(300,next.durationS-trip.durationS))/30)*30;
           trip.reentry=next.reentry;trip.durationS=next.durationS;
-          trip.key=trip.reentry+":"+trip.readyAt+":"+trip.closureId;
+          trip.key=trip.reentry+":"+trip.readyAt+":"+trip.closureId+(trip.wide?":"+trip.wide.id:"");
           const existing=detourBatchIndex.get(trip.key);
           if(existing){existing.vehicles+=trip.vehicles;detourTrips.splice(i--,1);}
           else detourBatchIndex.set(trip.key,trip);
@@ -5315,7 +5320,7 @@ function createLegacyTrafficScenario(data){
       enteredStep[road.index]+=admitted;
       outsideVehicles-=admitted;returnedVehicles+=admitted;
       trip.vehicles-=admitted;
-      if(trip.vehicles<1e-7){
+      if(trip.vehicles<=0){
         detourTrips.splice(i--,1);detourBatchIndex.delete(trip.key);
       }
     }
