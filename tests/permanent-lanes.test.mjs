@@ -60,3 +60,30 @@ test('OSM importer uses verified permanent lanes, not temporary snapshot count',
     assert.equal(network.edges[0].lanes,width,String(wayId));
   }
 });
+
+test('A59 local lane widths preserve directed road IDs and capacity',()=>{
+  const window={};
+  const context=vm.createContext({window,console});
+  for(const path of ['legacy-geometry.js','event-schedule.js','traffic-reference.js','offline-traffic.js']){
+    vm.runInContext(readFileSync(new URL('../web/'+path,import.meta.url),'utf8'),context);
+  }
+  const sim=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
+  for(const id of ['extra-a59-koeln','extra-a59-bonn']){
+    const first=sim.edgeActivity(id,0);
+    assert.equal(first.lanes,2,id);
+    assert.equal(first.capacityVph,4400,id);
+    const widths=new Set();
+    for(let m=0;m<first.lengthM;m+=200){
+      const activity=sim.edgeActivity(id,m);
+      widths.add(activity.lanes);
+      assert.equal(activity.capacityVph,activity.lanes*2200,id);
+    }
+    assert.deepEqual([...widths].sort(),[2,3],id);
+    assert.equal(sim.edgeActivity(id,first.lengthM-1).lanes,2,id);
+  }
+  sim.warmStart();
+  for(let i=0;i<12;i++){
+    const stats=sim.step(5);
+    assert.ok(Math.abs(stats.conservationResidual)<1e-5,JSON.stringify(stats));
+  }
+});
