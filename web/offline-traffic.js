@@ -3165,7 +3165,7 @@ function createLegacyTrafficScenario(data){
   }
   function closureExitEligible(road,offset,plan){
     const affected=plan?.kind==="closure"||!!closureFingerprint&&Number.isFinite(closureDistanceAhead(road,offset,Infinity));
-    return !affected||queueAtExit(road,offset)||!hasClearLaterExit(road,offset);
+    return !affected||queueAtExit(road,offset)||!hasClearLaterExit(road,offset,true);
   }
   // The physical queue must have reached the actual fork, not merely
   // exist many kilometres downstream. Once reached, an open exit remains
@@ -3377,7 +3377,7 @@ function createLegacyTrafficScenario(data){
   function localDiversionShare(road,offset,observed,plan){
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
     if(!Number.isFinite(observed)||observed<VOLUNTARY_START_MIN)return 0;
-    if(!queueAtExit(road,offset)&&hasClearLaterExit(road,offset))return 0;
+    if(!queueAtExit(road,offset)&&hasClearLaterExit(road,offset,true))return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
     const eligible=Math.min(observed,preferred??Infinity);
@@ -4631,7 +4631,11 @@ function createLegacyTrafficScenario(data){
         const headway=1-.14*platoon*(.5+.5*groupPhase);
         const operatingFactor=state.capacityFactor*restartFactor*lowSpeed*headway*(1-.05*edge.brakeMemory[k]);
         const cap=open*edge.capacityPerLane*restriction*operatingFactor*dt/3600;
-        const moving=Math.min(1,(permitted*state.speedFactor/3.6)*dt/edge.cellLength);
+        // Dense cells cannot discharge at free-flow speed merely because
+        // downstream room temporarily opens. Keep a nonzero restart speed
+        // so a fully occupied cell can recover when its downstream opens.
+        const denseSpeed=density<=.45?1:Math.max(.08,1-.92*Math.pow(clamp01((density-.45)/.55),1.5));
+        const moving=Math.min(1,(permitted*state.speedFactor*denseSpeed/3.6)*dt/edge.cellLength);
         // Block receiving at the first closure cell, but let already-present
         // vehicles discharge through the closed section's downstream cells.
         const evacuating=local.some(x=>x.event.kind==="closure");
