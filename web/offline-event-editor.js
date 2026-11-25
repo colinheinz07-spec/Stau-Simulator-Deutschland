@@ -50,10 +50,11 @@ function createOfflineEventEditor(options){
   function failure(message){error.textContent=message;error.hidden=false;}
   function clearFailure(){error.textContent="";error.hidden=true;}
   function closeForm(){form.hidden=true;editingId=null;if(removeButton)removeButton.disabled=true;clearFailure();}
+  const currentWidth=()=>scenario.edgeActivity?.(current?.id,currentOffset)?.lanes??current?.lanes??1;
   function labels(){
     if(!current)return;
     lanes.replaceChildren();
-    for(let i=0;i<current.lanes;i++){
+    for(let i=0;i<currentWidth();i++){
       const field=document.createElement("label");
       field.className="event-check";
       const input=document.createElement("input");
@@ -61,7 +62,7 @@ function createOfflineEventEditor(options){
       input.name="ev-closed-lane";
       const span=document.createElement("span");
       span.textContent="Fahrstreifen "+(i+1)+(i===0?" · rechts":
-        i===current.lanes-1?" · links":"");
+        i===currentWidth()-1?" · links":"");
       field.append(input,span);lanes.append(field);
     }
   }
@@ -91,7 +92,7 @@ function createOfflineEventEditor(options){
       if(full)checkbox.checked=true;
     }
     refreshShoulder();
-    const open=(current?.lanes||1)-selectedLanes().length+
+    const open=currentWidth()-selectedLanes().length+
       Number(shoulder.value==="open");
     if(reset){
       speed.value=full||open<=0?"0":
@@ -149,8 +150,9 @@ function createOfflineEventEditor(options){
     editingId=event?.id||null;
     if(removeButton)removeButton.disabled=!editingId;
     kind.value=kindValue;
+    currentOffset=event?.offsetM??currentOffset;
     labels();
-    const count=current.lanes;
+    const count=currentWidth();
     for(let i=0;i<count;i++)
       laneInputs()[i].checked=event?event.closedLanes.includes(i):
         kindValue==="closure"||i===0;
@@ -363,7 +365,7 @@ function createOfflineEventEditor(options){
         throw Error(current.kind==="mainline"?
           "Vollsperrung benötigt zwei verbundene Anschlussstellen auf der Hauptfahrbahn.":
           "Vollsperrung benötigt eine eindeutig verbundene Auf-/Abfahrt.");
-      const all=Array.from({length:current.lanes},(_,i)=>i);
+      const all=Array.from({length:currentWidth()},(_,i)=>i);
       const blocked=kindValue==="closure"?all:selected;
       const record={
         id:editingId||("e"+Date.now().toString(36)+"_"+(++sequence)),
