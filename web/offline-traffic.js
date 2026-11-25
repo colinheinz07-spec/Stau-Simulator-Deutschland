@@ -2437,18 +2437,11 @@ function createLegacyTrafficScenario(data){
   // Willingness depends on observed delay, not ramp receiving capacity.
   // Ordinary destinations and mandatory road closures are handled separately.
   const VOLUNTARY_START_MIN=45;
-  function diversionShare(delayMin){
+  function diversionShare(delayMin,standstill=false){
     if(delayMin>=300)return 1;
     if(!Number.isFinite(delayMin)||delayMin<VOLUNTARY_START_MIN)return 0;
-    const anchors=[[45,.01],[60,.02],[90,.15],[120,.32],[150,.44],[180,.55],[210,.65],[240,.80],[270,.95],[300,1]];
-    for(let i=1;i<anchors.length;i++){
-      const [end,upper]=anchors[i], [start,lower]=anchors[i-1];
-      if(delayMin<=end){
-        const t=(delayMin-start)/(end-start);
-        return lower+(upper-lower)*t;
-      }
-    }
-    return 1;
+    const base=standstill?.20:.10;
+    return Math.min(1,delayMin>285&&!standstill?.90+(delayMin-285)/150:base+(delayMin-45)/300);
   }
   // Distance can strengthen an already eligible decision, never initiate it.
   function lengthDiversionShare(metres){
@@ -3298,11 +3291,11 @@ function createLegacyTrafficScenario(data){
     const connected=remainingConnectedQueueDelay(road,offset);
     const legDelay=nextDecisionDelay(road,offset);
     share=diversionShare(connected);
-    if(Number.isFinite(legDelay)&&legDelay>=VOLUNTARY_START_MIN)for(const group of groups){
+    for(const group of groups){
       const head=byId.get(group.endEdgeId);
       const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
       if(Number.isFinite(remaining))share=Math.max(share,
-        diversionShare(Math.min(remaining,group.routingDelayMin,legDelay)));
+        diversionShare(Math.min(remaining,group.routingDelayMin),group.worstKmh<=1));
     }
     unplannedExitMemo.set(key,share);return share;
   }
@@ -3384,16 +3377,14 @@ function createLegacyTrafficScenario(data){
   function localDiversionShare(road,offset,observed,plan){
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
     if(!Number.isFinite(observed)||observed<VOLUNTARY_START_MIN)return 0;
-    const legDelay=nextDecisionDelay(road,offset);
-    const connected=remainingConnectedQueueDelay(road,offset);
-    if((!Number.isFinite(legDelay)&&!plan&&connected<VOLUNTARY_START_MIN)||
-      Math.max(legDelay,connected)<VOLUNTARY_START_MIN)return 0;
+    if(!queueAtExit(road,offset)&&hasClearLaterExit(road,offset))return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
-    const eligible=Math.min(observed,Math.max(legDelay,connected),preferred??Infinity);
+    const eligible=Math.min(observed,preferred??Infinity);
     if(eligible<VOLUNTARY_START_MIN)return 0;
-    const base=diversionShare(eligible);
-    return Math.max(base,Math.min(base*1.15,lengthDiversionShare(routingQueueLength(road,offset))));
+    const cause=plan?.causeEdgeId&&byId.get(plan.causeEdgeId);
+    const stopped=(cause?.visualBands||road.visualBands).some(b=>b.speedKmh<=1);
+    return diversionShare(eligible,stopped);
   }
   // An open signed motorway arm is the primary route to the last useful
   // exit (e.g. A48 -> A3 north -> Ransbach). Only the excess travel time TO
