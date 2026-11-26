@@ -107,3 +107,21 @@ test('all imported motorway mainlines have consistent nominal local lane capacit
   }
   assert.ok(checked>1500);
 });
+
+test('A59 two-lane local incidents are blocked consistently in physics and map',()=>{
+  const window={};
+  const context=vm.createContext({window,console});
+  for(const path of ['legacy-geometry.js','event-schedule.js','traffic-reference.js','offline-traffic.js'])
+    vm.runInContext(readFileSync(new URL('../web/'+path,import.meta.url),'utf8'),context);
+  const sim=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
+  const id='extra-a59-koeln';
+  assert.equal(sim.edgeActivity(id,500).lanes,2);
+  sim.setEvent({id:'blocked-two',edgeId:id,kind:'accident',offsetM:500,lengthM:100,
+    closedLanes:[0,1],speedKmh:0,hasShoulder:false,shoulder:'normal'});
+  assert.ok(sim.closureBands(id).some(b=>b.fromM<=500&&b.toM>=600));
+  sim.step(5);
+  assert.equal(sim.edgeActivity(id,550).operatingCapacityVph,0);
+  assert.equal(sim.totals().conservationResidual,0);
+  sim.removeEvent('blocked-two');
+  assert.equal(sim.closureBands(id).length,0);
+});
