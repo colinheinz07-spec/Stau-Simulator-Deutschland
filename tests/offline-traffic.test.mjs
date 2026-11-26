@@ -767,7 +767,7 @@ test("unrestricted theoretical capacity is not the operating capacity under dens
     s.setDemandPercent(demand);s.warmStart();
     for(let i=0;i<30;i++)s.advance(12);
   }
-  assert.equal(high.edgeActivity("a").capacityVph,6600);
+  assert.equal(high.edgeActivity("a").capacityVph,5400);
   assert.ok(high.edgeActivity("a").operatingCapacityVph<low.edgeActivity("a").operatingCapacityVph);
   assert.ok(high.speed("a")<low.speed("a"));
   conservation(high.totals());conservation(low.totals());
@@ -1713,9 +1713,9 @@ test("short auxiliary lane islands do not inflate motorway through capacity",asy
     ["e","mainline","A48",3,[[50,7.031],[50,7.06]],"",5]
   ]};
   const sim=(await engine())(data);
-  assert.equal(sim.edgeActivity("b").capacityVph,4400);
-  assert.equal(sim.edgeActivity("c").capacityVph,4400);
-  assert.equal(sim.edgeActivity("e").capacityVph,6600);
+  assert.equal(sim.edgeActivity("b").capacityVph,3600);
+  assert.equal(sim.edgeActivity("c").capacityVph,3600);
+  assert.equal(sim.edgeActivity("e").capacityVph,5400);
   const oldClosure={id:"saved",edgeId:"b",kind:"closure",closedLanes:[0,1,2],
     offsetM:0,lengthM:100,speedKmh:0,shoulder:"normal",hasShoulder:false};
   assert.throws(()=>sim.setEvent(oldClosure),/Fahrstreifen/);
@@ -1797,8 +1797,8 @@ test("Dernbach Frankfurt: actual lane drop, no forced turn on an open A3, old ev
   const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
   const entry="ramp-a48-to-frankfurt",tail=entry+"-75746365";
   const head=sim.edgeActivity(entry),last=sim.edgeActivity(tail);
-  assert.equal(head.capacityVph,3000);
-  assert.equal(last.capacityVph,1500);
+  assert.equal(head.capacityVph,3600);
+  assert.equal(last.capacityVph,1800);
   assert.ok(head.lengthM>1000&&last.lengthM>400);
   assert.equal(sim.restoreEvent({id:"old-ramp",edgeId:entry,kind:"closure",
     offsetM:head.lengthM+20,lengthM:100,closedLanes:[0],speedKmh:0,shoulder:"normal"}).edgeId,tail);
@@ -2011,7 +2011,7 @@ test("A48-like motorway approach: a multihour queue diverts at earlier AS onto t
 });
 
 
-test("nationwide voluntary route choice starts at 45 minutes and never forces all drivers off",async()=>{
+test("nationwide voluntary route choice starts at 60 minutes and reaches full willingness at five hours",async()=>{
   const make=await engine();
   const sim=make({roads:[
     ["main","mainline","A7",3,[[50,8],[50,8.03]],"",1],
@@ -2019,21 +2019,21 @@ test("nationwide voluntary route choice starts at 45 minutes and never forces al
   ]});
   const curve=sim.diversionShare;
   for(const minutes of [0,10,20,30,40,44.99])assert.equal(curve(minutes),0);
-  assert.equal(curve(45),.01);
-  assert.ok(curve(59.99)>.01&&curve(59.99)<.02);
-  for(const [minutes,expected] of [[60,.02],[88,.02+.13*28/30],[90,.15],[120,.32],[150,.44],[180,.55],[240,.70],[360,.82],[480,.90]])
+  assert.equal(curve(45),0);
+  assert.equal(curve(59.99),0);
+  for(const [minutes,expected] of [[60,.10],[88,.10+.20*28/30],[90,.30],[120,.75],[150,.815],[180,.88],[240,.95],[300,1],[360,1],[480,1]])
     assert.ok(Math.abs(curve(minutes)-expected)<1e-9);
-  for(const minutes of [480,720,1440])assert.equal(curve(minutes),.90);
+  for(const minutes of [480,720,1440])assert.equal(curve(minutes),1);
   let prev=0;
   for(let i=0;i<=1000;i++){
     const saving=i*.3,p=curve(saving);
-    assert.ok(p>=prev-1e-10&&p<=.90,
+    assert.ok(p>=prev-1e-10&&p<=1,
       "voluntary diversion policy must be monotonic: "+saving);
     prev=p;
   }
   assert.equal(curve(-40),0);
   assert.equal(curve(NaN),0);
-  assert.equal(curve(Infinity),.90);
+  assert.equal(curve(Infinity),1);
 });
 
 test("real interchange: A3 Frankfurt accident creates A48 exits AND route over open Köln arm",async()=>{
