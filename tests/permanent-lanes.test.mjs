@@ -22,7 +22,7 @@ test('Permanent A3 lane widths drive both map inventory and nominal capacity',()
     if(row[1]!=='mainline'||row[2]!=='A3'||!expected.has(row[6]))continue;
     const width=expected.get(row[6]);
     assert.equal(row[3],width,row[0]);
-    assert.equal(scenario.edgeActivity(row[0]).capacityVph,width*2200,row[0]);
+    assert.equal(scenario.edgeActivity(row[0]).capacityVph,width*1800,row[0]);
     checked++;
   }
   assert.equal(checked,expected.size);
@@ -38,11 +38,11 @@ test('Permanent A3 lane widths drive both map inventory and nominal capacity',()
     scenario.removeEvent(eventId);
     scenario.setMode(id,'roadworks');
     scenario.step(5);
-    assert.equal(scenario.edgeActivity(id).capacityVph,width*2200);
-    assert.ok(scenario.edgeActivity(id).operatingCapacityVph<=(width-1)*2200);
+    assert.equal(scenario.edgeActivity(id).capacityVph,width*1800);
+    assert.ok(scenario.edgeActivity(id).operatingCapacityVph<=(width-1)*1800);
     scenario.setMode(id,'none');
     scenario.step(5);
-    assert.equal(scenario.edgeActivity(id).capacityVph,width*2200);
+    assert.equal(scenario.edgeActivity(id).capacityVph,width*1800);
   }
 });
 
@@ -71,12 +71,12 @@ test('A59 local lane widths preserve directed road IDs and capacity',()=>{
   for(const id of ['extra-a59-koeln','extra-a59-bonn']){
     const first=sim.edgeActivity(id,0);
     assert.equal(first.lanes,2,id);
-    assert.equal(first.capacityVph,4400,id);
+    assert.equal(first.capacityVph,3600,id);
     const widths=new Set();
     for(let m=0;m<first.lengthM;m+=200){
       const activity=sim.edgeActivity(id,m);
       widths.add(activity.lanes);
-      assert.equal(activity.capacityVph,activity.lanes*2200,id);
+      assert.equal(activity.capacityVph,activity.lanes*1800,id);
     }
     assert.deepEqual([...widths].sort(),[2,3],id);
     assert.equal(sim.edgeActivity(id,first.lengthM-1).lanes,2,id);
