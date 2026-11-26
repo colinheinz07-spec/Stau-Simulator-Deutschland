@@ -16,7 +16,7 @@ test('A3 extends continuously through Dellbrück, Mülheim and Leverkusen to A1'
   assert.ok(roads.length>100);
   for(const r of roads){
     assert.ok(s.reachable(r[0]),r[0]);
-    assert.equal(s.edgeActivity(r[0]).capacityVph,r[3]*2200);
+    assert.equal(s.edgeActivity(r[0]).capacityVph,r[3]*1800);
   }
   for(const [id,n] of [['A3-53051821',4],['A3-29550391',4],['A3-34565957',3],['A3-126500248',3]])
     assert.equal(data.roads.find(r=>r[0]===id)[3],n,id);
