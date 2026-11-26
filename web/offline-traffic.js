@@ -992,7 +992,7 @@ function createLegacyTrafficScenario(data){
   const wideAccounting=new Map(),wideDecisionCache=new Map();
   let wideDecisionStamp="";
   let localSourceChoiceMinute=-1;
-  let detourPlansKey=null;
+  let detourPlansKey=null,detourPlanSnapshot=null,detourPlanEpoch=-1;
   let warmedUp=false;
   let jamGroups=[];
   // Only segments belonging to a genuine mapped motorway queue, not
@@ -1480,18 +1480,21 @@ function createLegacyTrafficScenario(data){
   }
   function updateEffects(){
     const time=clockMs();
-    // One set per 5-second step. Changing the event catalog invalidates it.
-    if(effectsStamp===time)return;
-    effectsStamp=time;
+    // Rebuild the static legal graph only when active event membership changes.
+    // Schedules are still evaluated on every simulation tick.
+    const active=[...eventRecords.values()].filter(record=>
+      !record.spec.schedule||global.StauEventSchedule.active(record.spec.schedule,time));
+    const stamp=active.map(record=>record.spec.id).sort().join("|");
+    if(effectsStamp===stamp)return;
+    if(effectsStamp!==null)exposureEpoch++;
+    effectsStamp=stamp;
     const byEdge=new Map(),byTurn=new Map();
     function addBlockedTurns(turns,eventId){
       for(const link of turns){
         const list=byTurn.get(link)||[];list.push(eventId);byTurn.set(link,list);
       }
     }
-    for(const record of eventRecords.values()){
-      if(record.spec.schedule&&!global.StauEventSchedule.active(record.spec.schedule,time))
-        continue;
+    for(const record of active){
       for(const span of record.spans){
         const list=byEdge.get(span.edgeId)||[];
         list.push({...span,event:record.spec});
@@ -1501,10 +1504,7 @@ function createLegacyTrafficScenario(data){
     // A directed ramp that can ONLY feed a closed carriageway/closed ramp
     // must share the same closure. Do not close upstream exit ramps when their
     // destination remains legal, and do not flood a whole interchange.
-    const closures=[...eventRecords.values()].filter(record=>
-      record.spec.kind==="closure"&&
-      (!record.spec.schedule||
-        global.StauEventSchedule.active(record.spec.schedule,time)));
+    const closures=active.filter(record=>record.spec.kind==="closure");
     const roadClosures=closures.filter(record=>
       record.spans.some(span=>byId.get(span.edgeId)?.kind==="mainline"));
     const fingerprint=closures.map(x=>x.spec.id).sort().join("|");
@@ -3575,7 +3575,7 @@ function createLegacyTrafficScenario(data){
     if(plan&&exitChoiceShare(edge,link,plan)>0)return 0;
     if(!localTerminal(edges[link.to])||!isUsableEscape(edge,link))return 0;
     const connected=remainingConnectedQueueDelay(edge,link.fromM);
-    if(connected>=VOLUNTARY_START_MIN)return diversionShare(connected);
+    if(connected>=VOLUNTARY_START_MIN&&!hasClearLaterExit(edge,link.fromM,true))return diversionShare(connected);
     if(plan?.kind==="closure"||plan?.sameCorridor||closureFingerprint&&
       Number.isFinite(closureDistanceAhead(edge,link.fromM,Infinity)))return 0;
     return unplannedExitShare(edge,link.fromM);
@@ -3639,6 +3639,8 @@ function createLegacyTrafficScenario(data){
     return eligibleHeads;
   }
   function buildDetourPlans(){
+    if(detourPlansKey!==null&&detourPlanSnapshot===jamGroups&&detourPlanEpoch===exposureEpoch)return;
+    detourPlanSnapshot=jamGroups;detourPlanEpoch=exposureEpoch;
     const events=[...eventRecords.values()].filter(record=>
       (!record.spec.schedule||
         global.StauEventSchedule.active(record.spec.schedule,clockMs()))&&
@@ -4362,7 +4364,7 @@ function createLegacyTrafficScenario(data){
     const cost=(edge,k)=>{
       const a=k*edge.cellLength,b=a+edge.cellLength;
       if((activeEffects.get(edge.id)||NO_EFFECTS).some(s=>s.fromM<b-.001&&s.toM>a+.001&&
-        s.event.kind!=="closure"&&s.event.closedLanes.length===edge.lanes&&s.event.shoulder!=="open"))return Infinity;
+        s.event.kind!=="closure"&&s.event.closedLanes.filter(lane=>lane<lanesAt(edge,k)).length===lanesAt(edge,k)&&s.event.shoulder!=="open"))return Infinity;
       return Math.max(.1,edge.cellLength)*.06/routingCellSpeed(edge,k);
     };
     function offer(item){
