@@ -3427,6 +3427,14 @@ function createLegacyTrafficScenario(data){
     if(hasClearLaterExit(road,offset,true))return 0;
     const length=routingQueueLength(road,offset);
     const lengthShare=length>=10000?lengthDiversionShare(length):0;
+    // Once a later exit remains physically available, compare the leg to it.
+    // A long remote delay must not create a larger diversion at every earlier AS.
+    const later=firstLocalExit(road,offset+.06);
+    const leg=later?nextClosureDecisionDelay(road,offset):Infinity;
+    if(later&&Number.isFinite(leg)){
+      if(leg<VOLUNTARY_START_MIN&&!lengthShare)return 0;
+      observed=Math.min(observed,leg);
+    }
     if(observed<VOLUNTARY_START_MIN&&!lengthShare)return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
