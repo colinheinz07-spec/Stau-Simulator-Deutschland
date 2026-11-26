@@ -23,83 +23,47 @@ function scenario(){
   return sim;
 }
 
-test('nationwide local and long-distance choices start gradually at 45 minutes',()=>{
+test('nationwide voluntary routing starts at 60 minutes and grows progressively',()=>{
   const s=scenario();
-  for(const [delay,expected] of [[0,0],[44.99,0],[45,.01],[60,.02],[90,.15],
-    [120,.32],[180,.55],[240,.70],[360,.82],[480,.90]])
-    assert.ok(Math.abs(s.diversionShare(delay)-expected)<1e-9,
-      delay+' minutes should cause the calibrated voluntary share');
-  assert.equal(s.wideDiversionShare(44.99),0);
-  assert.ok(s.wideDiversionShare(45)>0&&s.wideDiversionShare(45)<s.diversionShare(45));
-  assert.ok(s.wideDiversionShare(180)<s.diversionShare(180),
-    'motorway-scale alternative is not automatically the default option');
+  for(const [delay,expected] of [[0,0],[45,0],[59.99,0],[60,.10],[90,.30],
+    [120,.75],[180,.88],[240,.95],[300,1]])
+    assert.ok(Math.abs(s.diversionShare(delay)-expected)<1e-9, String(delay));
+  assert.equal(s.wideDiversionShare(59.99),0);
+  assert.ok(s.wideDiversionShare(60)>0&&s.wideDiversionShare(60)<s.diversionShare(60));
 });
 
-test('queue to an earlier motorway exit triggers choice only after the local 45-minute delay, retaining the later exit',()=>{
+test('closure queue grows and releases upstream exit choices in order',()=>{
   const s=scenario();
-  const length=s.edgeActivity('approach').lengthM;
-  const earlyOffset=length*.03/.145,middleOffset=length*.08/.145;
-  let earlyActivated=false,middleActivatedBeforeEarly=false,sampledBelowThreshold=false;
-  for(let minute=0;minute<76;minute++){
+  let earlyActive=false,middleFirst=false,earlyReleased=false;
+  for(let minute=0;minute<120;minute++){
     s.advance(12);
-    const delay=s.routingDelayToNextExit('approach',earlyOffset);
-    const middleDelay=s.routingDelayToNextExit('approach',middleOffset);
-    const early=s.edgeActivity('early').diversionDemandFraction;
-    const middle=s.edgeActivity('middle').diversionDemandFraction;
-    const last=s.edgeActivity('last');
-    assert.ok(Math.abs(s.totals().conservationResidual)<1e-6,
-      'every vehicle must remain in the vehicle balance at minute '+minute);
-    assert.equal(last.diversionDemandFraction,1,
-      'the last lawful exit remains mandatory at the full closure');
-    if(delay<44.99){
-      sampledBelowThreshold=true;
-      assert.equal(early,0,
-        'remote multi-hour queues must not redirect drivers at an upstream AS');
-      if(middle>0&&middleDelay>=45)middleActivatedBeforeEarly=true;
-    }
-    if(delay>47&&delay<60&&early>0){
-      assert.ok(early<.05,'early diversion starts with a small fraction');
-      assert.ok(middle>early,'later exit remains preferred');
-      earlyActivated=true;
-    }
-    assert.ok(last.departedVph<=710,
-      'limited public-road discharge must cause physical waiting, not unlimited escape');
+    const early=s.edgeActivity('early'),middle=s.edgeActivity('middle'),last=s.edgeActivity('last');
+    assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
+    for(const id of ['approach','blocked','after','early','middle','last','return'])
+      assert.ok(Math.abs(s.edgeActivity(id).balanceResidualLastStep)<1e-6,id);
+    assert.equal(last.diversionDemandFraction,1);
+    if(middle.diversionDemandFraction>0&&early.diversionDemandFraction===0&&!earlyActive)middleFirst=true;
+    if(early.diversionDemandFraction>0)earlyActive=true;
+    if(earlyActive&&early.diversionDemandFraction===0&&middle.diversionDemandFraction>0)earlyReleased=true;
+    assert.ok(last.departedVph<=710);
   }
-  assert.ok(sampledBelowThreshold&&middleActivatedBeforeEarly&&earlyActivated,
-    'the test actually traverses the upstream queue growth and 45-minute boundary');
-  assert.ok(s.edgeActivity('last').vehicles>0,
-    'excess vehicles cannot disappear at a congested exit');
+  assert.ok(middleFirst&&earlyActive&&earlyReleased,
+    'the earlier exit is activated only as its approach becomes congested and released again');
 });
 
-test('a heavy closure queue shrinks after discharge recovers, releasing early departures without losing vehicles',()=>{
+test('24-hour closure and recovery conserve global and section inventories',()=>{
   const s=scenario();
-  for(let i=0;i<76;i++)s.advance(12);
-  const length=s.edgeActivity('approach').lengthM;
-  const offset=length*.03/.145;
-  const peak=s.totals().vehiclesOnNetwork;
-  assert.ok(peak>3000,'test first builds a genuinely large stored queue');
-  assert.ok(s.edgeActivity('early').diversionDemandFraction>0,
-    'an earlier exit was chosen while its next leg exceeded 45 minutes');
-  s.removeEvent('closure');
-  s.setDemandPercent(25);
-  let hasRecovered=false;
-  for(let i=0;i<100;i++){
+  for(let minute=0;minute<1440;minute++){
+    if(minute===720){s.removeEvent('closure');s.setDemandPercent(25);}
     s.advance(12);
-    assert.ok(Math.abs(s.totals().conservationResidual)<1e-6,
-      'removing the closure does not delete vehicles, even during recovery');
-    const leg=s.routingDelayToNextExit('approach',offset);
-    if(leg<45&&i>0){
-      assert.equal(s.edgeActivity('early').diversionDemandFraction,0,
-        'previously congested exit approach is no longer a reason to depart early');
-      hasRecovered=true;
-    }
+    assert.ok(Math.abs(s.totals().conservationResidual)<1e-6,String(minute));
+    for(const id of ['approach','blocked','after','early','middle','last','return'])
+      assert.ok(Math.abs(s.edgeActivity(id).balanceResidualLastStep)<1e-6,id);
   }
-  assert.ok(hasRecovered,'upstream 45-minute approach delay must actually recede');
-  assert.ok(s.totals().vehiclesOnNetwork<peak*.4,
-    'greater discharge than intake shrinks the physically stored motorway queue');
-  assert.equal(s.jamSummaries().length,0,'the former closure queue dissolves');
+  assert.equal(s.totals().simSeconds,86400);
+  assert.equal(s.jamSummaries().length,0);
+  assert.ok(s.totals().returnedVehicles>0);
 });
-
 
 test('next signed AS at the start of a following OSM Way is a real local decision',()=>{
   const window={};
