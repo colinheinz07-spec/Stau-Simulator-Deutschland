@@ -15,7 +15,7 @@ test('Cologne ring: A1 continuously linked from Cologne-West to Leverkusen; A57/
   for(const ref of ['A1','A57','A59']){
     const roads=data.roads.filter(r=>r[1]==='mainline'&&r[2]===ref&&(ref!=='A59'||r[4][0][0]>51));
     assert.ok(roads.length>=15,ref);
-    for(const r of roads){assert.ok(s.reachable(r[0]),r[0]);assert.equal(s.edgeActivity(r[0]).capacityVph,r[3]*2200);}
+    for(const r of roads){assert.ok(s.reachable(r[0]),r[0]);assert.equal(s.edgeActivity(r[0]).capacityVph,r[3]*1800);}
     const sources=s.sourceProfiles().filter(p=>p.ref===ref&&p.kind==='mainline'&&(ref!=='A59'||/Düsseldorf|Leverkusen/.test(p.name)));
     assert.equal(sources.length,2,ref);
     assert.ok(sources.every(p=>p.peakVph>0));
