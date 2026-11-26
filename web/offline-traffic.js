@@ -2207,7 +2207,7 @@ function createLegacyTrafficScenario(data){
       edge.cellThroughVph.fill(0);edge.cellIncomingVph.fill(0);
       for(let k=0;k<edge.n;k++)edge.cellCapacityVph[k]=edge.cellReceivingVph[k]=edge.capacityPerLane*lanesAt(edge,k);
       edge.lastProfileMinute=-1;edge.profileFactor=0;
-      edge.enteredVph=0;edge.departedVph=0;
+      edge.enteredVph=0;edge.departedVph=0;edge.lastInventoryChange=0;edge.lastBalanceResidual=0;
     }
     for(const fork of forks)fork.active=false;
     if(clearEvents)eventRecords.clear();
@@ -2474,8 +2474,13 @@ function createLegacyTrafficScenario(data){
   function diversionShare(delayMin,standstill=false){
     if(delayMin>=300)return 1;
     if(!Number.isFinite(delayMin)||delayMin<VOLUNTARY_START_MIN)return 0;
-    const base=standstill?.20:.10;
-    return Math.min(1,delayMin>285&&!standstill?.90+(delayMin-285)/150:base+(delayMin-60)/300);
+    const anchors=[[60,.10],[90,.30],[120,.75],[180,.88],[240,.95],[300,1]];
+    let share=1;
+    for(let i=1;i<anchors.length;i++){
+      const [lo,a]=anchors[i-1],[hi,b]=anchors[i];
+      if(delayMin<=hi){share=a+(b-a)*(delayMin-lo)/(hi-lo);break;}
+    }
+    return Math.min(1,share+(standstill?.08:0));
   }
   // Distance can strengthen an already eligible decision, never initiate it.
   function lengthDiversionShare(metres){
@@ -3324,7 +3329,15 @@ function createLegacyTrafficScenario(data){
     // A connected through queue can span several closely spaced AS.
     const connected=remainingConnectedQueueDelay(road,offset);
     const legDelay=nextDecisionDelay(road,offset);
+    if(later&&hasClearLaterExit(road,offset,true)){
+      unplannedExitMemo.set(key,0);return 0;
+    }
     share=diversionShare(connected);
+    // A long through queue can justify departure even while moving.
+    // Do not treat a queue located beyond a freely reachable later exit
+    // as a reason to leave at this junction.
+    const queueLength=routingQueueLength(road,offset);
+    if(queueLength>=10000)share=Math.max(share,lengthDiversionShare(queueLength));
     for(const group of groups){
       const head=byId.get(group.endEdgeId);
       const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
@@ -3410,17 +3423,18 @@ function createLegacyTrafficScenario(data){
   }
   function localDiversionShare(road,offset,observed,plan){
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
-    if(!Number.isFinite(observed)||observed<VOLUNTARY_START_MIN)return 0;
+    if(!Number.isFinite(observed))return 0;
     if(hasClearLaterExit(road,offset,true))return 0;
-    const nextLeg=nextDecisionDelay(road,offset);
-    if(firstLocalExit(road,offset+.06)&&Number.isFinite(nextLeg)&&nextLeg<VOLUNTARY_START_MIN&&queueAtExit(road,offset))return 0;
+    const length=routingQueueLength(road,offset);
+    const lengthShare=length>=10000?lengthDiversionShare(length):0;
+    if(observed<VOLUNTARY_START_MIN&&!lengthShare)return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
     const eligible=Math.min(observed,preferred??Infinity);
-    if(eligible<VOLUNTARY_START_MIN)return 0;
+    if(preferred!==null&&eligible<VOLUNTARY_START_MIN)return 0;
     const cause=plan?.causeEdgeId&&byId.get(plan.causeEdgeId);
     const stopped=(cause?.visualBands||road.visualBands).some(b=>b.speedKmh<=1);
-    return diversionShare(eligible,stopped);
+    return Math.max(diversionShare(eligible,stopped),lengthShare);
   }
   // An open signed motorway arm is the primary route to the last useful
   // exit (e.g. A48 -> A3 north -> Ransbach). Only the excess travel time TO
@@ -4514,6 +4528,7 @@ function createLegacyTrafficScenario(data){
       // route. When traffic can still move, drivers retain different tastes.
       const mandatory=c.kind==="closure"&&original===Infinity&&!laterUsableExitBeforeClosure(edge,c.turn.fromM);
       const share=mandatory?1:
+        c.kind==="closure"&&original===Infinity?.50:
         c.kind==="closure"?.65*diversionShare(observedPlanDelay(edge,c.turn.fromM,c)):voluntary;
       if(share<=0||original<=alternative||best&&best.saving>=original-alternative)continue;
       best={...c,share,saving:original-alternative,through};
@@ -5285,6 +5300,7 @@ function createLegacyTrafficScenario(data){
           departedStep[split.from]+=moved;
         }
         accepted[opt.to][opt.toCell]+=moved;
+        used[split.from][split.cell]+=moved;
         remaining-=moved;
         if(remaining<=1e-6)break;
       }
@@ -5406,6 +5422,7 @@ function createLegacyTrafficScenario(data){
     }
     for(let j=0;j<edges.length;j++){
       const edge=edges[j],change=delta[j];
+      let inventoryChange=0;
       for(let k=0;k<edge.n;k++){
         const before=edge.stock[k],sent=used[j][k];
         edge.platoonProgress[k]=(edge.platoonProgress[k]+sent/Math.max(12,edge.lanes*18))%1;
@@ -5442,6 +5459,7 @@ function createLegacyTrafficScenario(data){
         if(after < -1e-7||after>storageAt(edge,k)+1e-6)
           throw Error("Ungültiger Fahrzeugbestand auf "+edge.id);
         edge.stock[k]=Math.max(0,after);
+        inventoryChange+=edge.stock[k]-before;
         const entry=edge.entryStock[k]+entryDelta[j][k];
         if(entry< -1e-6||entry>edge.stock[k]+1e-6)throw Error("Auffahrtsbestand verletzt: "+edge.id);
         edge.entryStock[k]=Math.max(0,Math.min(edge.stock[k],entry));
@@ -5456,6 +5474,10 @@ function createLegacyTrafficScenario(data){
         const bypass=edge.bypassStock[k]+bypassDelta[j][k];
         edge.bypassStock[k]=anyClosureActive?Math.min(edge.stock[k]-edge.divertStock[k],Math.max(0,bypass)):0;
       }
+      // Check local conservation independently of the smoothed flow meters.
+      edge.lastInventoryChange=inventoryChange;
+      edge.lastBalanceResidual=inventoryChange-enteredStep[j]+departedStep[j];
+      if(Math.abs(edge.lastBalanceResidual)>1e-5)throw Error("Abschnittsbilanz verletzt: "+edge.id+" "+edge.lastBalanceResidual);
       // 2-minute exponential flow meter for inspectable scenario plausibility.
       edge.enteredVph+=alpha*(enteredStep[j]*3600/dt-edge.enteredVph);
       edge.departedVph+=alpha*(departedStep[j]*3600/dt-edge.departedVph);
@@ -5570,6 +5592,7 @@ function createLegacyTrafficScenario(data){
       sectionSpeedKmh,boundaryExit:boundaryExit[edge.index],
       enteredVph:edge.enteredVph,departedVph:edge.departedVph,
       enteredLastStep:enteredStep[edge.index],departedLastStep:departedStep[edge.index],
+      inventoryChangeLastStep:edge.lastInventoryChange??0,balanceResidualLastStep:edge.lastBalanceResidual??0,
       lanes:lanesAt(edge,at),capacityVph:lanesAt(edge,at)*edge.capacityPerLane,
       operatingCapacityVph:edge.cellCapacityVph[at],
       receivingCapacityVph:edge.cellReceivingVph[at],
