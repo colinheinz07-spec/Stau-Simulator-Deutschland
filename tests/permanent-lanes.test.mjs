@@ -87,3 +87,23 @@ test('A59 local lane widths preserve directed road IDs and capacity',()=>{
     assert.ok(Math.abs(stats.conservationResidual)<1e-5,JSON.stringify(stats));
   }
 });
+
+test('all imported motorway mainlines have consistent nominal local lane capacity',()=>{
+  const window={};
+  const context=vm.createContext({window,console});
+  for(const path of ['legacy-geometry.js','event-schedule.js','traffic-reference.js','offline-traffic.js'])
+    vm.runInContext(readFileSync(new URL('../web/'+path,import.meta.url),'utf8'),context);
+  const sim=window.createLegacyTrafficScenario(window.STAU_LEGACY_GEOMETRY);
+  let checked=0;
+  for(const row of window.STAU_LEGACY_GEOMETRY.roads){
+    if(row[1]!=='mainline'||!sim.hasEdge(row[0]))continue;
+    const a=sim.edgeActivity(row[0]);
+    for(const fraction of [0,.25,.5,.75,.9999]){
+      const p=sim.edgeActivity(row[0],a.lengthM*fraction);
+      assert.ok(Number.isInteger(p.lanes)&&p.lanes>=1&&p.lanes<=6,row[0]);
+      assert.equal(p.capacityVph,p.lanes*1800,row[0]);
+    }
+    checked++;
+  }
+  assert.ok(checked>1500);
+});
