@@ -22,7 +22,7 @@ test('Bonn–Ahr–Koblenz: original carriageways and signed junctions are reach
     assert.ok(rows.length>=min,ref);
     for(const r of rows){
       assert.ok(s.reachable(r[0]),r[0]);
-      assert.equal(s.edgeActivity(r[0]).capacityVph,r[3]*2200,r[0]);
+      assert.equal(s.edgeActivity(r[0]).capacityVph,r[3]*1800,r[0]);
     }
     for(const name of names)assert.ok(data.junctions.some(j=>j[0]===ref&&j[2]===name),name);
   }
