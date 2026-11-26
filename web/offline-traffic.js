@@ -94,7 +94,7 @@ function legacyLaneProfile(row,count,meters,junctions){
     }
     return dist[index];
   };
-  const ranges=[["39","40"],["35",row[0]==="extra-a59-koeln"?"33":"34"]]
+  const ranges=[["39","40"],["35","34"]]
     .map(([a,b])=>[at(a),at(b)]).filter(([a,b])=>a!==null&&b!==null)
     .map(([a,b])=>[Math.min(a,b),Math.max(a,b)]);
   if(ranges.length!==2)return null;
@@ -105,6 +105,25 @@ function legacyLaneProfile(row,count,meters,junctions){
 }
 const lanesAt=(edge,k)=>edge.cellLanes?.[k]??edge.lanes;
 const storageAt=(edge,k)=>edge.jamPerCell*lanesAt(edge,k)/edge.lanes;
+const blocksCell=(edge,k,event)=>event.kind==="closure"||
+  event.shoulder!=="open"&&event.closedLanes.filter(lane=>lane<lanesAt(edge,k)).length===lanesAt(edge,k);
+function blockedEffectSpans(edge,effects){
+  const result=[];
+  for(const x of effects){
+    if(x.event.kind==="closure"||!edge.cellLanes&&blocksCell(edge,0,x.event)){
+      result.push(x);continue;
+    }
+    if(!edge.cellLanes||x.event.shoulder==="open")continue;
+    for(let k=Math.max(0,Math.floor(x.fromM/edge.cellLength));k<edge.n&&k*edge.cellLength<x.toM;k++){
+      if(!blocksCell(edge,k,x.event))continue;
+      const fromM=Math.max(x.fromM,k*edge.cellLength),toM=Math.min(x.toM,(k+1)*edge.cellLength);
+      const previous=result.at(-1);
+      if(previous?.event===x.event&&Math.abs(previous.toM-fromM)<.001)previous.toM=toM;
+      else result.push({...x,fromM,toM});
+    }
+  }
+  return result;
+}
 const finite=n=>Number.isFinite(n)&&n>=0;
 const clamp01=x=>Math.max(0,Math.min(1,x));
 // Aggregate heterogeneity: mean desired speed falls as gaps shrink and
@@ -1408,7 +1427,7 @@ function createLegacyTrafficScenario(data){
     if(shoulder==="open"&&(!hasShoulder||edge.kind==="ramp"||edge.shoulderTag==="no"))
       throw Error("Standstreifen-Freigabe nur nach bestätigter Verfügbarkeit auf Hauptfahrbahn");
     if(kind==="closure"&&
-      (closedLanes.length<localWidth||shoulder==="open"))
+      (closedLanes.filter(lane=>lane<localWidth).length<localWidth||shoulder==="open"))
       throw Error("Vollsperrung muss sämtliche vorhandenen Fahrstreifen schließen");
     // For closures the physical AS-to-AS graph defines the length, NOT an
     // editor-supplied metre cap. This also supports very short or long AS
@@ -1796,9 +1815,8 @@ function createLegacyTrafficScenario(data){
     const visited=new Set();let distance=0;
     while(road&&!visited.has(road.id)&&distance<maxDistance){
       visited.add(road.id);
-      if((activeEffects.get(road.id)||NO_EFFECTS).some(x=>x.toM>=offset-.05&&
-        distance+Math.max(0,x.fromM-offset)<=maxDistance&&
-        (x.event.kind==="closure"||x.event.closedLanes.length>=road.lanes&&x.event.shoulder!=="open")))return true;
+      if(blockedEffectSpans(road,activeEffects.get(road.id)||NO_EFFECTS).some(x=>x.toM>=offset-.05&&
+        distance+Math.max(0,x.fromM-offset)<=maxDistance))return true;
       distance+=road.lengthM-offset;
       const next=road.next.filter(t=>edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref);
       if(next.length!==1)break;
@@ -1810,8 +1828,7 @@ function createLegacyTrafficScenario(data){
     updateEffects();
     for(const edge of edges){
       const effectList=activeEffects.get(edge.id)||NO_EFFECTS;
-      const closed=effectList.filter(x=>x.event.kind==="closure"||
-        x.event.closedLanes.length===edge.lanes&&x.event.shoulder!=="open");
+      const closed=blockedEffectSpans(edge,effectList);
       let minSpeed=edge.freeKmh;
       const bands=[];
       for(let k=0;k<edge.n;k++){
@@ -2173,9 +2190,8 @@ function createLegacyTrafficScenario(data){
   function visualBands(id){return byId.get(id)?.visualBands||[];}
   function closureBands(id){
     const effects=eventsOn(id);
-    return effects.filter(x=>x.event.kind==="closure"||
-      x.event.closedLanes.length===byId.get(id)?.lanes&&
-      x.event.shoulder!=="open").map(x=>({fromM:x.fromM,toM:x.toM}));
+    const edge=byId.get(id);
+    return edge?blockedEffectSpans(edge,effects).map(x=>({fromM:x.fromM,toM:x.toM})):[];
   }
   function reset(clearEvents=false){
     elapsed=0;generated=0;exited=0;initialVehicles=0;warmedUp=false;
@@ -3376,8 +3392,7 @@ function createLegacyTrafficScenario(data){
     const seen=new Set();
     outer:while(current&&!seen.has(current.id)&&distance<100000){
       seen.add(current.id);
-      const gate=(activeEffects.get(current.id)||NO_EFFECTS).filter(x=>
-        (x.event.kind==="closure"||x.event.closedLanes.length===current.lanes&&x.event.shoulder!=="open")&&x.toM>start+.05)
+      const gate=blockedEffectSpans(current,activeEffects.get(current.id)||NO_EFFECTS).filter(x=>x.toM>start+.05)
         .reduce((m,x)=>Math.min(m,Math.max(start,x.fromM)),current.lengthM);
       for(const band of current.visualBands){
         const lo=Math.max(start,band.fromM),hi=Math.min(gate,band.toM);
