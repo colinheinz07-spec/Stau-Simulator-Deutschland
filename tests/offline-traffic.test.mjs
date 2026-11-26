@@ -227,10 +227,10 @@ test("Friday afternoon and Sunday night generate different modeled arrivals",asy
   conservation(sunday.totals());
 });
 
-test("2200 Kfz/h per mainline lane is consistent with imported road capacity",async()=>{
+test("1800 Kfz/h per lane is the agreed nominal motorway capacity",async()=>{
   const scenario=(await engine())(network());
-  assert.equal(scenario.edgeActivity("a").capacityVph,3*2200);
-  assert.equal(scenario.edgeActivity("r").capacityVph,1500);
+  assert.equal(scenario.edgeActivity("a").capacityVph,3*1800);
+  assert.equal(scenario.edgeActivity("r").capacityVph,1800);
 });
 test("a full corridor closure marks the exclusive feeder ramp chain but not the open upstream exit",async()=>{
   const scenario=(await engine())({roads:[
@@ -489,15 +489,14 @@ test("route choice grows gradually with actual delay",async()=>{
   assert.equal(scenario.diversionShare(10),0);
   assert.equal(scenario.diversionShare(40),0);
   assert.equal(scenario.diversionShare(44.99),0);
-  assert.equal(scenario.diversionShare(45),.01);
-  assert.ok(scenario.diversionShare(59.99)>0);
-  assert.equal(scenario.diversionShare(60),.02);
-  assert.ok(Math.abs(scenario.diversionShare(88)-(.02+.13*28/30))<1e-9);
-  assert.equal(scenario.diversionShare(120),.32);
-  assert.equal(scenario.diversionShare(180),.55);
-  assert.equal(scenario.diversionShare(240),.70);
-  assert.equal(scenario.diversionShare(360),.82);
-  for(const minutes of [480,720,Infinity])assert.equal(scenario.diversionShare(minutes),.90);
+  assert.equal(scenario.diversionShare(45),0);
+  assert.equal(scenario.diversionShare(59.99),0);
+  assert.equal(scenario.diversionShare(60),.10);
+  assert.ok(Math.abs(scenario.diversionShare(88)-(.10+.20*28/30))<1e-9);
+  assert.equal(scenario.diversionShare(120),.75);
+  assert.equal(scenario.diversionShare(180),.88);
+  assert.equal(scenario.diversionShare(240),.95);
+  for(const minutes of [300,360,480,720,Infinity])assert.equal(scenario.diversionShare(minutes),1);
 });
 
 test("progressive diversion retains physical exit queues and through movements nationwide",async()=>{
