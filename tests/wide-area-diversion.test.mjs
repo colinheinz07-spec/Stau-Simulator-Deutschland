@@ -64,3 +64,13 @@ test("24-hour closure: covered exits keep draining and a wide detour conserves v
   assert.ok(s.edgeActivity("closed").enteredVph<1);
   assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
 });
+
+test("A3 Lohmar closure has genuine A59 motorway bypasses in both directions",async()=>{
+  const w=await engine(true),s=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  s.setSimulationStart(Date.parse("2026-11-26T05:00:00Z"));s.warmStart();
+  close(s,"north","A3-1037505867");close(s,"south","A3-288093690");
+  for(let i=0;i<12;i++)s.step(5,i===11);
+  assert.ok(s.validatedMotorwayBypasses("north").some(x=>x.motorways.join(",")==="A560,A59,A3"));
+  assert.ok(s.validatedMotorwayBypasses("south").some(x=>x.motorways.join(",")==="A59,A560,A3"));
+  assert.ok(Math.abs(s.totals().conservationResidual)<1e-6);
+});
