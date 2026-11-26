@@ -4511,7 +4511,7 @@ function createLegacyTrafficScenario(data){
           if(!next){valid=at===c.target&&cell===target.n-1;break;}
           at=next.to;cell=next.toCell;
         }
-        c.validBypass=valid&&rejoined;c.validationStamp=stamp;
+        c.validBypass=valid&&rejoined;c.validationStamp=stamp;c.bypassRefs=c.validBypass?[...used.keys()]:[];
       }
       if(!c.validBypass)continue;
       // A real motorway route is not automatically preferable to a local
@@ -5668,6 +5668,10 @@ function createLegacyTrafficScenario(data){
       return [...fallbackExits.values()].filter(p=>p.designated&&p.closureId===eventId)
         .map(p=>p.feederRef+" → "+p.transferRef+" → "+junctionLabel(edges[p.terminal])+" → "+junctionLabel(edges[p.reentry]));
     },
+    validatedMotorwayBypasses:eventId=>[...motorwayAlternatives.entries()].flatMap(([key,choices])=>
+      choices.filter(c=>c.validBypass&&c.validationStamp===routePathEpoch+":"+routePathMinute&&(!eventId||c.closureId===eventId))
+        .map(c=>({eventId:c.closureId,fromEdgeId:edges[Math.floor(key/65536)].id,viaEdgeId:edges[c.turn.to].id,
+          targetEdgeId:edges[c.target].id,motorways:[...c.bypassRefs]}))),
     wideDetourRoutes:eventId=>{
       updateEffects();buildDetourPlans();
       return (wideRoutesByEvent.get(eventId)||[]).filter(wideRouteOpen).map(route=>({
