@@ -65,7 +65,7 @@ function match(exit,entry,start,end){
   if(status!=="ready"||!start||!end||entry.externalDetourLabel)return null;
   const a=autobahn(exit.ref),b=autobahn(entry.ref);
   if(!a||a!==b)return null;
-  const k=[exit.id,entry.id,start.join(","),end.join(",")].join("|");
+  const k=[a,exit.id,entry.id,exit.name,entry.name,start.join(","),end.join(",")].join("|");
   if(cache.has(k))return cache.get(k);
   const candidates=new Set(),y=Math.floor(start[0]/CELL),x=Math.floor(start[1]/CELL);
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)
@@ -81,6 +81,49 @@ function match(exit,entry,start,end){
     if(Math.max(...gaps)>700||!Number.isFinite(route.lengthM)||route.lengthM<100)continue;
     const cost=gaps[0]+gaps[1];
     if(cost<score){best={route,lengthM:route.lengthM+cost};score=cost;}
+  }
+  // Multi-junction closures: link only same-motorway routes whose named
+  // junction and actual endpoints agree; never infer direction from U parity.
+  if(!best){
+    const pending=[],visited=new Map();
+    const enqueue=(route,at,length,chain)=>{
+      const state=route.id+":"+at.join(",");
+      if(length>250000||length>=(visited.get(state)??Infinity)||chain.length>12)return;
+      visited.set(state,length);pending.push({route,at,length,chain});
+    };
+    for(const route of candidates){
+      if(!nameMatches(exit.name,route.from))continue;
+      const p=route.parts[0],ends=[p[0],p.at(-1)];
+      for(let i=0;i<2;i++){
+        const gap=metres(start,ends[i]);if(gap>700)continue;
+        enqueue(route,ends[1-i],route.lengthM+gap,[route]);
+      }
+    }
+    const compass=v=>String(v||"").match(/\b(nord|süd|ost|west)(?:wärts|en)?\b/i)?.[1]?.toLowerCase();
+    for(let work=0;pending.length&&work<400;work++){
+      pending.sort((a,b)=>a.length-b.length);
+      const item=pending.shift();
+      if(item.length>=score)break;
+      const gap=metres(item.at,end);
+      if(nameMatches(entry.name,item.route.to)&&gap<=700){
+        best={route:item.chain[0],routes:item.chain,lengthM:item.length+gap};
+        score=item.length+gap;continue;
+      }
+      const yy=Math.floor(item.at[0]/CELL),xx=Math.floor(item.at[1]/CELL);
+      const nearby=new Set();
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)
+        for(const r of matching.get(a+":"+key(yy+dy,xx+dx))||[])nearby.add(r);
+      for(const r of nearby){
+        if(item.chain.includes(r)||!nameMatches(item.route.to,r.from))continue;
+        const d1=compass(item.route.direction),d2=compass(r.direction);
+        if(d1&&d2&&d1!==d2)continue;
+        const p=r.parts[0],ends=[p[0],p.at(-1)];
+        for(let i=0;i<2;i++){
+          const d=metres(item.at,ends[i]);if(d>50)continue;
+          enqueue(r,ends[1-i],item.length+r.lengthM+d,[...item.chain,r]);
+        }
+      }
+    }
   }
   if(cache.size>10000)cache.clear();cache.set(k,best);return best;
 }
