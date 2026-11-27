@@ -489,14 +489,10 @@ test("route choice grows gradually with actual delay",async()=>{
   assert.equal(scenario.diversionShare(10),0);
   assert.equal(scenario.diversionShare(40),0);
   assert.equal(scenario.diversionShare(44.99),0);
-  assert.equal(scenario.diversionShare(45),0);
-  assert.equal(scenario.diversionShare(59.99),0);
-  assert.equal(scenario.diversionShare(60),.10);
-  assert.ok(Math.abs(scenario.diversionShare(88)-(.10+.20*28/30))<1e-9);
-  assert.equal(scenario.diversionShare(120),.75);
-  assert.equal(scenario.diversionShare(180),.88);
-  assert.equal(scenario.diversionShare(240),.95);
-  for(const minutes of [300,360,480,720,Infinity])assert.equal(scenario.diversionShare(minutes),1);
+  for(const [minutes,expected] of [[45,.20],[60,.25],[88,.20+43/300],[120,.45],[180,.65],[240,.85],[285,1]])
+    assert.ok(Math.abs(scenario.diversionShare(minutes)-expected)<1e-9);
+  for(const minutes of [300,360,480,720])assert.equal(scenario.diversionShare(minutes),1);
+  assert.equal(scenario.diversionShare(Infinity),0);
 });
 
 test("progressive diversion retains physical exit queues and through movements nationwide",async()=>{
@@ -2011,7 +2007,7 @@ test("A48-like motorway approach: a multihour queue diverts at earlier AS onto t
 });
 
 
-test("nationwide voluntary route choice starts at 60 minutes and reaches full willingness at five hours",async()=>{
+test("nationwide voluntary route choice starts at 45 minutes and reaches full willingness at 285 minutes",async()=>{
   const make=await engine();
   const sim=make({roads:[
     ["main","mainline","A7",3,[[50,8],[50,8.03]],"",1],
@@ -2019,9 +2015,8 @@ test("nationwide voluntary route choice starts at 60 minutes and reaches full wi
   ]});
   const curve=sim.diversionShare;
   for(const minutes of [0,10,20,30,40,44.99])assert.equal(curve(minutes),0);
-  assert.equal(curve(45),0);
-  assert.equal(curve(59.99),0);
-  for(const [minutes,expected] of [[60,.10],[88,.10+.20*28/30],[90,.30],[120,.75],[150,.815],[180,.88],[240,.95],[300,1],[360,1],[480,1]])
+  assert.equal(curve(45),.20);
+  for(const [minutes,expected] of [[60,.25],[88,.20+43/300],[90,.35],[120,.45],[150,.55],[180,.65],[240,.85],[285,1],[360,1],[480,1]])
     assert.ok(Math.abs(curve(minutes)-expected)<1e-9);
   for(const minutes of [480,720,1440])assert.equal(curve(minutes),1);
   let prev=0;
@@ -2033,7 +2028,7 @@ test("nationwide voluntary route choice starts at 60 minutes and reaches full wi
   }
   assert.equal(curve(-40),0);
   assert.equal(curve(NaN),0);
-  assert.equal(curve(Infinity),1);
+  assert.equal(curve(Infinity),0);
 });
 
 test("real interchange: A3 Frankfurt accident creates A48 exits AND route over open Köln arm",async()=>{
@@ -2118,4 +2113,28 @@ test("real interchange: complete Frankfurt closure transfers blocked cohort to K
   assert.ok(s.designatedDetourRoutes("closed-after-ad").some(x=>/A48.*A3.*Ransbach-Baumbach.*Montabaur/.test(x)),
     "a Köln-side exit must rejoin the unaffected downstream Frankfurt carriageway");
   conservation(s.totals());
+});
+
+test("identical Heumar OSM transfers have one stock and preserve saved incident IDs",async()=>{
+  const w={};
+  for(const path of ["web/traffic-reference.js","web/legacy-geometry.js","web/offline-traffic.js"])
+    runInNewContext(await readFile(path,"utf8"),{window:w});
+  const sim=w.createLegacyTrafficScenario(w.STAU_LEGACY_GEOMETRY);
+  const canonical="extra-turn-extra-a4-olpe-to-A3-frankfurt-132614508";
+  const duplicate="extra-heumar-132614508";
+  assert.ok(sim.hasEdge(canonical));
+  assert.equal(sim.hasEdge(duplicate),false);
+  assert.equal(sim.hasEdge("extra-heumar-992497963"),false);
+  const event=sim.restoreEvent({id:"old-transfer",edgeId:duplicate,kind:"accident",
+    offsetM:100,lengthM:100,closedLanes:[0],speedKmh:50,shoulder:"normal"});
+  assert.equal(event.edgeId,canonical);
+  sim.removeEvent("old-transfer");sim.warmStart();
+  let inbound=0,outbound=0,change=0;
+  for(let i=0;i<12;i++){
+    sim.step(5,i===11);
+    const a=sim.edgeActivity(canonical);
+    inbound+=a.enteredLastStep;outbound+=a.departedLastStep;change+=a.inventoryChangeLastStep;
+  }
+  assert.ok(Math.abs(inbound-outbound-change)<1e-6);
+  conservation(sim.totals());
 });
