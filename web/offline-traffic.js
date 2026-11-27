@@ -2975,6 +2975,8 @@ function createLegacyTrafficScenario(data){
     // Unmapped local/urban road travel is an explicit travel-time estimate.
     const firstPoint=rowById.get(exit.id)[4].at(atOrigin?0:-1);
     const lastPoint=entrance.externalDetourLabel?rowById.get(entrance.id)[4].at(-1):rowById.get(entrance.id)[4][0];
+    const signed=global.StauBedarfsumleitungen?.match(exit,entrance,firstPoint,lastPoint);
+    if(signed)return Math.max(300,180+signed.lengthM/(40/3.6));
     const lat1=firstPoint[0]*rad,lat2=lastPoint[0]*rad;
     const dlat=lat2-lat1,dlon=(lastPoint[1]-firstPoint[1])*rad;
     const straight=2*R*Math.asin(Math.min(1,Math.sqrt(
@@ -3673,7 +3675,10 @@ function createLegacyTrafficScenario(data){
     }
     return eligibleHeads;
   }
+  let signedDetourRevision=-1;
   function buildDetourPlans(){
+    const revision=global.StauBedarfsumleitungen?.revision??0;
+    if(revision!==signedDetourRevision){signedDetourRevision=revision;detourPlansKey=null;}
     if(detourPlansKey!==null&&detourPlanSnapshot===jamGroups&&detourPlanEpoch===exposureEpoch)return;
     detourPlanSnapshot=jamGroups;detourPlanEpoch=exposureEpoch;
     const events=[...eventRecords.values()].filter(record=>
