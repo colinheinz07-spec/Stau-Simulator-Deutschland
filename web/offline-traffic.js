@@ -1005,7 +1005,7 @@ function createLegacyTrafficScenario(data){
   const enteredStep=new Float64Array(edges.length);
   const departedStep=new Float64Array(edges.length);
   const eventRecords=new Map();
-  let activeEffects=new Map(),blockedFeederTurns=new Map(),effectsStamp=null,simStart=Date.now();
+  let activeEffects=new Map(),blockedFeederTurns=new Map(),effectsStamp=null,effectsClock=NaN,simStart=Date.now();
   let exposureEpoch=0,closureFingerprint="",derivedEpoch=-1;
   const derivedClosureCache=new Map();
   let jointClosureEpoch=-1,jointClosureSpans=[];
@@ -1521,6 +1521,10 @@ function createLegacyTrafficScenario(data){
   }
   function updateEffects(){
     const time=clockMs();
+    // All movement checks in a single tick share one event/schedule state.
+    // Event edits and reset explicitly invalidate effectsStamp.
+    if(effectsStamp!==null&&effectsClock===time)return;
+    effectsClock=time;
     // Rebuild the static legal graph only when active event membership changes.
     // Schedules are still evaluated on every simulation tick.
     const active=[...eventRecords.values()].filter(record=>
