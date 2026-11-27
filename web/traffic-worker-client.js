@@ -2,7 +2,7 @@
  * No silent reset or fallback once the worker has accepted simulation work. */
 (function(global){
 "use strict";
-function createWorkerTrafficScenario(local,onUpdate,onFailure){
+function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
   if(typeof global.Worker!=="function")return null;
   let worker;
   try{worker=new global.Worker("./traffic-worker.js");}catch(error){return null;}
@@ -32,6 +32,7 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure){
     }
     if(m.type==="failure"){fail(m.message);return;}
     if(m.type==="snapshot")receive(m);
+    if(m.type==="progress"&&running&&m.revision===revision)onProgress?.(m.stats,m.clock);
     if(m.type==="detail"&&m.revision===revision&&selected&&m.detail?.id===selected.id&&m.detail.offset===selected.offset){
       detail=m.detail;onUpdate();
     }
