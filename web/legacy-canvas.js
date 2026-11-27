@@ -131,6 +131,40 @@ async function startLegacyCanvas(existingMap=null){
   let interactionUntil=0;
   const mainlines=segments.filter(x=>x.kind!=="ramp");
   const ramps=segments.filter(x=>x.kind==="ramp");
+  // Static spatial index in Mercator units. A gesture visits only nearby
+  // road geometry, not the entire motorway network on every frame.
+  const gridSize=.125,roadGrid=new Map(),longRoads=[];
+  segments.forEach((road,index)=>{
+    const [l,t,r,b]=road.bbox.map(v=>Math.floor(v/gridSize));
+    if((r-l+1)*(b-t+1)>256){longRoads.push(index);return;}
+    for(let y=t;y<=b;y++)for(let x=l;x<=r;x++){
+      const key=x+","+y;
+      let bucket=roadGrid.get(key);
+      if(!bucket)roadGrid.set(key,bucket=[]);
+      bucket.push(index);
+    }
+  });
+  function visibleRoads(scale){
+    const l=center[0]-(width/2+35)/scale,r=center[0]+(width/2+35)/scale;
+    const t=center[1]-(height/2+35)/scale,b=center[1]+(height/2+35)/scale;
+    const x0=Math.floor(l/gridSize),x1=Math.floor(r/gridSize);
+    const y0=Math.floor(t/gridSize),y1=Math.floor(b/gridSize);
+    const result=[];
+    const add=road=>{
+      if(road.bbox[0]<=r&&road.bbox[2]>=l&&road.bbox[1]<=b&&road.bbox[3]>=t)
+        result.push(road);
+    };
+    if((x1-x0+1)*(y1-y0+1)>Math.min(4096,segments.length)){
+      for(const road of segments)add(road);
+    }else{
+      const indices=new Set(longRoads);
+      for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)
+        for(const i of roadGrid.get(x+","+y)||[])indices.add(i);
+      for(const i of [...indices].sort((a,b)=>a-b))add(segments[i]);
+    }
+    return result;
+  }
+  const junctionPoints=data.junctions.map(j=>({j,point:merc(j[3])}));
   $("chip-roads").textContent=format(segments.length)+" Fahrwege";
   $("chip-ramps").textContent=format(ramps.length)+" Rampen";
   const baseMapStatus=format(mainlines.length)+" Hauptfahrbahnen · "+
@@ -170,9 +204,14 @@ async function startLegacyCanvas(existingMap=null){
     const p=road.points[i],n=road.normals?.[i];
     return n?[p[0]+3*n[0]/scale,p[1]+3*n[1]/scale]:p;
   }
+  function firstSegment(road,at){
+    let lo=1,hi=road.cumulative.length-1;
+    while(lo<hi){const mid=(lo+hi)>>1;if(road.cumulative[mid]<at)lo=mid+1;else hi=mid;}
+    return lo;
+  }
   function pointAlong(road,metres){
     const at=clamp(metres,0,road.meters);
-    for(let i=1;i<road.points.length;i++){
+    for(let i=firstSegment(road,at);i<road.points.length;i++){
       if(road.cumulative[i]<at)continue;
       const start=road.cumulative[i-1],length=road.cumulative[i]-start;
       const t=length>0?(at-start)/length:0;
@@ -257,9 +296,10 @@ async function startLegacyCanvas(existingMap=null){
     const left=Math.max(0,fromM),right=Math.min(road.meters,toM);
     if(right-left<.001)return false;
     let started=false;
-    for(let i=1;i<road.points.length;i++){
+    for(let i=firstSegment(road,left);i<road.points.length;i++){
       const a=road.cumulative[i-1],b=road.cumulative[i];
-      if(b<=left||a>=right||b-a<.00001)continue;
+      if(a>=right)break;
+      if(b<=left||b-a<.00001)continue;
       const t0=clamp((left-a)/(b-a),0,1),t1=clamp((right-a)/(b-a),0,1);
       if(t1<=t0)continue;
       const p=roadWorld(road,i-1,scale),q=roadWorld(road,i,scale);
@@ -385,7 +425,8 @@ async function startLegacyCanvas(existingMap=null){
       // Very short approach queues remain in the detailed traffic list,
       // but don't obscure nearby closure/access symbols on a phone.
       if(width<480&&group.lengthM<750&&eventTargets.some(e=>e.closure&&Math.hypot(e.x-x,e.y-y)<65))continue;
-      const roadInfo=jamRoadInfo(group.edgeId,group.offsetM,group);
+      let roadInfo=jamInfoSnapshot.get(group);
+      if(!roadInfo){roadInfo=jamRoadInfo(group.edgeId,group.offsetM,group);jamInfoSnapshot.set(group,roadInfo);}
       // Entrance queues remain visible in traffic colours and the detailed
       // list; do not cover the motorway map with ordinary merge callouts.
       // Real motorway-to-motorway transfers retain their own labels.
@@ -427,8 +468,7 @@ async function startLegacyCanvas(existingMap=null){
     const placed=[];
     context.textAlign="center";
     context.font="17px system-ui,Apple Color Emoji,sans-serif";
-    for(const event of scenario.listEvents()){
-      const status=scenario.eventStatus(event.id);
+    for(const {event,status} of eventSnapshot){
       if(status==="finished"||status==="inactive")continue;
       const road=segmentById.get(event.edgeId);
       if(!road||!inView(road,scale))continue;
@@ -463,7 +503,7 @@ async function startLegacyCanvas(existingMap=null){
     // and GREEN return at the next real on-ramp. Never render another
     // phantom closure at the junction-name label or at the finger tap.
     if(zoom>=10.2&&typeof scenario.closureGatePoints==="function"){
-      for(const pin of scenario.closureGatePoints()){
+      for(const pin of gateSnapshot){
         const road=segmentById.get(pin.edgeId);
         if(!road||!inView(road,scale))continue;
         const [x,y]=pointAt(pointAlong(road,pin.offsetM));
@@ -491,8 +531,8 @@ async function startLegacyCanvas(existingMap=null){
     // Smaller access markers are shown ONLY on real blocked feeder ramp
     // geometry. Never scatter arbitrary ban icons across a whole OSM Way.
     if(zoom>=10.2){
-      const events=new Map(scenario.listEvents().map(e=>[e.id,e]));
-      const rampPins=scenario.closureAccessPoints?.()??[];
+      const events=eventByIdSnapshot;
+      const rampPins=accessSnapshot;
       let count=0;
       for(const pin of rampPins){
         if(count>=22)break;
@@ -527,9 +567,9 @@ async function startLegacyCanvas(existingMap=null){
     context.textAlign="center";
     const boxes=[...jamBoxes.map(b=>[b[0],b[1],b[0]+b[2],b[1]+b[3]]),
       ...eventTargets.map(e=>[e.x-20,e.y-20,e.x+20,e.y+20])],max=60;
-    for(const j of data.junctions){
+    for(const {j,point} of junctionPoints){
       if(boxes.length>=max)break;
-      const xy=pointAt(merc(j[3]));
+      const xy=pointAt(point);
       if(xy[0]<15||xy[1]<49||xy[0]>width-15||xy[1]>height-68)continue;
       const name=j[0]+" "+j[2];
       const textWidth=Math.min(context.measureText(name).width+12,205);
@@ -542,34 +582,61 @@ async function startLegacyCanvas(existingMap=null){
       context.fillText(name,xy[0],xy[1]-7,Math.max(20,textWidth-8));
     }
   }
-  let renderedJamGroups=null;
-  const trafficSnapshot=new Map(),closureSnapshot=new Map();
-  function draw(){
-    if(!width||!height)return;
+  let renderedJamGroups=null,snapshotDirty=true,activeStamp=null;
+  let eventSnapshot=[],eventByIdSnapshot=new Map(),gateSnapshot=[],accessSnapshot=[];
+  const trafficSnapshot=new Map(),closureSnapshot=new Map(),jamInfoSnapshot=new Map();
+  function invalidateSnapshot(){snapshotDirty=true;requestDraw();}
+  function refreshMapSnapshot(){
     const groups=scenario.jamSummaries();
-    if(groups!==renderedJamGroups){
-      window.StauDashboard?.renderJams(groups,jamRoadInfo,focusJam);
-      renderedJamGroups=groups;
-      // Snapshot only changed traffic, once per model update. A pan/pinch
-      // is then pure canvas drawing, not thousands of scenario queries.
-      trafficSnapshot.clear();closureSnapshot.clear();
-      for(const road of segments){
-        const bands=scenario.visualBands(road.id).filter(b=>b.color!=="free");
-        if(bands.length)trafficSnapshot.set(road.id,bands);
+    if(groups===renderedJamGroups&&!snapshotDirty)return groups;
+    // Model work is performed only after a model update or event edit.
+    // Pan, pinch, tile callbacks and resize use the same immutable snapshot.
+    snapshotDirty=false;
+    jamInfoSnapshot.clear();
+    const describe=(id,offset,group)=>{
+      if(!group)return jamRoadInfo(id,offset,group);
+      let info=jamInfoSnapshot.get(group);
+      if(!info){info=jamRoadInfo(id,offset,group);jamInfoSnapshot.set(group,info);}
+      return info;
+    };
+    window.StauDashboard?.renderJams(groups,describe,focusJam);
+    renderedJamGroups=groups;
+    trafficSnapshot.clear();
+    for(const road of segments){
+      const bands=scenario.visualBands(road.id).filter(b=>b.color!=="free");
+      if(bands.length)trafficSnapshot.set(road.id,bands);
+    }
+    const active=scenario.activeEvents();
+    const stamp=JSON.stringify(active);
+    const activeIds=new Set(active.map(e=>e.id));
+    eventSnapshot=scenario.listEvents().map(event=>({event,
+      status:activeIds.has(event.id)?"active":scenario.eventStatus(event.id)}));
+    eventByIdSnapshot=new Map(eventSnapshot.map(({event})=>[event.id,event]));
+    if(stamp!==activeStamp){
+      // The expensive closure access graph depends on active restrictions,
+      // not the map camera or changing vehicle counts.
+      activeStamp=stamp;
+      closureSnapshot.clear();
+      if(active.length)for(const road of segments){
         const closed=scenario.closureBands(road.id);
         if(closed.length)closureSnapshot.set(road.id,closed);
       }
+      const hasClosure=active.some(e=>e.kind==="closure");
+      gateSnapshot=hasClosure?(scenario.closureGatePoints?.()??[]):[];
+      accessSnapshot=active.length?(scenario.closureAccessPoints?.()??[]):[];
     }
-    // Show how many distinct saved closures are ACTIVE. Otherwise several
-    // old locally stored incidents can look like one ghost closure spreading
-    // into distant roads when the user creates another SPCK test event.
-    const activeClosures=scenario.activeEvents().filter(e=>e.kind==="closure");
+    const activeClosures=active.filter(e=>e.kind==="closure");
     const closureChip=$("chip-closures");
     if(closureChip){
       closureChip.hidden=activeClosures.length===0;
       closureChip.textContent=activeClosures.length+
         (activeClosures.length===1?" aktive Vollsperrung":" aktive Vollsperrungen");
     }
+    return groups;
+  }
+  function draw(){
+    if(!width||!height)return;
+    const groups=refreshMapSnapshot();
     const dpr=clamp(window.devicePixelRatio||1,1,2);
     context.setTransform(dpr,0,0,dpr,0,0);
     context.fillStyle="#dae5e1";
@@ -578,11 +645,10 @@ async function startLegacyCanvas(existingMap=null){
     if(visible){
       const scale=2**zoom;
       context.lineJoin="round";context.lineCap="round";
-      const layers=[{roads:mainlines,
-        visible:mainlines.filter(road=>inView(road,scale)),
+      const nearby=visibleRoads(scale);
+      const layers=[{visible:nearby.filter(road=>road.kind!=="ramp"),
         line:clamp(2.25+(zoom-10)*.40,1.5,4.5)}];
-      if(zoom>=7.6)layers.push({roads:ramps,
-        visible:ramps.filter(road=>inView(road,scale)),
+      if(zoom>=7.6)layers.push({visible:nearby.filter(road=>road.kind==="ramp"),
         line:clamp(1.1+(zoom-10)*.19,.9,2.6)});
       // Two cheap batched background strokes per layer, followed by real
       // queue overlays and closures; never hide red beneath later green.
@@ -666,7 +732,7 @@ async function startLegacyCanvas(existingMap=null){
     if(!visible)return null;
     const scale=2**zoom,threshold=14;
     let best=null,bestD=threshold*threshold;
-    const search=zoom<7.6?mainlines:segments;
+    const search=visibleRoads(scale).filter(road=>zoom>=7.6||road.kind!=="ramp");
     for(const s of search){
       if(!inView(s,scale))continue;
       let prev=null;
@@ -862,10 +928,10 @@ async function startLegacyCanvas(existingMap=null){
     $("sim-demand-value").textContent=pct+" %";
   });
   $("sim-reset").addEventListener("click",()=>{
-    pauseSimulation();scenario.reset(false);displayStats();eventEditor?.renderList();requestDraw();
+    pauseSimulation();scenario.reset(false);displayStats();eventEditor?.renderList();invalidateSnapshot();
   });
   $("reset-events").addEventListener("click",()=>{
-    pauseSimulation();scenario.reset(true);close();eventEditor?.afterReset();displayStats();requestDraw();
+    pauseSimulation();scenario.reset(true);close();eventEditor?.afterReset();displayStats();invalidateSnapshot();
   });
   function focusRoad(id,at=0){
     const road=segments.find(s=>s.id===id);
@@ -877,7 +943,7 @@ async function startLegacyCanvas(existingMap=null){
   }
   if(typeof window.createOfflineEventEditor==="function"){
     eventEditor=window.createOfflineEventEditor({
-      scenario,redraw:requestDraw,pause:pauseSimulation,start:startSimulation,closeDrawer:close,
+      scenario,redraw:invalidateSnapshot,pause:pauseSimulation,start:startSimulation,closeDrawer:close,
       notify:text=>{ $("map-status").textContent=text; },
       focusRoad,roadLabel:id=>{const road=jamRoadInfo(id);return [road.ref,road.name||road.location].filter(Boolean).join(" · ");}
     });
@@ -889,7 +955,7 @@ async function startLegacyCanvas(existingMap=null){
         try{
           const activeFlow=scenario.reachable(selected.id);
           scenario.setMode(selected.id,button.dataset.event);
-          close();requestDraw();
+          close();invalidateSnapshot();
           if(button.dataset.event!=="none"&&activeFlow)startSimulation();
           else if(button.dataset.event!=="none"&&!activeFlow)
             $("map-status").textContent=
