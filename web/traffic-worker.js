@@ -49,10 +49,15 @@ function run(){
   timer=null;if(!running)return;
   try{
     if(steps===0)batchStart=stamp();
-    model.step(5,steps===11);
+    const stats=model.step(5,steps===11);
     steps++;
     if(steps===12){steps=0;publish();schedule(Math.max(0,1000-(stamp()-batchStart)));}
-    else schedule(0);
+    else{
+      // Report real completed model time at 15-second intervals without
+      // rebuilding map layers or lists on these intermediate ticks.
+      if(steps%3===0)postMessage({type:"progress",revision,stats,clock:model.clockMs()});
+      schedule(0);
+    }
   }catch(error){fail(error);}
 }
 const mutations=new Set(["setEvent","restoreEvent","removeEvent","setMode","reset","setSimulationStart","setDemandPercent"]);
