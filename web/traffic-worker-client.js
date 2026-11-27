@@ -20,13 +20,14 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure){
   }
   function fail(message){
     if(failed)return;failed=true;running=false;worker.terminate();clearTimeout(startup);
+    if(!ready)Object.assign(api,local,{workerMode:false});
     onFailure(message,ready);
   }
   const startup=setTimeout(()=>fail("Web Worker konnte nicht gestartet werden"),15000);
   worker.onmessage=({data:m})=>{
     if(failed)return;
     if(m.type==="ready"){
-      ready=true;clearTimeout(startup);
+      ready=true;api.workerReady=true;clearTimeout(startup);
       for(const item of queue)worker.postMessage(item);queue=[];return;
     }
     if(m.type==="failure"){fail(m.message);return;}
@@ -55,7 +56,7 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure){
       global.StauEventSchedule.localDate(state.clock)>e.schedule.lastDate?"finished":"between";
   }
   const api={...local,
-    workerMode:true,
+    workerMode:true,workerReady:false,
     startWorker(){if(!running&&!failed){running=true;send({type:"start"});}},
     pauseWorker(){if(running){running=false;send({type:"pause"});}},
     disposeWorker(){failed=true;clearTimeout(startup);worker.terminate();},
@@ -67,12 +68,13 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure){
     visualBands:id=>traffic.get(id)||[],closureBands:id=>closures.get(id)||[],
     closureGatePoints:()=>state.gates,closureAccessPoints:()=>state.access,
     signedDetourTraffic:()=>state.signed,
-    activeEvents:()=>snapshot?.revision===revision?state.active:local.listEvents().filter(e=>eventStatus(e.id)==="active"),
+    activeEvents:()=>state.active,
     eventStatus,
     eventsOnRoad:id=>detail?.id===id?detail.events:local.eventsOnRoad(id),
     detourDestinations:id=>snapshot?.revision===revision?state.detours[id]?.destinations||[]:[],
     designatedDetourRoutes:id=>snapshot?.revision===revision?state.detours[id]?.designated||[]:[],
     wideDetourRoutes:id=>snapshot?.revision===revision?state.detours[id]?.wide||[]:[],
+    get workerSnapshotRevision(){return snapshot?.revision??-1;},
     edgeActivity(id,offset=0){
       if(detail?.id===id&&detail.offset===offset)return detail.activity;
       const a=local.edgeActivity(id,offset);
