@@ -73,3 +73,13 @@
 .map-pane,#map{touch-action:none}
 .map-center-message{pointer-events:none}
 button,.map-toolbar a,.settings-nav a{touch-action:manipulation}
+
+/* Stable mobile viewport: address-bar movement must not continuously resize
+   and reallocate the Canvas backing store. Isolate map painting from the page. */
+.canvas-preview .map-pane{isolation:isolate;contain:paint}
+@media(max-width:850px){
+  .canvas-preview .map-pane{height:clamp(300px,57vh,570px)}
+  @supports(height:1svh){.canvas-preview .map-pane{height:clamp(300px,57svh,570px)}}
+  html:has(body.canvas-preview){scroll-behavior:auto}
+  @supports(overflow:clip){body.canvas-preview{overflow-x:clip}}
+}
