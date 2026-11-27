@@ -4,8 +4,8 @@ import {Strassennetz,Stauphysik,Ereignisse} from '../dist/index.js';
 import {sampleNetwork} from './fixture.mjs';
 import {diversionShare,lengthDiversionShare} from '../dist/03_Stauphysik/netzfluss.js';
 
-test('Freiwillige Abfahrten beginnen ab 60 Minuten und erreichen nach fünf Stunden 100 Prozent',()=>{
-  for(const [delay,share] of [[44.99,0],[45,0],[59.99,0],[60,.10],[90,.30],[120,.75],[180,.88],[240,.95],[300,1],[720,1]])
+test('Freiwillige Abfahrten beginnen ab 45 Minuten und erreichen nach 285 Minuten 100 Prozent',()=>{
+  for(const [delay,share] of [[44.99,0],[45,.20],[60,.25],[90,.35],[120,.45],[180,.65],[240,.85],[285,1],[720,1]])
     assert.ok(Math.abs(diversionShare(delay)-share)<1e-9);
 });
 test('Staulänge ist ein ergänzendes progressives Signal nach Erreichen der 45-Minuten-Schwelle',()=>{
