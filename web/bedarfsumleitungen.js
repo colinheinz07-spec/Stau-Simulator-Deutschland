@@ -127,7 +127,60 @@ function match(exit,entry,start,end){
   }
   if(cache.size>10000)cache.clear();cache.set(k,best);return best;
 }
-global.StauBedarfsumleitungen={install,visible,match,get status(){return status;},get revision(){return revision;},
+
+/* A capacity-constrained, directed route-level traffic model. Every relation
+ * shares its service calendar across incidents and itinerary chains. No
+ * synthetic street-level speeds or traffic-light positions are inferred. */
+function createFlow(){
+  const bookings=new Map();
+  const capacity=route=>Math.max(100,Math.min(1200,Number(route.capacityVph)||600));
+  function estimate(match,now){
+    if(!match)return 0;
+    let time=now;
+    for(const route of match.routes||[match.route]){
+      time=Math.max(time,bookings.get(route.id)||0)+route.lengthM/(40/3.6);
+    }
+    return Math.max(0,time-now-(match.routes||[match.route]).reduce((n,r)=>n+r.lengthM/(40/3.6),0));
+  }
+  function book(match,amount,now,freeSeconds){
+    if(!match||!Number.isFinite(amount)||amount<=0)return null;
+    const routes=match.routes||[match.route],stages=[];
+    const free=routes.reduce((n,r)=>n+r.lengthM/(40/3.6),0);
+    let at=now+Math.max(0,freeSeconds-free);
+    for(const route of routes){
+      const start=Math.max(at,bookings.get(route.id)||0);
+      const depart=start+amount/capacity(route)*3600;
+      const arrive=depart+route.lengthM/(40/3.6);
+      bookings.set(route.id,depart);
+      stages.push({id:route.id,enterAt:at,start,depart,arrive,capacityVph:capacity(route)});
+      at=arrive;
+    }
+    return {stages,readyAt:at,signature:stages.map(s=>s.id+"@"+s.enterAt+"@"+s.depart+"@"+s.arrive).join("/")};
+  }
+  function snapshot(trips,now){
+    const result=new Map();
+    for(const trip of trips){
+      const stages=trip.signed?.stages;
+      if(!stages?.length||trip.vehicles<=0)continue;
+      const stage=stages.find(s=>now<s.arrive)||stages.at(-1);
+      const stats=result.get(stage.id)||{id:stage.id,waiting:0,moving:0,returnWaiting:0,vehicles:0,capacityVph:stage.capacityVph};
+      stats.vehicles+=trip.vehicles;
+      if(now<stage.depart){
+        // Treat the unsent fraction of a fluid batch as waiting and the
+        // released fraction as moving. At a later stage, only its own flow
+        // is counted; one vehicle can never occupy two routes at once.
+        const fraction=now<=stage.start?1:Math.max(0,(stage.depart-now)/Math.max(.000001,stage.depart-stage.start));
+        stats.waiting+=trip.vehicles*fraction;
+        stats.moving+=trip.vehicles*(1-fraction);
+      }else if(now<stage.arrive)stats.moving+=trip.vehicles;
+      else stats.returnWaiting+=trip.vehicles;
+      result.set(stage.id,stats);
+    }
+    return [...result.values()].map(s=>({...s,delayMin:s.waiting*60/s.capacityVph}));
+  }
+  return {book,estimate,snapshot,reset:()=>bookings.clear()};
+}
+global.StauBedarfsumleitungen={install,visible,match,createFlow,get status(){return status;},get revision(){return revision;},
   get count(){return routes.length;},subscribe(fn){listeners.add(fn);return ()=>listeners.delete(fn);}};
 const script=document.createElement("script");
 script.async=true;
