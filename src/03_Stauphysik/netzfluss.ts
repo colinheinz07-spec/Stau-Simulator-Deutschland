@@ -32,15 +32,8 @@ const safeNonnegative=(v:number)=>Number.isFinite(v)&&v>=0;
 const clamp01=(x:number)=>Math.max(0,Math.min(1,x));
 /** Same nationwide response curve as the offline engine. */
 export function diversionShare(delay:number,standstill=false):number{
-  if(delay>=300)return 1;
-  if(!Number.isFinite(delay)||delay<60)return 0;
-  const anchors=[[60,.10],[90,.30],[120,.75],[180,.88],[240,.95],[300,1]] as const;
-  let share=1;
-  for(let i=1;i<anchors.length;i++){
-    const [lo,a]=anchors[i-1]!,[hi,b]=anchors[i]!;
-    if(delay<=hi){share=a+(b-a)*(delay-lo)/(hi-lo);break;}
-  }
-  return Math.min(1,share+(standstill?.08:0));
+  if(!Number.isFinite(delay)||delay<45)return 0;
+  return Math.min(1,.20+(delay-45)/300);
 }
 export function lengthDiversionShare(metres:number):number{
   if(!Number.isFinite(metres)||metres<3000)return 0;
@@ -525,9 +518,8 @@ export class NetworkFlowEngine {
       // motorway is queued. The later exit remains preferred when the
       // downstream continuation is flowing (including an off-ramp backup).
       const queueAtExit=nextQueued;
-      const lengthShare=localExits?lengthDiversionShare(this.routingQueueLength(id,closureEdges,corridor.blockedMovementKeys)):0;
       const eligible=queueAtExit?observed:Math.min(observed,this.delayToNextExit(id,closureEdges,corridor.blockedMovementKeys));
-      const divert=eligible>=60?Math.max(Math.min(diversionShare(eligible)*1.15,lengthShare),diversionShare(eligible)):0;
+      const divert=diversionShare(eligible);
       if(localExits&&divert>0){
         const openExits=choices.filter(m=>localExits.includes(m));
         if(openExits.length){
