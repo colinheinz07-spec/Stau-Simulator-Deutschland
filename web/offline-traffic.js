@@ -2486,17 +2486,12 @@ function createLegacyTrafficScenario(data){
   }
   // Willingness depends on observed delay, not ramp receiving capacity.
   // Ordinary destinations and mandatory road closures are handled separately.
-  const VOLUNTARY_START_MIN=60;
+  const VOLUNTARY_START_MIN=45;
+  // Only a locally eligible routing decision uses this willingness curve.
+  // Queue length is diagnostic only, never an independent decision input.
   function diversionShare(delayMin,standstill=false){
-    if(delayMin>=300)return 1;
     if(!Number.isFinite(delayMin)||delayMin<VOLUNTARY_START_MIN)return 0;
-    const anchors=[[60,.10],[90,.30],[120,.75],[180,.88],[240,.95],[300,1]];
-    let share=1;
-    for(let i=1;i<anchors.length;i++){
-      const [lo,a]=anchors[i-1],[hi,b]=anchors[i];
-      if(delayMin<=hi){share=a+(b-a)*(delayMin-lo)/(hi-lo);break;}
-    }
-    return Math.min(1,share+(standstill?.08:0));
+    return Math.min(1,.20+(delayMin-45)/300);
   }
   // Distance can strengthen an already eligible decision, never initiate it.
   function lengthDiversionShare(metres){
@@ -2513,7 +2508,7 @@ function createLegacyTrafficScenario(data){
   // through traffic prefers a genuinely available regional alternative.
   function wideDiversionShare(delay){
     if(!(delay>=VOLUNTARY_START_MIN))return 0;
-    const anchors=[[60,.02],[120,.05],[180,.08],[240,.25],[360,.55],[480,.78],[600,.90]];
+    const anchors=[[45,.02],[120,.05],[180,.08],[240,.25],[360,.55],[480,.78],[600,.90]];
     for(let i=1;i<anchors.length;i++){
       const [lo,a]=anchors[i-1],[hi,b]=anchors[i];
       if(delay<=hi)return a+(b-a)*(delay-lo)/(hi-lo);
@@ -3359,11 +3354,6 @@ function createLegacyTrafficScenario(data){
       unplannedExitMemo.set(key,0);return 0;
     }
     share=diversionShare(connected);
-    // A long through queue can justify departure even while moving.
-    // Do not treat a queue located beyond a freely reachable later exit
-    // as a reason to leave at this junction.
-    const queueLength=routingQueueLength(road,offset);
-    if(queueLength>=10000)share=Math.max(share,lengthDiversionShare(queueLength));
     for(const group of groups){
       const head=byId.get(group.endEdgeId);
       const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
@@ -3450,17 +3440,15 @@ function createLegacyTrafficScenario(data){
     if(!plan&&(!closureFingerprint||!Number.isFinite(closureDistanceAhead(road,offset,Infinity))))return 0;
     if(!Number.isFinite(observed))return 0;
     if(hasClearLaterExit(road,offset,true))return 0;
-    const length=routingQueueLength(road,offset);
-    const lengthShare=length>=10000?lengthDiversionShare(length):0;
     // Once a later exit remains physically available, compare the leg to it.
     // A long remote delay must not create a larger diversion at every earlier AS.
     const later=firstLocalExit(road,offset+.06);
     const leg=later?nextClosureDecisionDelay(road,offset):Infinity;
     if(later&&Number.isFinite(leg)){
-      if(leg<VOLUNTARY_START_MIN&&!lengthShare)return 0;
+      if(leg<VOLUNTARY_START_MIN)return 0;
       observed=Math.min(observed,leg);
     }
-    if(observed<VOLUNTARY_START_MIN&&!lengthShare)return 0;
+    if(observed<VOLUNTARY_START_MIN)return 0;
     if(!closureExitEligible(road,offset,plan))return 0;
     const preferred=preferredTransferDelay(road,offset,plan);
     const eligible=Math.min(observed,preferred??Infinity);
@@ -3468,7 +3456,7 @@ function createLegacyTrafficScenario(data){
     const cause=plan?.causeEdgeId&&byId.get(plan.causeEdgeId);
     const monitored=cause||road;
     const stopped=monitored.stock.some((_,k)=>routingCellQueued(monitored,k)&&routingCellSpeed(monitored,k)<=1);
-    return Math.max(diversionShare(eligible,stopped),lengthShare);
+    return diversionShare(eligible,stopped);
   }
   // An open signed motorway arm is the primary route to the last useful
   // exit (e.g. A48 -> A3 north -> Ransbach). Only the excess travel time TO
