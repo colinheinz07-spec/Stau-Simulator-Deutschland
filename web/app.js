@@ -46,8 +46,8 @@ function refreshSignedLayer(){
   if(!signedToggle?.checked||signedData?.status!=="ready"||map.getZoom()<9)return;
   const b=map.getBounds();
   for(const route of signedData.visible([b.getSouth(),b.getWest(),b.getNorth(),b.getEast()])){
-    const line=L.polyline(route.parts,{renderer:signedRenderer,color:route.eligible?"#2468c4":"#8297b1",weight:2,opacity:.85,dashArray:route.eligible?null:"4 4",interactive:true});
-    const label=document.createElement("span");label.textContent=[route.ref,(route.motorways||[]).join("/"),route.from+" → "+route.to].join(" · ");
+    const line=L.polyline(route.parts,{renderer:signedRenderer,color:route.inferredParts?.length?"#476eae":route.eligible?"#2468c4":"#8297b1",weight:2,opacity:.85,dashArray:route.inferredParts?.length?"8 4":route.eligible?null:"3 5",interactive:true});
+    const label=document.createElement("span");label.textContent=[route.ref,(route.motorways||[]).join("/"),route.from+" → "+route.to,route.inferredParts?.length?"Modellergänzung":route.eligible?"OSM erfasst":"unvollständig"].join(" · ");
     line.bindTooltip(label);line.addTo(signedLayer);line.bringToBack();
   }
 }
