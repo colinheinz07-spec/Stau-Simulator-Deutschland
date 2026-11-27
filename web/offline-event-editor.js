@@ -397,11 +397,12 @@ function createOfflineEventEditor(options){
     }catch(ex){notify("Ungültige Simulationszeit: "+ex.message);}
   });
   load();renderList();if(removeButton)removeButton.disabled=true;
-  let lastMinute=-1;
+  let lastMinute=-1,lastRevision=-2;
   function updateStatus(){
     const minute=Math.floor(scenario.totals().simSeconds/60);
-    if(minute===lastMinute)return;
-    lastMinute=minute;renderList();
+    const revision=scenario.workerSnapshotRevision??-1;
+    if(minute===lastMinute&&revision===lastRevision)return;
+    lastMinute=minute;lastRevision=revision;renderList();
   }
   return {onRoadSelected,editEventById,closeForm,renderList,updateStatus,afterReset};
 }
