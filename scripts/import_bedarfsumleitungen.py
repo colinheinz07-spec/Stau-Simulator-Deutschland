@@ -5,11 +5,55 @@ No fabricated geometries. Incomplete/disconnected relations are map-only.
 import html, json, math, re, time, urllib.request, urllib.parse
 from pathlib import Path
 from html.parser import HTMLParser
+from repair_detour_geometry import repair_route,connect,meters
 
 ROOT="https://wiki.openstreetmap.org/wiki/DE:Germany/Bedarfsumleitung"
 UA="Stau-Simulator-Deutschland/1.0 (https://github.com/colinheinz07-spec/Stau-Simulator-Deutschland)"
 ENDPOINTS=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"]
 OUT=Path("web/data/bedarfsumleitungen-data.js")
+EVIDENCE=Path("scripts/bedarfsumleitungen-evidence.json")
+RESEARCH=Path("web/data/bedarfsumleitungen-research.json")
+def official_evidence():
+    return json.loads(EVIDENCE.read_text(encoding="utf-8"))
+def known_ramps():
+    p=Path("web/legacy-geometry.js")
+    if not p.exists():return {}
+    data=json.loads(p.read_text(encoding="utf-8").split("window.STAU_LEGACY_GEOMETRY=",1)[1].strip().rstrip(";"))
+    return {r[0]:r for r in data["roads"] if r[1]=="ramp"}
+def research_record(route):
+    query=" ".join(str(x) for x in [route.get("motorway") or " ".join(route.get("motorways",[])),route.get("ref"),route.get("from"),route.get("to")] if x and x not in ("AS","?"))
+    return {**{k:route.get(k) for k in ("id","ref","motorway","motorways","from","to","region","notes","geometryStatus")},
+            "searchQueries":[query+" Bedarfsumleitung Autobahn GmbH",query+" Umleitungsstrecke Straßenbau Geoportal"],
+            "status":"needs-source-review"}
+def repair_candidates(routes,evidence):
+    ramps=known_ramps();budget=16;cache={}
+    def fetch(a,b):
+        nonlocal budget
+        if budget<=0:return None
+        # Small targeted requests only, with room for real road curvature.
+        pad=min(.055,max(.012,meters(a,b)/111195*.45))
+        bounds=(min(a[0],b[0])-pad,min(a[1],b[1])-pad,min(a[0],b[0])+pad,max(a[1],b[1])+pad)
+        k=tuple(round(v,3) for v in bounds)
+        if k not in cache:
+            budget-=1
+            bbox=",".join(str(v) for v in bounds)
+            q='[out:json][timeout:60];way["highway"~"^(trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"]('+bbox+');out geom;'
+            try:cache[k]=overpass(q)
+            except Exception as exc:
+                print("Repair deferred",a,b,exc,flush=True);cache[k]=[]
+        return connect(cache[k],a,b)
+    for i,r in sorted(enumerate(routes),key=lambda item:(not bool(item[1].get("officialEvidence")),len(item[1].get("parts",[]))==1)):
+        if budget<=0:break
+        e=evidence.get(str(r["id"]),{})
+        anchors=None
+        if e.get("exitEdge") in ramps and e.get("entryEdge") in ramps:
+            exit,entry=ramps[e["exitEdge"]],ramps[e["entryEdge"]]
+            if exit[2]==entry[2]==e.get("motorway") and "Abfahrt" in exit[5] and "Auffahrt" in entry[5]:
+                anchors=(exit[4][-1],entry[4][0])
+        if r["eligible"] or (len(r["parts"])<2 and not anchors):continue
+        routes[i]=repair_route(r,fetch,anchors)
+        if routes[i].get("inferredParts"):print("Reconstructed",r["ref"],r["id"],routes[i]["geometryStatus"],flush=True)
+
 def get(url, data=None, timeout=200):
     req=urllib.request.Request(url,data=data,headers={"User-Agent":UA,"Accept":"application/json,text/html"})
     with urllib.request.urlopen(req,timeout=timeout) as response:
@@ -139,8 +183,9 @@ def convert(element,meta):
     if not ways:return None
     parts=min((join(ways),join(ways,True)),key=len)
     length=sum(distance(a,b) for p in parts for a,b in zip(p,p[1:]))
-    start=tags.get("from") or meta.get("from","")
-    end=tags.get("to") or meta.get("to","")
+    official=meta.get("officialEvidence")
+    start=meta.get("from") if official else tags.get("from") or meta.get("from","")
+    end=meta.get("to") if official else tags.get("to") or meta.get("to","")
     # A connected line is necessary but not sufficient for an audited route.
     uncertain=bool(re.search(r"angefangen|begonnen|unvollständig|gelöscht|unsicher|stummel|nicht fertig|nicht mehr|nur.*(?:anfang|ende)|an ausfahrt gesichtet|relation\s*\([012]/4\)",meta.get("notes",""),re.I))
     complete=(not uncertain and len(parts)==1 and len(ways)==len(members) and
@@ -151,9 +196,14 @@ def convert(element,meta):
         "direction":meta.get("direction",""),"operator":tags.get("operator",""),
         "region":meta.get("region",""),"regions":meta.get("regions",[]),"notes":meta.get("notes",""),
         "lengthM":round(length),"connected":len(parts)==1,"eligible":complete,
+        "officialEvidence":official,"geometryStatus":"mapped" if complete else "incomplete",
         "parts":[simplify(p) for p in parts]}
 def main():
     catalogue,unmapped,coverage=wiki_catalogue()
+    evidence=official_evidence()
+    verified=evidence.get("relations",{})
+    for rid,record in verified.items():
+        catalogue[int(rid)]={**catalogue.get(int(rid),{}),**record,"officialEvidence":record}
     query='[out:json][timeout:120];area(3600051477)->.de;(rel["type"="route"]["route"="detour"](area.de);rel["type"="route"]["ref"~"^U ?[0-9]+[a-zA-Z]?$"]["detour"](area.de);rel["type"="route"]["ref"~"^U ?[0-9]+[a-zA-Z]?$"]["route"="road"](area.de););out ids;'
     ids=set(catalogue)|{e["id"] for e in overpass(query) if e["type"]=="relation"}
     print("Relation IDs",len(ids),flush=True)
@@ -168,15 +218,21 @@ def main():
             if route:result.append(route)
         print("Imported",start+len(batch),"/",len(ordered),flush=True);time.sleep(2)
     if len(result)<100 or len(returned)<.8*len(ids):raise RuntimeError("Dataset incomplete; old data retained")
+    repair_candidates(result,verified)
     result.sort(key=lambda r:r["id"])
+    known_ids={r["id"] for r in result}
+    review=[research_record(r) for r in result if not r["eligible"] or r.get("inferredParts")]
+    review.extend(research_record(r) for r in unmapped)
+    review.extend(research_record({"id":rid,**catalogue[rid]}) for rid in sorted(set(catalogue)-known_ids))
     data={"schema":1,"source":"OpenStreetMap contributors","license":"ODbL-1.0",
           "wiki":"https://wiki.openstreetmap.org/wiki/DE:Germany/Bedarfsumleitung",
           "wikiLicense":"CC BY-SA 2.0","requested":len(ids),"missing":sorted(ids-returned),
           "coverage":coverage,"unmapped":unmapped,"unmappedRelations":[{"id":rid,**catalogue[rid]} for rid in sorted(set(catalogue)-{r["id"] for r in result})],
-          "routes":result}
+          "officialSources":evidence.get("sources",[]),"routes":result}
     OUT.parent.mkdir(parents=True,exist_ok=True)
     tmp=OUT.with_suffix(".tmp")
     tmp.write_text("window.StauBedarfsumleitungen.install("+json.dumps(data,ensure_ascii=False,separators=(",",":"))+");\n",encoding="utf-8")
     tmp.replace(OUT)
+    RESEARCH.write_text(json.dumps({"schema":1,"officialSources":evidence.get("sources",[]),"unresolved":review},ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     print("Routes:",len(result),"connected eligible:",sum(r["eligible"] for r in result),flush=True)
 if __name__=="__main__":main()
