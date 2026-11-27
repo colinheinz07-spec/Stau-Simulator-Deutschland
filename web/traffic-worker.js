@@ -61,6 +61,13 @@ function run(){
   }catch(error){fail(error);}
 }
 const mutations=new Set(["setEvent","restoreEvent","removeEvent","setMode","reset","setSimulationStart","setDemandPercent"]);
+function applyMutation(m){
+  if(!mutations.has(m.method))throw Error("Unbekannter Modellbefehl");
+  revision=m.revision;
+  model[m.method](...m.args);
+  if(m.method==="reset"||m.method==="setSimulationStart")steps=0;
+  else if(steps){model.refresh();steps=0;}
+}
 self.onmessage=({data:m})=>{
   try{
     if(m.type==="select"){
@@ -71,12 +78,10 @@ self.onmessage=({data:m})=>{
       running=false;clearTimeout(timer);timer=null;
       if(steps){model.refresh();steps=0;}publish();return;
     }
-    if(m.type==="mutate"&&mutations.has(m.method)){
-      revision=m.revision;
-      model[m.method](...m.args);
-      if(m.method==="reset"||m.method==="setSimulationStart")steps=0;
-      else if(steps){model.refresh();steps=0;}
-      publish();
+    if(m.type==="mutate"){applyMutation(m);publish();return;}
+    if(m.type==="batch"){
+      for(const item of m.items)applyMutation(item);
+      publish();return;
     }
   }catch(error){fail(error);}
 };
