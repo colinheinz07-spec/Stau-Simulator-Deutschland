@@ -2978,6 +2978,14 @@ function createLegacyTrafficScenario(data){
     const last=rowById.get(entrance.id)?.[4]?.[0];
     return global.StauBedarfsumleitungen?.match(exit,entrance,first,last)||null;
   }
+  // Candidates are already downstream on the required directed motorway.
+  // Prefer a documented signed route for these legal return choices, never
+  // widen the legal graph or change the driver's intended destination.
+  function signedReturnCandidates(exit,candidates){
+    if(candidates.length<2||global.StauBedarfsumleitungen?.status!=="ready")return candidates;
+    return candidates.map((c,i)=>({c,i,signed:signedMatch(exit,c.ramp)}))
+      .sort((a,b)=>Number(!!b.signed)-Number(!!a.signed)||a.i-b.i).map(x=>x.c);
+  }
   function estimatedOutsideSeconds(exit,entrance,atOrigin=false){
     // Unmapped local/urban road travel is an explicit travel-time estimate.
     const firstPoint=rowById.get(exit.id)[4].at(atOrigin?0:-1);
@@ -4071,7 +4079,7 @@ function createLegacyTrafficScenario(data){
               if(bottleneckExposureAhead(arrival.road,arrival.metre,causeEdgeId)>.01)continue;
               const exit=firstLocalExit(arrival.road,arrival.metre);
               if(!exit||fallbackExits.has(exit.first))continue;
-              const reentry=candidates[0];
+              const reentry=signedReturnCandidates(exit.terminal,candidates)[0];
               const durationS=estimatedOutsideSeconds(exit.terminal,reentry.ramp);
               const plan={terminal:exit.terminal.index,reentry:reentry.ramp.index,
                 durationS,closureId:obstacle.spec.id,kind:obstacle.spec.kind,
@@ -4104,11 +4112,11 @@ function createLegacyTrafficScenario(data){
             for(const arrival of arrivals){
               const exit=firstLocalExit(arrival.road,arrival.metre);
               if(!exit)continue;
-              const reentry=candidates[0],durationS=estimatedOutsideSeconds(exit.terminal,reentry.ramp);
-              choices.push({exit,turn,reentry,durationS,arrival});
+              const reentry=signedReturnCandidates(exit.terminal,candidates)[0],durationS=estimatedOutsideSeconds(exit.terminal,reentry.ramp);
+              choices.push({exit,turn,reentry,durationS,arrival,signed:!!signedMatch(exit.terminal,reentry.ramp)});
             }
           }
-          choices.sort((a,b)=>a.durationS-b.durationS);
+          choices.sort((a,b)=>Number(b.signed)-Number(a.signed)||a.durationS-b.durationS);
           const choice=choices[0];if(!choice)continue;
           const {exit,turn,reentry,durationS,arrival}=choice;
           const entry={reentry:reentry.ramp.index,distanceM:reentry.distance,weight:1,durationS,
@@ -4146,7 +4154,7 @@ function createLegacyTrafficScenario(data){
                 Number.isFinite(closureDistanceAhead(arrival.road,arrival.metre,Infinity)))continue;
               const exit=firstLocalExit(arrival.road,arrival.metre);
               if(!exit)continue;
-              const entries=candidates.map((candidate,i)=>({
+              const entries=signedReturnCandidates(exit.terminal,candidates).map((candidate,i)=>({
                 reentry:candidate.ramp.index,distanceM:candidate.distance,
                 weight:i===0?1:0,durationS:estimatedOutsideSeconds(exit.terminal,candidate.ramp),
                 junction:candidate.junction,closureId:obstacle.spec.id
@@ -4191,8 +4199,9 @@ function createLegacyTrafficScenario(data){
             const successors=ramp.links.map(link=>edges[link.to]);
             if(!successors.length&&boundaryExit[ramp.index]&&
               !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(ramp.name)){
-              const weights=destinationWeights(candidates.length);
-              const entries=candidates.map((candidate,i)=>({
+              const ordered=signedReturnCandidates(ramp,candidates);
+              const weights=destinationWeights(ordered.length);
+              const entries=ordered.map((candidate,i)=>({
                 reentry:candidate.ramp.index,
                 distanceM:candidate.distance,
                 weight:weights[i],
