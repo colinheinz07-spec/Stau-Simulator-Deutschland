@@ -1014,6 +1014,7 @@ function createLegacyTrafficScenario(data){
   // reentered at a real OSM on-ramp, are conserved as external-road inventory.
   let outsideVehicles=0,detouredVehicles=0,returnedVehicles=0;
   const detourTrips=[];
+  const signedFlow=global.StauBedarfsumleitungen?.createFlow?.();
   // Combine same-minute arrivals to keep the simulator responsive on phones.
   const detourBatchIndex=new Map();
   const terminalDetours=new Map(),exitDetours=new Map(),fallbackExits=new Map(),fallbackTransfers=new Map();
@@ -2218,6 +2219,7 @@ function createLegacyTrafficScenario(data){
     elapsed=0;generated=0;exited=0;initialVehicles=0;warmedUp=false;
     outsideVehicles=0;detouredVehicles=0;returnedVehicles=0;
     detourTrips.length=0;detourBatchIndex.clear();
+    signedFlow?.reset();
     terminalDetours.clear();exitDetours.clear();fallbackExits.clear();fallbackTransfers.clear();dynamicTransferChoices.clear();
     designatedApproach.clear();designatedTransfers.clear();detourPlansKey=null;
     localSourceDetours.clear();transferFallbackByApproach.clear();localSourceCandidates.clear();localSourceChoiceCache.clear();localSourceChoiceMinute=-1;
@@ -2971,11 +2973,16 @@ function createLegacyTrafficScenario(data){
   // in a conserved off-map inventory, and returns only at a REAL directed
   // OSM on-ramp downstream of the closed section. The off-map duration is a
   // documented estimate, not an audited street-by-street shortest path.
+  function signedMatch(exit,entrance,atOrigin=false){
+    const first=rowById.get(exit.id)?.[4]?.at(atOrigin?0:-1);
+    const last=rowById.get(entrance.id)?.[4]?.[0];
+    return global.StauBedarfsumleitungen?.match(exit,entrance,first,last)||null;
+  }
   function estimatedOutsideSeconds(exit,entrance,atOrigin=false){
     // Unmapped local/urban road travel is an explicit travel-time estimate.
     const firstPoint=rowById.get(exit.id)[4].at(atOrigin?0:-1);
     const lastPoint=entrance.externalDetourLabel?rowById.get(entrance.id)[4].at(-1):rowById.get(entrance.id)[4][0];
-    const signed=global.StauBedarfsumleitungen?.match(exit,entrance,firstPoint,lastPoint);
+    const signed=signedMatch(exit,entrance,atOrigin);
     if(signed)return Math.max(300,180+signed.lengthM/(40/3.6));
     const lat1=firstPoint[0]*rad,lat2=lastPoint[0]*rad;
     const dlat=lat2-lat1,dlon=(lastPoint[1]-firstPoint[1])*rad;
@@ -4610,7 +4617,8 @@ function createLegacyTrafficScenario(data){
       const choices=plan.entries.filter(e=>e.closureId===primary.closureId&&
         (e===primary||e.weight===0));
       const commonDistance=Math.max(...choices.map(e=>e.distanceM));
-      const cost=e=>e.durationS/60+returnWaitMinutes(e.reentry)+
+      const matchEntry=e=>e.wideRoute?null:signedMatch(edges[plan.terminal],edges[e.reentry]);
+      const cost=e=>e.durationS/60+returnWaitMinutes(e.reentry)+(signedFlow?.estimate(matchEntry(e),elapsed)||0)/60+
         // Compare at the same downstream point on the original motorway.
         Math.max(0,commonDistance-e.distanceM)*.06/100;
       const isOpen=e=>edges[e.reentry].externalDetourDestination||!(activeEffects.get(edges[e.reentry].id)||NO_EFFECTS)
@@ -4634,13 +4642,15 @@ function createLegacyTrafficScenario(data){
         const stats=wideAccounting.get(wide.id)||{label:wide.label,assigned:0,returned:0};
         stats.assigned+=vehicles;wideAccounting.set(wide.id,stats);
       }
-      const readyAt=Math.ceil((departure+entry.durationS)/30)*30;
-      const key=entry.reentry+":"+readyAt+":"+primary.closureId+(wide?":"+wide.id:"");
+      const matched=matchEntry(entry);
+      const signed=signedFlow?.book(matched,vehicles,departure,entry.durationS)||null;
+      const readyAt=Math.ceil((signed?.readyAt??(departure+entry.durationS))/30)*30;
+      const key=entry.reentry+":"+readyAt+":"+primary.closureId+(wide?":"+wide.id:"")+(signed?":u:"+signed.signature:"");
       const existing=detourBatchIndex.get(key);
       if(existing)existing.vehicles+=vehicles;
       else{
         const trip={reentry:entry.reentry,readyAt,vehicles,key,closureId:primary.closureId,
-          durationS:entry.durationS,alternatives:choices,wide};
+          durationS:entry.durationS,alternatives:choices,wide,signed};
         detourTrips.push(trip);detourBatchIndex.set(key,trip);
       }
     }
@@ -5389,6 +5399,8 @@ function createLegacyTrafficScenario(data){
           detourBatchIndex.delete(trip.key);
           trip.readyAt=Math.ceil((elapsed+Math.max(300,next.durationS-trip.durationS))/30)*30;
           trip.reentry=next.reentry;trip.durationS=next.durationS;
+          // The completed signed itinerary is no longer this trip’s current route.
+          trip.signed=null;
           trip.key=trip.reentry+":"+trip.readyAt+":"+trip.closureId+(trip.wide?":"+trip.wide.id:"");
           const existing=detourBatchIndex.get(trip.key);
           if(existing){existing.vehicles+=trip.vehicles;detourTrips.splice(i--,1);}
@@ -5685,6 +5697,7 @@ function createLegacyTrafficScenario(data){
       directedDelayToCause(byId.get(id),offsetM,targetId,targetOffset,false,true):null,
     routingDelayToNextExit:(id,offsetM=0)=>byId.has(id)?nextDecisionDelay(byId.get(id),offsetM):null,
     routingDelayToPreferredTransferExit:(id,offsetM=0)=>byId.has(id)?preferredTransferDelay(byId.get(id),offsetM,null):null,
+    signedDetourTraffic:()=>signedFlow?.snapshot(detourTrips,elapsed)??[],
     detourPlans:()=>[...exitDetours.values(),...fallbackExits.values()].map(plan=>({
       terminalEdgeId:edges[plan.terminal].id,
       reentryEdgeId:edges[plan.reentry].id,
