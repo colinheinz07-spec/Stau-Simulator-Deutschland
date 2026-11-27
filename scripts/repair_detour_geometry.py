@@ -78,14 +78,15 @@ def repair_route(route,fetch,anchors=None):
         result[-1].extend(path[1:])
         result[-1].extend(p[1:])
     if not repairs:return route
+    fully_connected=len(result)==1 and len(result[0])>1
     result=[p for p in result if len(p)>1]
     new={**route,"parts":result,"inferredParts":repairs,
-         "geometryStatus":"inferred" if len(result)==1 else "partly-inferred",
-         "connected":len(result)==1,
+         "geometryStatus":"inferred" if fully_connected else "partly-inferred",
+         "connected":fully_connected,
          "lengthM":round(sum(meters(a,b) for p in result for a,b in zip(p,p[1:])))}
     # A confirmed endpoint pair plus a reconstructed path may be usable for
     # simulation but must never be presented as an officially verified itinerary.
-    new["eligible"]=bool(len(result)==1 and anchors and route.get("officialEvidence"))
+    new["eligible"]=bool(fully_connected and anchors and route.get("officialEvidence"))
     return new
 def self_test():
     a=(50.0,7.0);b=(50.0,7.01);c=(50.0,7.02)
