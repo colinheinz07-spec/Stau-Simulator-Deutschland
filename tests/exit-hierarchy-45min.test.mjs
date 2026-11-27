@@ -23,12 +23,12 @@ function scenario(){
   return sim;
 }
 
-test('nationwide voluntary routing starts at 60 minutes and grows progressively',()=>{
+test('nationwide voluntary routing starts at 45 minutes and grows progressively',()=>{
   const s=scenario();
-  for(const [delay,expected] of [[0,0],[45,0],[59.99,0],[60,.10],[90,.30],
-    [120,.75],[180,.88],[240,.95],[300,1]])
+  for(const [delay,expected] of [[0,0],[44.99,0],[45,.20],[60,.25],[90,.35],
+    [120,.45],[180,.65],[240,.85],[285,1],[300,1]])
     assert.ok(Math.abs(s.diversionShare(delay)-expected)<1e-9, String(delay));
-  assert.equal(s.wideDiversionShare(59.99),0);
+  assert.equal(s.wideDiversionShare(44.99),0);
   assert.ok(s.wideDiversionShare(60)>0&&s.wideDiversionShare(60)<s.diversionShare(60));
 });
 
