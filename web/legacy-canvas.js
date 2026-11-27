@@ -54,7 +54,19 @@ async function startLegacyCanvas(existingMap=null){
   document.body.classList.add("preview-only","canvas-preview");
   if(typeof window.createLegacyTrafficScenario!=="function")
     throw Error("Das lokale Verkehrsmodul fehlt.");
-  const scenario=window.createLegacyTrafficScenario(data);
+  const localScenario=window.createLegacyTrafficScenario(data);
+  let workerFailure="";
+  const scenario=window.createWorkerTrafficScenario?.(localScenario,()=>invalidateSnapshot(),(message,started)=>{
+    if(!started){
+      // Worker could not boot (e.g. local-file security policy). The local
+      // editor mirror is intact and no physics was ever advanced there.
+      const resume=simRunning;simRunning=false;
+      if(resume)startSimulation();
+      invalidateSnapshot();return;
+    }
+    workerFailure=message;pauseSimulation();
+    $("map-status").textContent="Berechnung angehalten: "+message+" · Seite neu laden";
+  })||localScenario;
   document.body.classList.add("traffic-ready");
   const canvas=document.createElement("canvas");
   canvas.className="legacy-preview-canvas";
@@ -774,10 +786,10 @@ async function startLegacyCanvas(existingMap=null){
     selection.classList.remove("open");
     selection.setAttribute("aria-hidden","true");
     backdrop.hidden=true;
-    selected=null;selectedOffsetM=0;requestDraw();
+    selected=null;selectedOffsetM=0;scenario.selectRoad?.(null);requestDraw();
   }
   function open(s,offsetM=0){
-    selected=s;selectedOffsetM=offsetM;
+    selected=s;selectedOffsetM=offsetM;scenario.selectRoad?.(s.id,offsetM);
     eventEditor?.onRoadSelected(s,offsetM);
     $("detail-heading").textContent=s.name||s.ref||"Autobahnabschnitt";
     $("detail-type").textContent=s.kind==="ramp"?
@@ -929,8 +941,9 @@ async function startLegacyCanvas(existingMap=null){
     $("sim-vehicles").textContent=format(Math.round(stats.vehiclesOnNetwork));
     $("sim-outside").textContent=format(Math.round(stats.waitingOutsideSources));
     $("sim-detours").textContent=format(Math.round(stats.vehiclesOnDetours||0));
-    $("map-status").textContent="Modell "+Math.floor(sec/60)+" min · "+
-      format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz";
+    $("map-status").textContent=workerFailure?"Berechnung angehalten: "+workerFailure+" · Seite neu laden":
+      "Modell "+Math.floor(sec/60)+" min · "+format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz";
+    $("sim-toggle").title=scenario.workerMode?(scenario.workerReady?"Berechnung im Web Worker":"Web Worker startet"):"Kompatibilitätsmodus · Berechnung im Browser";
     if(eventEditor)eventEditor.updateStatus();
     if(window.StauEventSchedule){
       const local=window.StauEventSchedule.localDateTime(scenario.clockMs());
@@ -948,6 +961,7 @@ async function startLegacyCanvas(existingMap=null){
     }
   }
   function pauseSimulation(){
+    scenario.pauseWorker?.();
     if(timer!==null)clearInterval(timer);
     cancelSlice();
     timer=null;simRunning=false;
@@ -1004,7 +1018,7 @@ async function startLegacyCanvas(existingMap=null){
     sliceRemaining=12;resumeSlice();
   }
   function startSimulation(){
-    if(simRunning)return;
+    if(simRunning||workerFailure)return;
     // Old simulator initialized the entire motorway with cars already
     // driving at the selected date/hour; these are not additional sources.
     pendingWarmStart=true;
@@ -1012,6 +1026,7 @@ async function startLegacyCanvas(existingMap=null){
     $("sim-toggle").textContent="Ⅱ Simulation anhalten";
     $("sim-toggle").classList.add("running");
     window.StauDashboard?.setRunning(true);
+    if(scenario.workerMode){scenario.startWorker();return;}
     tick();
     if(simRunning)timer=setInterval(tick,1000);
   }
@@ -1066,6 +1081,7 @@ async function startLegacyCanvas(existingMap=null){
   // open. Suspend its timer, not the USER'S requested running state.
   // Resume on visibility without clearing event or vehicle inventories.
   function suspendTimer(){
+    scenario.pauseWorker?.();
     if(timer!==null)clearInterval(timer);
     timer=null;
     cancelSlice();
@@ -1077,7 +1093,8 @@ async function startLegacyCanvas(existingMap=null){
   function resumeTimer(){
     if(document.hidden)return;
     resize();invalidateSnapshot();
-    if(!simRunning||timer!==null)return;
+    if(!simRunning||timer!==null||workerFailure)return;
+    if(scenario.workerMode){scenario.startWorker();return;}
     timer=setInterval(tick,1000);
   }
   document.addEventListener("visibilitychange",()=>{
