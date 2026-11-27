@@ -131,7 +131,7 @@ async function startLegacyCanvas(existingMap=null){
   let interactionUntil=0,presentationTimer=null,mapVisible=true,needsModelRefresh=false;
   const mobileView=window.matchMedia?.('(pointer: coarse)').matches??false;
   const canvasDpr=()=>Math.min(window.devicePixelRatio||1,mobileView?1.5:2);
-  const now=()=>performance.now();
+  const now=()=>globalThis.performance?.now?.()??Date.now();
   const mainlines=segments.filter(x=>x.kind!=="ramp");
   const ramps=segments.filter(x=>x.kind==="ramp");
   // Static spatial index in Mercator units. A gesture visits only nearby
@@ -603,13 +603,19 @@ async function startLegacyCanvas(existingMap=null){
     if(pointers.size||Date.now()<interactionUntil){
       presentationTimer=setTimeout(present,Math.max(50,interactionUntil-Date.now()));return;
     }
-    if(needsModelRefresh){needsModelRefresh=false;scenario.refresh();}
-    // DOM and simulation snapshots run outside the animation-frame painter.
-    // A tile load or touch gesture never invokes the entire traffic engine.
-    refreshMapSnapshot();
-    displayStats();
-    requestDraw();
-    resumeSlice();
+    try{
+      if(needsModelRefresh){needsModelRefresh=false;scenario.refresh();}
+      // DOM and simulation snapshots run outside the animation-frame painter.
+      // A tile load or touch gesture never invokes the entire traffic engine.
+      refreshMapSnapshot();
+      displayStats();
+      requestDraw();
+      resumeSlice();
+    }catch(error){
+      sliceRemaining=0;needsModelRefresh=false;pauseSimulation();
+      $("map-status").textContent="Aktualisierung angehalten: "+error.message;
+      console.error(error);
+    }
   }
   function refreshMapSnapshot(){
     const groups=scenario.jamSummaries();
