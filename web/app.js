@@ -36,6 +36,25 @@ const junctionLayer=L.layerGroup().addTo(map);
 const incidentLayer=L.layerGroup().addTo(map);
 const coverageLayer=L.layerGroup().addTo(map);
 let viewportTimer=0;
+const signedLayer=L.layerGroup().addTo(map),signedData=window.StauBedarfsumleitungen;
+const signedToggle=$("toggle-signed-detours");
+const signedRenderer=L.canvas({padding:.2});
+function refreshSignedLayer(){
+  signedLayer.clearLayers();
+  const el=$("signed-detour-status");
+  if(el)el.textContent=signedData?.status==="ready"?signedData.count+" OSM-U-Routen · ab Zoom 9 sichtbar":signedData?.status==="unavailable"?"U-Routen-Datensatz noch nicht veröffentlicht":"U-Routen werden geladen …";
+  if(!signedToggle?.checked||signedData?.status!=="ready"||map.getZoom()<9)return;
+  const b=map.getBounds();
+  for(const route of signedData.visible([b.getSouth(),b.getWest(),b.getNorth(),b.getEast()])){
+    const line=L.polyline(route.parts,{renderer:signedRenderer,color:route.eligible?"#2468c4":"#8297b1",weight:2,opacity:.85,dashArray:route.eligible?null:"4 4",interactive:true});
+    const label=document.createElement("span");label.textContent=[route.ref,(route.motorways||[]).join("/"),route.from+" → "+route.to].join(" · ");
+    line.bindTooltip(label);line.addTo(signedLayer);line.bringToBack();
+  }
+}
+map.on("moveend zoomend",refreshSignedLayer);
+signedToggle?.addEventListener("change",refreshSignedLayer);
+signedData?.subscribe(refreshSignedLayer);
+refreshSignedLayer();
 
 const setStatus=(text)=>{status.textContent=text};
 const setError=(text)=>{
