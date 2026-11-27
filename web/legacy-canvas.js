@@ -655,18 +655,19 @@ async function startLegacyCanvas(existingMap=null){
       lat(center[1]-(height/2+24)/scale),lon(center[0]+(width/2+24)/scale)];
     const routes=signedDetours.visible(bounds);
     context.save();context.lineJoin="round";context.lineCap="round";
-    for(const complete of [true,false]){
+    for(const mode of ["mapped","inferred","incomplete"]){
       context.beginPath();
       for(const route of routes){
-        if(Boolean(route.eligible)!==complete)continue;
+        const kind=route.inferredParts?.length?"inferred":route.eligible?"mapped":"incomplete";
+        if(kind!==mode)continue;
         let parts=projectedDetours.get(route);
         if(!parts){parts=route.parts.map(part=>part.map(merc));projectedDetours.set(route,parts);}
         for(const part of parts)for(let i=0;i<part.length;i++){
           const p=pointAt(part[i]);if(i===0)context.moveTo(...p);else context.lineTo(...p);
         }
       }
-      context.strokeStyle=complete?"#2468c4":"#8297b1";
-      context.lineWidth=complete?2.2:1.5;context.setLineDash(complete?[]:[4,4]);context.stroke();
+      context.strokeStyle=mode==="mapped"?"#2468c4":mode==="inferred"?"#476eae":"#8297b1";
+      context.lineWidth=mode==="incomplete"?1.5:2.2;context.setLineDash(mode==="mapped"?[]:mode==="inferred"?[8,4]:[3,5]);context.stroke();
     }
     context.setLineDash([]);
     if(zoom>=11){
@@ -680,7 +681,8 @@ async function startLegacyCanvas(existingMap=null){
         placed.push(xy);count++;
         const traffic=signedTraffic.get(route.id);
         const waiting=Math.round((traffic?.waiting||0)+(traffic?.returnWaiting||0));
-        const label=waiting?route.ref+" · "+format(waiting)+" wartend":route.ref;
+        const ref=route.ref+(route.inferredParts?.length?"*":"");
+        const label=waiting?ref+" · "+format(waiting)+" wartend":ref;
         const w=context.measureText(label).width+8;
         // Route-level queue counts, not invented GPS jam extents.
         context.fillStyle=waiting>=100?"#b53944":waiting>0?"#a86c14":"#245ba1";
