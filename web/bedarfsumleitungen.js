@@ -8,6 +8,14 @@ const CELL=.25;
 let routes=[],status="loading",revision=0;
 const normalize=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/ß/g,"ss").replace(/[^a-z0-9]/g,"");
 const autobahn=s=>String(s||"").match(/\bA\s*(\d+)\b/i)?.[1];
+function endpointMotorways(r){
+  const from=autobahn(r.fromMotorway||r.from),to=autobahn(r.toMotorway||r.to);
+  const refs=[...new Set((r.motorways||[]).map(autobahn).filter(Boolean))];
+  // A single catalogue motorway may describe the destination motorway of
+  // a cross route; explicit endpoint refs take precedence.
+  const fallback=refs.length===1?refs[0]:null;
+  return [from||fallback,to||fallback];
+}
 function junction(s){
   return normalize(String(s||"").split(" · ")[0].replace(/^(?:AS|AK|AD|Anschlussstelle|Autobahnkreuz|Autobahndreieck)\s*(?:\d+[a-z]?\s*)?/i,""));
 }
@@ -40,8 +48,8 @@ function install(data){
     }
     if(r.eligible&&r.parts.length===1){
       const p=r.parts[0];if(p.length<2)continue;
-      for(const ref of r.motorways||[]){
-        const a=autobahn(ref);if(!a)continue;
+      const [source]=endpointMotorways(r);
+      for(const a of source?[source]:[]){
         // Spatially index both possible geometry orientations; route metadata
         // determines the direction, never the U-number parity.
         for(const point of [p[0],p.at(-1)]){
@@ -64,15 +72,16 @@ function intersects(a,b){return a[0]<=b[2]&&a[2]>=b[0]&&a[1]<=b[3]&&a[3]>=b[1];}
 function match(exit,entry,start,end){
   if(status!=="ready"||!start||!end||entry.externalDetourLabel)return null;
   const a=autobahn(exit.ref),b=autobahn(entry.ref);
-  if(!a||a!==b)return null;
-  const k=[a,exit.id,entry.id,exit.name,entry.name,start.join(","),end.join(",")].join("|");
+  if(!a||!b)return null;
+  const k=[a,b,exit.id,entry.id,exit.name,entry.name,start.join(","),end.join(",")].join("|");
   if(cache.has(k))return cache.get(k);
   const candidates=new Set(),y=Math.floor(start[0]/CELL),x=Math.floor(start[1]/CELL);
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)
     for(const route of matching.get(a+":"+key(y+dy,x+dx))||[])candidates.add(route);
   let best=null,score=Infinity;
   for(const route of candidates){
-    if(!nameMatches(exit.name,route.from)||!nameMatches(entry.name,route.to))continue;
+    const [source,target]=endpointMotorways(route);
+    if(source!==a||target!==b||!nameMatches(exit.name,route.from)||!nameMatches(entry.name,route.to))continue;
     const p=route.parts[0],first=p[0],last=p.at(-1);
     const f=[metres(start,first),metres(end,last)],r=[metres(start,last),metres(end,first)];
     const gaps=f[0]+f[1]<=r[0]+r[1]?f:r;
@@ -92,7 +101,7 @@ function match(exit,entry,start,end){
       visited.set(state,length);pending.push({route,at,length,chain});
     };
     for(const route of candidates){
-      if(!nameMatches(exit.name,route.from))continue;
+      if(endpointMotorways(route)[0]!==a||!nameMatches(exit.name,route.from))continue;
       const p=route.parts[0],ends=[p[0],p.at(-1)];
       for(let i=0;i<2;i++){
         const gap=metres(start,ends[i]);if(gap>700)continue;
@@ -105,18 +114,20 @@ function match(exit,entry,start,end){
       const item=pending.shift();
       if(item.length>=score)break;
       const gap=metres(item.at,end);
-      if(nameMatches(entry.name,item.route.to)&&gap<=700){
+      if(endpointMotorways(item.route)[1]===b&&nameMatches(entry.name,item.route.to)&&gap<=700){
         best={route:item.chain[0],routes:item.chain,lengthM:item.length+gap};
         score=item.length+gap;continue;
       }
       const yy=Math.floor(item.at[0]/CELL),xx=Math.floor(item.at[1]/CELL);
-      const nearby=new Set();
+      const nearby=new Set(),nextRef=endpointMotorways(item.route)[1];
+      if(!nextRef)continue;
       for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)
-        for(const r of matching.get(a+":"+key(yy+dy,xx+dx))||[])nearby.add(r);
+        for(const r of matching.get(nextRef+":"+key(yy+dy,xx+dx))||[])nearby.add(r);
       for(const r of nearby){
         if(item.chain.includes(r)||!nameMatches(item.route.to,r.from))continue;
         const d1=compass(item.route.direction),d2=compass(r.direction);
-        if(d1&&d2&&d1!==d2)continue;
+        if(endpointMotorways(r)[0]!==nextRef)continue;
+        if(d1&&d2&&d1!==d2&&endpointMotorways(item.route)[0]===nextRef&&endpointMotorways(r)[1]===nextRef)continue;
         const p=r.parts[0],ends=[p[0],p.at(-1)];
         for(let i=0;i<2;i++){
           const d=metres(item.at,ends[i]);if(d>50)continue;
