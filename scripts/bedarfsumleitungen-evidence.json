@@ -27,9 +27,34 @@
       "publisher": "Autobahn GmbH des Bundes",
       "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a61-temporaere-vollsperrung-zwischen-der-as-koblenz-waldesch-und-der-as-emmelshausen-wegen-abbruch-von-bahnbruecke",
       "notes": "Confirms corridor in both directions, not individual relation endpoints; do not overwrite Boppard boundaries."
+    },
+    {
+      "type": "official-route-confirmation",
+      "motorway": "A3/A48",
+      "refs": [
+        "U 40",
+        "U 97"
+      ],
+      "publisher": "Verbandsgemeindeverwaltung Höhr-Grenzhausen",
+      "published": "2022-07-19",
+      "url": "https://www.hoehr-grenzhausen.de/neuigkeiten/2022/juli/sperrung-der-anschlussstelle-a48/",
+      "notes": "U40 Ransbach-Baumbach via L307 toward Höhr-Grenzhausen; U97 Bendorf/Neuwied toward Höhr-Grenzhausen. Distinguish temporary U99 signage from permanent routes."
     }
   ],
   "relations": {
+    "186856": {
+      "motorway": "A48 A3",
+      "ref": "U 40",
+      "from": "AS 38 Ransbach-Baumbach",
+      "to": "AS 12 Höhr-Grenzhausen",
+      "publisher": "Verbandsgemeindeverwaltung Höhr-Grenzhausen",
+      "published": "2022-07-19",
+      "url": "https://www.hoehr-grenzhausen.de/neuigkeiten/2022/juli/sperrung-der-anschlussstelle-a48/",
+      "roads": [
+        "L307"
+      ],
+      "notes": "Cross-motorway U40 corridor confirmed; exact ramp direction and full geometry require review."
+    },
     "398059": {
       "motorway": "A3",
       "ref": "U 9",
