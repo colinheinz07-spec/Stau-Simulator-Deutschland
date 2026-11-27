@@ -31,7 +31,7 @@ def relation_id(link):
     return int(m.group(1)) if m else None
 class Wiki(HTMLParser):
     def __init__(self):
-        super().__init__(); self.links=set(); self.rows={}; self.heading=None
+        super().__init__(); self.links=set(); self.rows={}; self.unmapped=[]; self.heading=None
         self.heading_text=""; self.motorway=""; self.direction=""; self.row=None; self.cell=None
     def handle_starttag(self,tag,attrs):
         a=dict(attrs)
@@ -46,7 +46,7 @@ class Wiki(HTMLParser):
             if "wiki.openstreetmap.org" in absolute and re.match(r"^/wiki/(?:DE:)?(?:Germany|WikiProject_Germany)/Bedarfsumleitung/[^/]+$",path):
                 self.links.add(absolute.split("#")[0])
             rid=relation_id(link)
-            if rid and self.row is not None: self.ids.add(rid)
+            if rid and rid>0 and self.row is not None: self.ids.add(rid)
     def handle_data(self,data):
         if self.heading: self.heading_text+=data
         if self.cell is not None: self.cell+=data
@@ -63,21 +63,29 @@ class Wiki(HTMLParser):
         if tag=="tr" and self.row is not None:
             c=self.row
             if c and re.match(r"^U\s*\d+",c[0],re.I):
-                for rid in self.ids:
-                    self.rows[rid]={"ref":c[0],"motorway":self.motorway,
-                       "from":c[2] if len(c)>2 else "", "to":c[3] if len(c)>3 else "",
-                       "direction":self.direction,"destination":c[1] if len(c)>1 else ""}
+                record={"ref":c[0],"motorway":self.motorway,
+                        "from":c[2] if len(c)>2 else "", "to":c[3] if len(c)>3 else "",
+                        "direction":self.direction,"destination":c[1] if len(c)>1 else "",
+                        "notes":" ".join(c[5:7])}
+                for rid in self.ids: self.rows[rid]=record
+                if not self.ids: self.unmapped.append(record)
             self.row=None;self.cell=None
 def wiki_catalogue():
     index=Wiki();index.feed(get(ROOT))
-    pages=sorted(index.links)
-    if len(pages)<12: raise RuntimeError("Regional wiki index incomplete: "+str(pages))
-    records={}
-    for page in pages:
-        parser=Wiki();parser.feed(get(page));records.update(parser.rows)
-        print(page,len(parser.rows),flush=True);time.sleep(.3)
+    expected=["Baden-Württemberg","Bayern","Bayern2","Berlin und Brandenburg","Niedersachsen und Bremen","Hamburg","Hessen","Mecklenburg-Vorpommern","Nordrhein-Westfalen","Rheinland-Pfalz","Saarland","Sachsen","Sachsen-Anhalt","Schleswig-Holstein","Thüringen"]
+    pages={urllib.parse.unquote(urllib.parse.urlsplit(link).path).split("/")[-1].replace("_"," "):link for link in index.links}
+    records={};unmapped=[];coverage={}
+    for region in expected:
+        page=pages.get(region,ROOT+"/"+urllib.parse.quote(region.replace(" ","_")))
+        parser=Wiki();parser.feed(get(page))
+        if not parser.rows and not parser.unmapped:
+            raise RuntimeError("Regional catalogue empty: "+region)
+        records.update({rid:{**row,"region":region} for rid,row in parser.rows.items()})
+        unmapped.extend({**row,"region":region} for row in parser.unmapped)
+        coverage[region]={"relations":len(parser.rows),"withoutRelation":len(parser.unmapped)}
+        print(page,coverage[region],flush=True);time.sleep(.3)
     if len(records)<100: raise RuntimeError("Wiki relation catalogue unexpectedly small")
-    return records
+    return records,unmapped,coverage
 def distance(a,b):
     p,q=math.radians(a[0]),math.radians(b[0])
     dlat=q-p;dlon=math.radians(b[1]-a[1])
@@ -126,16 +134,18 @@ def convert(element,meta):
     start=tags.get("from") or meta.get("from","")
     end=tags.get("to") or meta.get("to","")
     # A connected line is necessary but not sufficient for an audited route.
-    complete=(len(parts)==1 and len(ways)==len(members) and
+    uncertain=bool(re.search(r"angefangen|unvollständig|gelöscht|unsicher|stummel|nicht fertig|nicht mehr|nur.*(?:anfang|ende)",meta.get("notes",""),re.I))
+    complete=(not uncertain and len(parts)==1 and len(ways)==len(members) and
               not any(x.get("type")=="relation" for x in element.get("members",[])) and
               bool(motors and start and end and re.search(r"[A-Za-zÄÖÜäöüß]{3}",start) and re.search(r"[A-Za-zÄÖÜäöüß]{3}",end)))
     return {"id":rid,"ref":ref,"motorways":motors,"from":start,"to":end,
         "destination":tags.get("destination") or meta.get("destination",""),
         "direction":meta.get("direction",""),"operator":tags.get("operator",""),
+        "region":meta.get("region",""),"notes":meta.get("notes",""),
         "lengthM":round(length),"connected":len(parts)==1,"eligible":complete,
         "parts":[simplify(p) for p in parts]}
 def main():
-    catalogue=wiki_catalogue()
+    catalogue,unmapped,coverage=wiki_catalogue()
     query='[out:json][timeout:120];area(3600051477)->.de;(rel["type"="route"]["route"="detour"](area.de);rel["type"="route"]["ref"~"^U ?[0-9]+[a-zA-Z]?$"]["detour"](area.de););out ids;'
     ids=set(catalogue)|{e["id"] for e in overpass(query) if e["type"]=="relation"}
     print("Relation IDs",len(ids),flush=True)
@@ -154,6 +164,7 @@ def main():
     data={"schema":1,"source":"OpenStreetMap contributors","license":"ODbL-1.0",
           "wiki":"https://wiki.openstreetmap.org/wiki/DE:Germany/Bedarfsumleitung",
           "wikiLicense":"CC BY-SA 2.0","requested":len(ids),"missing":sorted(ids-returned),
+          "coverage":coverage,"unmapped":unmapped,"unmappedRelations":[{"id":rid,**catalogue[rid]} for rid in sorted(set(catalogue)-{r["id"] for r in result})],
           "routes":result}
     OUT.parent.mkdir(parents=True,exist_ok=True)
     tmp=OUT.with_suffix(".tmp")
