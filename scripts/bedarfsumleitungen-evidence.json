@@ -30,6 +30,32 @@
     }
   ],
   "relations": {
+    "398059": {
+      "motorway": "A3",
+      "ref": "U 9",
+      "from": "AS 36 Neuwied",
+      "to": "AS 35 Neustadt/Wied",
+      "direction": "Köln (nordwärts)",
+      "publisher": "Autobahn GmbH des Bundes",
+      "published": "2026-08-03",
+      "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a3-kanalsanierungsarbeiten-fuehren-zu-verkehrseinschraenkungen-im-bereich-der-as-neustadt-wied-update",
+      "exitEdge": "extra-heumar-24492231",
+      "entryEdge": "extra-heumar-24281779",
+      "notes": "Official start/end and direction confirmed. Exact missing street itinerary not yet confirmed."
+    },
+    "398061": {
+      "motorway": "A3",
+      "ref": "U 11",
+      "from": "AS 35 Neustadt/Wied",
+      "to": "AS 34 Bad Honnef/Linz",
+      "direction": "Köln (nordwärts)",
+      "publisher": "Autobahn GmbH des Bundes",
+      "published": "2026-08-03",
+      "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a3-kanalsanierungsarbeiten-fuehren-zu-verkehrseinschraenkungen-im-bereich-der-as-neustadt-wied-update",
+      "exitEdge": "extra-heumar-4927299",
+      "entryEdge": "extra-heumar-556852241",
+      "notes": "Official start/end and direction confirmed. Exact missing street itinerary not yet confirmed."
+    },
     "398709": {
       "motorway": "A3",
       "ref": "U 8",
