@@ -39,6 +39,18 @@
       "published": "2022-07-19",
       "url": "https://www.hoehr-grenzhausen.de/neuigkeiten/2022/juli/sperrung-der-anschlussstelle-a48/",
       "notes": "U40 Ransbach-Baumbach via L307 toward Höhr-Grenzhausen; U97 Bendorf/Neuwied toward Höhr-Grenzhausen. Distinguish temporary U99 signage from permanent routes."
+    },
+    {
+      "type": "official-transfer-diversion",
+      "motorway": "A3/A560",
+      "refs": [
+        "U 17",
+        "U 40"
+      ],
+      "publisher": "Autobahn GmbH des Bundes",
+      "published": "2026-05-20",
+      "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a3-a560-langfristige-verbindungssperrungen-und-erhebliche-verkehrliche-einschraenkungen-im-kreuz-bonn-siegburg",
+      "notes": "U17 from A560 Hennef via AS Siegburg and B56 to A3 AS Lohmar towards Oberhausen. U40 from A3 approaching from Oberhausen via AS Lohmar toward A560 Sankt Augustin/Hennef; exact onward junctions require geometry verification."
     }
   ],
   "relations": {
@@ -80,6 +92,24 @@
       "exitEdge": "extra-heumar-4927299",
       "entryEdge": "extra-heumar-556852241",
       "notes": "Official start/end and direction confirmed. Exact missing street itinerary not yet confirmed."
+    },
+    "398072": {
+      "motorway": "A3",
+      "fromMotorway": "A560",
+      "toMotorway": "A3",
+      "ref": "U 17",
+      "from": "A560 AS 2 Siegburg",
+      "to": "A3 AS 31 Lohmar",
+      "direction": "Köln/Oberhausen",
+      "publisher": "Autobahn GmbH des Bundes",
+      "published": "2026-05-20",
+      "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a3-a560-langfristige-verbindungssperrungen-und-erhebliche-verkehrliche-einschraenkungen-im-kreuz-bonn-siegburg",
+      "roads": [
+        "B56"
+      ],
+      "exitEdge": "extra-heumar-7963547",
+      "entryEdge": "extra-heumar-407503235",
+      "notes": "Official corridor confirmed; exact ramp anchor and OSM geometry to be validated, especially duplicated AS Lohmar labels in legacy map."
     },
     "398709": {
       "motorway": "A3",
