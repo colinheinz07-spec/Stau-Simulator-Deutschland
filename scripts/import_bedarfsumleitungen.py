@@ -187,8 +187,8 @@ def convert(element,meta):
     start=meta.get("from") if official else tags.get("from") or meta.get("from","")
     end=meta.get("to") if official else tags.get("to") or meta.get("to","")
     # A connected line is necessary but not sufficient for an audited route.
-    uncertain=bool(re.search(r"angefangen|begonnen|unvollständig|gelöscht|unsicher|stummel|nicht fertig|nicht mehr|nur.*(?:anfang|ende)|an ausfahrt gesichtet|relation\s*\([012]/4\)",meta.get("notes",""),re.I))
-    complete=(not uncertain and len(parts)==1 and len(ways)==len(members) and
+    uncertain=bool(re.search(r"angefangen|begonnen|unvollständig|gelöscht|unsicher|stummel|nicht fertig|nicht mehr|nur.*(?:anfang|ende)|an ausfahrt gesichtet|relation\s*\([0123]/4\)",meta.get("notes",""),re.I))
+    complete=(not uncertain and not (official and official.get("exitEdge")) and len(parts)==1 and len(ways)==len(members) and
               not any(x.get("type")=="relation" for x in element.get("members",[])) and
               bool(motors and start and end and re.search(r"[A-Za-zÄÖÜäöüß]{3}",start) and re.search(r"[A-Za-zÄÖÜäöüß]{3}",end)))
     return {"id":rid,"ref":ref,"motorways":motors,"from":start,"to":end,
@@ -203,7 +203,8 @@ def main():
     evidence=official_evidence()
     verified=evidence.get("relations",{})
     for rid,record in verified.items():
-        catalogue[int(rid)]={**catalogue.get(int(rid),{}),**record,"officialEvidence":record}
+        previous=catalogue.get(int(rid),{})
+        catalogue[int(rid)]={**previous,**record,"notes":previous.get("notes","")+" "+record.get("notes",""),"officialEvidence":record}
     query='[out:json][timeout:120];area(3600051477)->.de;(rel["type"="route"]["route"="detour"](area.de);rel["type"="route"]["ref"~"^U ?[0-9]+[a-zA-Z]?$"]["detour"](area.de);rel["type"="route"]["ref"~"^U ?[0-9]+[a-zA-Z]?$"]["route"="road"](area.de););out ids;'
     ids=set(catalogue)|{e["id"] for e in overpass(query) if e["type"]=="relation"}
     print("Relation IDs",len(ids),flush=True)
