@@ -1,0 +1,36 @@
+name: Import German signed motorway diversions
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/import_bedarfsumleitungen.py'
+      - '.github/workflows/import-bedarfsumleitungen.yml'
+  schedule:
+    - cron: '17 3 1 * *'
+permissions:
+  contents: write
+concurrency:
+  group: german-signed-detour-import
+  cancel-in-progress: false
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/import_bedarfsumleitungen.py
+      - name: Publish data atomically
+        run: |
+          git config user.name "stau-detour-import[bot]"
+          git config user.email "stau-detour-import[bot]@users.noreply.github.com"
+          git add web/data/bedarfsumleitungen-data.js
+          git diff --cached --quiet && exit 0
+          git commit -m "Refresh nationwide OSM signed diversion routes"
+          git pull --rebase origin main
+          git push origin HEAD:main
