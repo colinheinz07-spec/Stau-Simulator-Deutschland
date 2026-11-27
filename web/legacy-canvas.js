@@ -120,7 +120,7 @@ async function startLegacyCanvas(existingMap=null){
   function focusJam(id,offset){
     const road=segmentById.get(id);if(!road)return;
     center=pointAlong(road,offset);zoom=Math.max(zoom,11);
-    root.scrollIntoView?.({block:"center",behavior:"smooth"});
+    root.scrollIntoView?.({block:"center",behavior:"auto"});
     requestDraw();
   }
   let eventTargets=[];
@@ -128,7 +128,10 @@ async function startLegacyCanvas(existingMap=null){
   let timer=null,simRunning=false,sliceTimer=null,sliceRemaining=0,pendingWarmStart=false;
   // A mobile pinch/drag must not compete with a tight 0-ms simulation
   // callback loop. Give the browser a brief painting/gesture window.
-  let interactionUntil=0;
+  let interactionUntil=0,presentationTimer=null,mapVisible=true,needsModelRefresh=false;
+  const mobileView=window.matchMedia?.('(pointer: coarse)').matches??false;
+  const canvasDpr=()=>Math.min(window.devicePixelRatio||1,mobileView?1.5:2);
+  const now=()=>performance.now();
   const mainlines=segments.filter(x=>x.kind!=="ramp");
   const ramps=segments.filter(x=>x.kind==="ramp");
   // Static spatial index in Mercator units. A gesture visits only nearby
@@ -176,8 +179,8 @@ async function startLegacyCanvas(existingMap=null){
     request=null,visible=$("toggle-network").checked,
     labels=junctionToggle.checked, selected=null,selectedOffsetM=0;
   function requestDraw(){
-    if(request!==null)return;
-    request=requestAnimationFrame(()=>{request=null;draw();});
+    if(request!==null||document.hidden||!mapVisible)return;
+    request=requestAnimationFrame(()=>{request=null;if(mapVisible&&!document.hidden)draw();});
   }
   function fit(bounds){
     const a=merc(bounds[0]),b=merc(bounds[1]);
@@ -240,15 +243,19 @@ async function startLegacyCanvas(existingMap=null){
     const n=2**z;
     if(x<0||y<0||x>=n||y>=n)return null;
     const key=z+"/"+x+"/"+y;
-    if(tiles.has(key))return tiles.get(key);
-    // Reduce decoded raster memory pressure in iOS WKWebView.
-    if(tiles.size>96){
-      for(const k of tiles.keys()){tiles.delete(k);if(tiles.size<72)break;}
+    if(tiles.has(key)){
+      const item=tiles.get(key);tiles.delete(key);tiles.set(key,item);return item;
+    }
+    // Keep only recently visible decoded tiles. Ignore callbacks for evicted tiles.
+    const limit=mobileView?48:96;
+    while(tiles.size>=limit){
+      const oldest=tiles.keys().next().value,item=tiles.get(oldest);
+      item.image.onload=item.image.onerror=null;tiles.delete(oldest);
     }
     const item={image:new Image(),ready:false,error:false};
     tiles.set(key,item);
-    item.image.onload=()=>{item.ready=true;requestDraw();};
-    item.image.onerror=()=>{item.error=true;requestDraw();};
+    item.image.onload=()=>{if(tiles.get(key)===item){item.ready=true;requestDraw();}};
+    item.image.onerror=()=>{if(tiles.get(key)===item)item.error=true;};
     item.image.src="https://tile.openstreetmap.org/"+z+"/"+x+"/"+y+".png";
     return item;
   }
@@ -585,7 +592,25 @@ async function startLegacyCanvas(existingMap=null){
   let renderedJamGroups=null,snapshotDirty=true,activeStamp=null;
   let eventSnapshot=[],eventByIdSnapshot=new Map(),gateSnapshot=[],accessSnapshot=[];
   const trafficSnapshot=new Map(),closureSnapshot=new Map(),jamInfoSnapshot=new Map();
-  function invalidateSnapshot(){snapshotDirty=true;requestDraw();}
+  function requestPresentation(){
+    if(presentationTimer!==null||document.hidden)return;
+    presentationTimer=setTimeout(present,Math.max(0,interactionUntil-Date.now()));
+  }
+  function invalidateSnapshot(){snapshotDirty=true;requestPresentation();}
+  function present(){
+    presentationTimer=null;
+    if(document.hidden)return;
+    if(pointers.size||Date.now()<interactionUntil){
+      presentationTimer=setTimeout(present,Math.max(50,interactionUntil-Date.now()));return;
+    }
+    if(needsModelRefresh){needsModelRefresh=false;scenario.refresh();}
+    // DOM and simulation snapshots run outside the animation-frame painter.
+    // A tile load or touch gesture never invokes the entire traffic engine.
+    refreshMapSnapshot();
+    displayStats();
+    requestDraw();
+    resumeSlice();
+  }
   function refreshMapSnapshot(){
     const groups=scenario.jamSummaries();
     if(groups===renderedJamGroups&&!snapshotDirty)return groups;
@@ -694,8 +719,8 @@ async function startLegacyCanvas(existingMap=null){
   }
   function draw(){
     if(!width||!height)return;
-    const groups=refreshMapSnapshot();
-    const dpr=clamp(window.devicePixelRatio||1,1,2);
+    const groups=renderedJamGroups||[];
+    const dpr=canvasDpr();
     context.setTransform(dpr,0,0,dpr,0,0);
     context.fillStyle="#dae5e1";
     context.fillRect(0,0,width,height);
@@ -732,7 +757,7 @@ async function startLegacyCanvas(existingMap=null){
     if(nextWidth<80||nextHeight<80)return;
     if(width===nextWidth&&height===nextHeight&&canvas.dataset.fitted)return;
     width=nextWidth;height=nextHeight;
-    const dpr=clamp(window.devicePixelRatio||1,1,2);
+    const dpr=canvasDpr();
     canvas.width=Math.round(width*dpr);
     canvas.height=Math.round(height*dpr);
     if(!canvas.dataset.fitted){canvas.dataset.fitted="yes";fit(CORRIDOR);}
@@ -866,7 +891,7 @@ async function startLegacyCanvas(existingMap=null){
         if(hit)open(hit.road,Math.min(hit.road.meters-.001,hit.offsetM));
       }
     }
-    if(!pointers.size){tap=null;wasPinching=false;requestDraw();resumeSlice();}
+    if(!pointers.size){tap=null;wasPinching=false;requestDraw();if(snapshotDirty||needsModelRefresh)requestPresentation();resumeSlice();}
   }
   canvas.addEventListener("pointerup",endPointer);
   // A native gesture interruption is never a tap. Drop stale captures so
@@ -928,12 +953,16 @@ async function startLegacyCanvas(existingMap=null){
     if(sliceTimer!==null)clearTimeout(sliceTimer);
     sliceTimer=null;
     if(sliceRemaining>0){
-      sliceRemaining=0;scenario.refresh();displayStats();requestDraw();
+      sliceRemaining=0;needsModelRefresh=true;snapshotDirty=true;
+      requestPresentation();
     }
   }
   function runSlice(){
     sliceTimer=null;
     if(!simRunning||!sliceRemaining||document.hidden||pointers.size)return;
+    if(presentationTimer!==null||needsModelRefresh){
+      requestPresentation();sliceTimer=setTimeout(runSlice,64);return;
+    }
     if(Date.now()<interactionUntil){
       sliceTimer=setTimeout(runSlice,Math.max(16,interactionUntil-Date.now()));
       return;
@@ -942,15 +971,17 @@ async function startLegacyCanvas(existingMap=null){
       // Yield to touch, drawing and browser painting between short physics
       // tasks. A slow phone never accumulates overlapping minute batches.
       if(pendingWarmStart){
-        pendingWarmStart=false;scenario.warmStart?.();displayStats();requestDraw();
-        sliceTimer=setTimeout(runSlice,24);return;
+        pendingWarmStart=false;scenario.warmStart?.();invalidateSnapshot();
+        sliceTimer=setTimeout(runSlice,64);return;
       }
-      const started=Date.now();
-      do{
-        scenario.step(5,sliceRemaining===1);sliceRemaining--;
-      }while(sliceRemaining>0&&Date.now()-started<8);
-      if(sliceRemaining>0)sliceTimer=setTimeout(runSlice,24);
-      else{displayStats();requestDraw();}
+      // A single full-network step can take >100 ms. Never stack several
+      // synchronous steps in one callback; give input/paint a duty-cycle gap.
+      const started=now();
+      scenario.step(5,sliceRemaining===1);sliceRemaining--;
+      const elapsed=now()-started;
+      if(sliceRemaining>0)
+        sliceTimer=setTimeout(runSlice,Math.min(150,Math.max(24,Math.ceil(elapsed*(mobileView?.65:.25)))));
+      else invalidateSnapshot();
     }catch(error){
       sliceRemaining=0;
       pauseSimulation();
@@ -963,7 +994,7 @@ async function startLegacyCanvas(existingMap=null){
       sliceTimer=setTimeout(runSlice,Math.max(16,interactionUntil-Date.now()));
   }
   function tick(){
-    if(!simRunning||sliceRemaining||document.hidden||pointers.size)return;
+    if(!simRunning||sliceRemaining||document.hidden||pointers.size||presentationTimer!==null||needsModelRefresh)return;
     sliceRemaining=12;resumeSlice();
   }
   function startSimulation(){
@@ -1032,10 +1063,16 @@ async function startLegacyCanvas(existingMap=null){
     if(timer!==null)clearInterval(timer);
     timer=null;
     cancelSlice();
+    if(presentationTimer!==null)clearTimeout(presentationTimer);
+    presentationTimer=null;
+    if(request!==null)cancelAnimationFrame(request);
+    request=null;
   }
   function resumeTimer(){
-    if(!simRunning||timer!==null||document.hidden)return;
-    tick();if(simRunning)timer=setInterval(tick,1000);
+    if(document.hidden)return;
+    resize();invalidateSnapshot();
+    if(!simRunning||timer!==null)return;
+    timer=setInterval(tick,1000);
   }
   document.addEventListener("visibilitychange",()=>{
     if(document.hidden)suspendTimer();else resumeTimer();
@@ -1043,7 +1080,19 @@ async function startLegacyCanvas(existingMap=null){
   window.addEventListener("pagehide",suspendTimer);
   window.addEventListener("pageshow",resumeTimer);
   displayStats();
+  invalidateSnapshot();
   signedStatus();
+  // Page scroll is also user interaction, not just canvas dragging.
+  window.addEventListener("scroll",()=>{
+    interactionUntil=Date.now()+180;
+    if(sliceTimer!==null){clearTimeout(sliceTimer);sliceTimer=null;resumeSlice();}
+  },{passive:true});
+  if(typeof IntersectionObserver==="function"){
+    new IntersectionObserver(entries=>{
+      mapVisible=entries.some(entry=>entry.isIntersecting);
+      if(mapVisible)requestDraw();
+    }).observe(root);
+  }
   if(typeof ResizeObserver==="function")new ResizeObserver(resize).observe(root);
   window.addEventListener("resize",resize);
   resize();
