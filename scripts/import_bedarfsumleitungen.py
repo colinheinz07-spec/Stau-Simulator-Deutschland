@@ -48,7 +48,7 @@ def repair_candidates(routes,evidence):
         anchors=None
         if e.get("exitEdge") in ramps and e.get("entryEdge") in ramps:
             exit,entry=ramps[e["exitEdge"]],ramps[e["entryEdge"]]
-            if exit[2]==entry[2]==e.get("motorway") and "Abfahrt" in exit[5] and "Auffahrt" in entry[5]:
+            if exit[2]==e.get("fromMotorway",e.get("motorway")) and entry[2]==e.get("toMotorway",e.get("motorway")) and "Abfahrt" in exit[5] and "Auffahrt" in entry[5]:
                 anchors=(exit[4][-1],entry[4][0])
         if r["eligible"] or (len(r["parts"])<2 and not anchors):continue
         routes[i]=repair_route(r,fetch,anchors)
@@ -191,7 +191,14 @@ def convert(element,meta):
     complete=(not uncertain and not (official and official.get("exitEdge")) and len(parts)==1 and len(ways)==len(members) and
               not any(x.get("type")=="relation" for x in element.get("members",[])) and
               bool(motors and start and end and re.search(r"[A-Za-zÄÖÜäöüß]{3}",start) and re.search(r"[A-Za-zÄÖÜäöüß]{3}",end)))
+    def endpoint_ref(value):
+        refs=set("A"+n for n in re.findall(r"\bA\s*(\d+)\b",value or "",re.I))
+        return next(iter(refs)) if len(refs)==1 else ""
+    from_motorway=meta.get("fromMotorway") or endpoint_ref(start) or (motors[0] if len(motors)==1 else "")
+    to_motorway=meta.get("toMotorway") or endpoint_ref(end) or (motors[0] if len(motors)==1 else "")
+    motors=sorted(set(motors+[m for m in (from_motorway,to_motorway) if m]))
     return {"id":rid,"ref":ref,"motorways":motors,"from":start,"to":end,
+        "fromMotorway":from_motorway,"toMotorway":to_motorway,
         "destination":tags.get("destination") or meta.get("destination",""),
         "direction":meta.get("direction",""),"operator":tags.get("operator",""),
         "region":meta.get("region",""),"regions":meta.get("regions",[]),"notes":meta.get("notes",""),
