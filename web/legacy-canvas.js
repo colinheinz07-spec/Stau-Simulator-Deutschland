@@ -634,6 +634,55 @@ async function startLegacyCanvas(existingMap=null){
     }
     return groups;
   }
+  const signedDetours=window.StauBedarfsumleitungen;
+  const signedToggle=$("toggle-signed-detours");
+  const projectedDetours=new WeakMap();
+  function signedStatus(){
+    const el=$("signed-detour-status");
+    if(el)el.textContent=signedDetours?.status==="ready"?format(signedDetours.count)+" OSM-U-Routen · ab Zoom 9 sichtbar":signedDetours?.status==="unavailable"?"U-Routen-Datensatz noch nicht veröffentlicht":"U-Routen werden geladen …";
+    requestDraw();
+  }
+  signedToggle?.addEventListener("change",requestDraw);
+  signedDetours?.subscribe(signedStatus);
+  function drawSignedDetours(){
+    if(!signedToggle?.checked||signedDetours?.status!=="ready"||zoom<9)return;
+    const scale=2**zoom;
+    const lat=y=>Math.atan(Math.sinh(Math.PI*(1-y/128)))/RAD;
+    const lon=x=>x*360/256-180;
+    const bounds=[lat(center[1]+(height/2+24)/scale),lon(center[0]-(width/2+24)/scale),
+      lat(center[1]-(height/2+24)/scale),lon(center[0]+(width/2+24)/scale)];
+    const routes=signedDetours.visible(bounds);
+    context.save();context.lineJoin="round";context.lineCap="round";
+    for(const complete of [true,false]){
+      context.beginPath();
+      for(const route of routes){
+        if(Boolean(route.eligible)!==complete)continue;
+        let parts=projectedDetours.get(route);
+        if(!parts){parts=route.parts.map(part=>part.map(merc));projectedDetours.set(route,parts);}
+        for(const part of parts)for(let i=0;i<part.length;i++){
+          const p=pointAt(part[i]);if(i===0)context.moveTo(...p);else context.lineTo(...p);
+        }
+      }
+      context.strokeStyle=complete?"#2468c4":"#8297b1";
+      context.lineWidth=complete?2.2:1.5;context.setLineDash(complete?[]:[4,4]);context.stroke();
+    }
+    context.setLineDash([]);
+    if(zoom>=11){
+      context.font="bold 10px system-ui,sans-serif";context.textAlign="center";
+      let count=0;const placed=[];
+      for(const route of routes){
+        if(count>=24)break;
+        const parts=projectedDetours.get(route);if(!parts?.length)continue;
+        const p=parts[0],xy=pointAt(p[Math.floor(p.length/2)]);
+        if(xy[0]<20||xy[0]>width-20||xy[1]<30||xy[1]>height-30||placed.some(a=>Math.hypot(a[0]-xy[0],a[1]-xy[1])<42))continue;
+        placed.push(xy);count++;
+        const w=context.measureText(route.ref).width+8;
+        context.fillStyle="#245ba1";context.fillRect(xy[0]-w/2,xy[1]-8,w,15);
+        context.fillStyle="#fff";context.fillText(route.ref,xy[0],xy[1]+3);
+      }
+    }
+    context.restore();
+  }
   function draw(){
     if(!width||!height)return;
     const groups=refreshMapSnapshot();
@@ -642,6 +691,7 @@ async function startLegacyCanvas(existingMap=null){
     context.fillStyle="#dae5e1";
     context.fillRect(0,0,width,height);
     drawTiles();
+    drawSignedDetours();
     if(visible){
       const scale=2**zoom;
       context.lineJoin="round";context.lineCap="round";
@@ -984,6 +1034,7 @@ async function startLegacyCanvas(existingMap=null){
   window.addEventListener("pagehide",suspendTimer);
   window.addEventListener("pageshow",resumeTimer);
   displayStats();
+  signedStatus();
   if(typeof ResizeObserver==="function")new ResizeObserver(resize).observe(root);
   window.addEventListener("resize",resize);
   resize();
