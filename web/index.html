@@ -81,6 +81,8 @@
           <h2>Kartenansicht</h2>
           <div class="network-meta" id="coverage"><span class="coverage-dot"></span><span><b>Autobahnnetz</b><small>OSM-Kartendaten</small></span></div><div class="map-chips"><span id="chip-roads">— Fahrwege</span><span id="chip-ramps">— Rampen</span></div>
                     <label class="switch-row"><span>Simulationsstrecken</span><input id="toggle-network" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
+          <label class="switch-row"><span>Bedarfsumleitungen</span><input id="toggle-signed-detours" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
+          <small id="signed-detour-status" aria-live="polite">U-Routen werden geladen …</small>
           <label class="switch-row"><span>AS-Bezeichnungen</span><input id="toggle-junctions" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span></label>
           <div class="legend">
             <div><span class="legend-swatch free"></span> <span>Freie Fahrt</span><small>&gt; 65 km/h</small></div>
@@ -228,6 +230,7 @@
   <script src="./legacy-geometry.js"></script>
   <script src="./event-schedule.js"></script>
   <script src="./traffic-reference.js"></script>
+  <script src="./bedarfsumleitungen.js"></script>
   <script src="./offline-traffic.js"></script>
   <script src="./offline-event-editor.js"></script>
   <script src="./legacy-canvas.js"></script>
