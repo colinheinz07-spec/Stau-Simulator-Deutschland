@@ -116,7 +116,8 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   intervalCallback();
   assert.equal(timeouts.size,queued,"a slow minute cannot schedule overlapping batches");
   listeners.get("sim-toggle:click")();
-  assert.equal(timeouts.size,0,"pausing cancels remaining physics tasks");
+  flushTimers();
+  assert.equal(timeouts.size,0,"pausing cancels remaining physics tasks; deferred presentation completes");
   assert.equal(element("sim-clock").textContent,"2:00","pause preserves only completed physics steps");
 
   // Tap a real A3 point and set a full closure through the actual mobile UI.
@@ -134,6 +135,7 @@ test("SPCK Canvas boots from old OSM geometry without internet or Leaflet",async
   assert.equal(element("detail-drawer").classList.contains("open"),true,
     "tapping actual road geometry should open incident tools");
   listeners.get("event-closure:click")();
+  flushTimers();
   while(frames.length)frames.shift()();
   assert.equal(element("detail-drawer").classList.contains("open"),false);
   assert.ok(draw.colors.includes("#d52b3e"),"closure draws red stripes");
