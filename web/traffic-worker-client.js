@@ -7,13 +7,15 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
   let worker;
   try{worker=new global.Worker("./traffic-worker.js");}catch(error){return null;}
   let ready=false,failed=false,revision=0,snapshot=null,detail=null,selected=null,queue=[];
-  let running=false;
+  let running=false,progress=null;
   const send=m=>{if(failed)return;if(ready)worker.postMessage(m);else queue.push(m);};
   const empty={stats:local.totals(),clock:local.clockMs(),groups:[],infos:[],traffic:[],closures:[],active:[],statuses:{},detours:{},gates:[],access:[],signed:[]};
   let state=empty,traffic=new Map(),closures=new Map(),infos=new Map();
   function receive(s){
     if(s.revision!==revision)return;
-    snapshot=s;state=s;traffic=new Map(s.traffic);closures=new Map(s.closures);
+    snapshot=s;state=s;
+    if(!progress||progress.stats.simSeconds<=s.stats.simSeconds)progress={stats:s.stats,clock:s.clock};
+    traffic=new Map(s.traffic);closures=new Map(s.closures);
     infos=new Map(s.groups.map((g,i)=>[g,s.infos[i]]));
     if(s.detail&&selected&&s.detail.id===selected.id&&s.detail.offset===selected.offset)detail=s.detail;
     onUpdate();
@@ -28,11 +30,21 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
     if(failed)return;
     if(m.type==="ready"){
       ready=true;api.workerReady=true;clearTimeout(startup);
-      for(const item of queue)worker.postMessage(item);queue=[];return;
+      // Restore all stored incidents before the first expensive route graph
+      // publication. Non-mutation commands retain their original order.
+      let items=[];
+      const flush=()=>{if(items.length){worker.postMessage({type:"batch",items});items=[];}};
+      for(const item of queue){
+        if(item.type==="mutate")items.push(item);
+        else{flush();worker.postMessage(item);}
+      }
+      flush();queue=[];return;
     }
     if(m.type==="failure"){fail(m.message);return;}
     if(m.type==="snapshot")receive(m);
-    if(m.type==="progress"&&running&&m.revision===revision)onProgress?.(m.stats,m.clock);
+    if(m.type==="progress"&&running&&m.revision===revision){
+      progress={stats:m.stats,clock:m.clock};onProgress?.(m.stats,m.clock);
+    }
     if(m.type==="detail"&&m.revision===revision&&selected&&m.detail?.id===selected.id&&m.detail.offset===selected.offset){
       detail=m.detail;onUpdate();
     }
@@ -43,7 +55,7 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
     revision++;detail=null;
     if(method==="reset"||method==="setSimulationStart"){
       state={...empty,stats:local.totals(),clock:local.clockMs()};
-      snapshot=null;traffic.clear();closures.clear();infos.clear();
+      snapshot=null;progress=null;traffic.clear();closures.clear();infos.clear();
     }
     send({type:"mutate",revision,method,args});return result;
   }
@@ -64,7 +76,7 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
     selectRoad(id,offset=0){
       selected=id?{id,offset}:null;detail=null;send({type:"select",selection:selected});
     },
-    totals:()=>state.stats,clockMs:()=>state.clock,
+    totals:()=>state.stats,clockMs:()=>state.clock,displayProgress:()=>progress,
     jamSummaries:()=>state.groups,queueRoadInfo:g=>infos.get(g)||{},
     visualBands:id=>traffic.get(id)||[],closureBands:id=>closures.get(id)||[],
     closureGatePoints:()=>state.gates,closureAccessPoints:()=>state.access,
