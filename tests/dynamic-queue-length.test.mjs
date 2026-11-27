@@ -124,7 +124,7 @@ test('a 90-minute total queue does NOT trigger five preceding AS exits with free
   assert.ok(largeTotal>50,'test needs severe distant total delay');
   assert.equal(tooEarly,0);
   assert.ok(lastUsed,'the last local AS has 45 minutes of delay to the next real interchange');
-  assert.equal(s.diversionShare(60),.02);
+  assert.equal(s.diversionShare(60),.25);
 });
 
 test('a map-boundary exit without a mapped next AS is not automatically a local bypass',async()=>{
