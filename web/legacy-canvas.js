@@ -606,6 +606,7 @@ async function startLegacyCanvas(existingMap=null){
       const bands=scenario.visualBands(road.id).filter(b=>b.color!=="free");
       if(bands.length)trafficSnapshot.set(road.id,bands);
     }
+    signedTraffic=new Map((scenario.signedDetourTraffic?.()??[]).map(row=>[row.id,row]));
     const active=scenario.activeEvents();
     const stamp=JSON.stringify(active);
     const activeIds=new Set(active.map(e=>e.id));
@@ -637,6 +638,7 @@ async function startLegacyCanvas(existingMap=null){
   const signedDetours=window.StauBedarfsumleitungen;
   const signedToggle=$("toggle-signed-detours");
   const projectedDetours=new WeakMap();
+  let signedTraffic=new Map();
   function signedStatus(){
     const el=$("signed-detour-status");
     if(el)el.textContent=signedDetours?.status==="ready"?format(signedDetours.count)+" OSM-U-Routen · ab Zoom 9 sichtbar":signedDetours?.status==="unavailable"?"U-Routen-Datensatz noch nicht veröffentlicht":"U-Routen werden geladen …";
@@ -676,9 +678,14 @@ async function startLegacyCanvas(existingMap=null){
         const p=parts[0],xy=pointAt(p[Math.floor(p.length/2)]);
         if(xy[0]<20||xy[0]>width-20||xy[1]<30||xy[1]>height-30||placed.some(a=>Math.hypot(a[0]-xy[0],a[1]-xy[1])<42))continue;
         placed.push(xy);count++;
-        const w=context.measureText(route.ref).width+8;
-        context.fillStyle="#245ba1";context.fillRect(xy[0]-w/2,xy[1]-8,w,15);
-        context.fillStyle="#fff";context.fillText(route.ref,xy[0],xy[1]+3);
+        const traffic=signedTraffic.get(route.id);
+        const waiting=Math.round((traffic?.waiting||0)+(traffic?.returnWaiting||0));
+        const label=waiting?route.ref+" · "+format(waiting)+" wartend":route.ref;
+        const w=context.measureText(label).width+8;
+        // Route-level queue counts, not invented GPS jam extents.
+        context.fillStyle=waiting>=100?"#b53944":waiting>0?"#a86c14":"#245ba1";
+        context.fillRect(xy[0]-w/2,xy[1]-8,w,15);
+        context.fillStyle="#fff";context.fillText(label,xy[0],xy[1]+3);
       }
     }
     context.restore();
