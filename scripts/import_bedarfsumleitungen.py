@@ -46,7 +46,9 @@ class Wiki(HTMLParser):
             if "wiki.openstreetmap.org" in absolute and re.match(r"^/wiki/(?:DE:)?(?:Germany|WikiProject_Germany)/Bedarfsumleitung/[^/]+$",path):
                 self.links.add(absolute.split("#")[0])
             rid=relation_id(link)
-            if rid and rid>0 and self.row is not None: self.ids.add(rid)
+            if rid and rid>0 and self.row is not None and len(self.row)==4: self.ids.add(rid)
+        if tag=="img" and self.cell is not None:
+            self.cell+=" "+a.get("alt","")+" "+a.get("title","")
     def handle_data(self,data):
         if self.heading: self.heading_text+=data
         if self.cell is not None: self.cell+=data
@@ -62,7 +64,7 @@ class Wiki(HTMLParser):
             self.row.append(" ".join(self.cell.split()));self.cell=None
         if tag=="tr" and self.row is not None:
             c=self.row
-            if c and re.match(r"^U\s*\d+",c[0],re.I):
+            if c and re.match(r"^U\s*\d+",c[0],re.I) and not re.search(r"gibt es nicht|keine Bedarfsumleitung beschildert|aufgehoben", " ".join(c[5:7]),re.I):
                 record={"ref":c[0],"motorway":self.motorway,
                         "from":c[2] if len(c)>2 else "", "to":c[3] if len(c)>3 else "",
                         "direction":self.direction,"destination":c[1] if len(c)>1 else "",
@@ -80,7 +82,13 @@ def wiki_catalogue():
         parser=Wiki();parser.feed(get(page))
         if not parser.rows and not parser.unmapped:
             raise RuntimeError("Regional catalogue empty: "+region)
-        records.update({rid:{**row,"region":region} for rid,row in parser.rows.items()})
+        for rid,row in parser.rows.items():
+            previous=records.get(rid)
+            if previous:
+                previous["regions"]=sorted(set(previous.get("regions",[previous["region"]])+[region]))
+                if len(row.get("from",""))+len(row.get("to",""))>len(previous.get("from",""))+len(previous.get("to","")):
+                    previous.update({**row,"region":region})
+            else: records[rid]={**row,"region":region,"regions":[region]}
         unmapped.extend({**row,"region":region} for row in parser.unmapped)
         coverage[region]={"relations":len(parser.rows),"withoutRelation":len(parser.unmapped)}
         print(page,coverage[region],flush=True);time.sleep(.3)
@@ -121,7 +129,7 @@ def convert(element,meta):
     m=re.search(r"\bU\s*(\d+[a-z]?)\b",ref,re.I)
     if not m:return None
     ref="U "+m.group(1)
-    motor=tags.get("detour") or meta.get("motorway") or tags.get("name","")
+    motor=" ".join([tags.get("detour",""),meta.get("motorway",""),tags.get("name","")])
     motors=sorted(set("A"+x for x in re.findall(r"\bA\s*(\d+)\b",motor,re.I)))
     members=[m for m in element.get("members",[]) if m.get("type")=="way"]
     ways=[]
@@ -134,19 +142,19 @@ def convert(element,meta):
     start=tags.get("from") or meta.get("from","")
     end=tags.get("to") or meta.get("to","")
     # A connected line is necessary but not sufficient for an audited route.
-    uncertain=bool(re.search(r"angefangen|unvollständig|gelöscht|unsicher|stummel|nicht fertig|nicht mehr|nur.*(?:anfang|ende)",meta.get("notes",""),re.I))
+    uncertain=bool(re.search(r"angefangen|begonnen|unvollständig|gelöscht|unsicher|stummel|nicht fertig|nicht mehr|nur.*(?:anfang|ende)|an ausfahrt gesichtet|relation\s*\([012]/4\)",meta.get("notes",""),re.I))
     complete=(not uncertain and len(parts)==1 and len(ways)==len(members) and
               not any(x.get("type")=="relation" for x in element.get("members",[])) and
               bool(motors and start and end and re.search(r"[A-Za-zÄÖÜäöüß]{3}",start) and re.search(r"[A-Za-zÄÖÜäöüß]{3}",end)))
     return {"id":rid,"ref":ref,"motorways":motors,"from":start,"to":end,
         "destination":tags.get("destination") or meta.get("destination",""),
         "direction":meta.get("direction",""),"operator":tags.get("operator",""),
-        "region":meta.get("region",""),"notes":meta.get("notes",""),
+        "region":meta.get("region",""),"regions":meta.get("regions",[]),"notes":meta.get("notes",""),
         "lengthM":round(length),"connected":len(parts)==1,"eligible":complete,
         "parts":[simplify(p) for p in parts]}
 def main():
     catalogue,unmapped,coverage=wiki_catalogue()
-    query='[out:json][timeout:120];area(3600051477)->.de;(rel["type"="route"]["route"="detour"](area.de);rel["type"="route"]["ref"~"^U ?[0-9]+[a-zA-Z]?$"]["detour"](area.de););out ids;'
+    query='[out:json][timeout:120];area(3600051477)->.de;(rel["type"="route"]["route"="detour"](area.de);rel["type"="route"]["ref"~"^U ?[0-9]+[a-zA-Z]?$"]["detour"](area.de);rel["type"="route"]["ref"~"^U ?[0-9]+[a-zA-Z]?$"]["route"="road"](area.de););out ids;'
     ids=set(catalogue)|{e["id"] for e in overpass(query) if e["type"]=="relation"}
     print("Relation IDs",len(ids),flush=True)
     result=[];returned=set();ordered=sorted(ids)
