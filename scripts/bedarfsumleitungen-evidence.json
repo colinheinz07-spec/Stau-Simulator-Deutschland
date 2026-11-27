@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "type": "official-geodata",
+      "region": "Hamburg",
+      "published": "2026-07-11",
+      "publisher": "Freie und Hansestadt Hamburg, Behörde für Verkehr und Mobilitätswende",
+      "url": "https://suche.transparenz.hamburg.de/dataset/bedarfsumleitungen-hamburg26",
+      "license": "Datenlizenz Deutschland – Namensnennung 2.0",
+      "notes": "Official WFS/GeoJSON source; compare against OSM, do not merge geometry without provenance."
+    },
+    {
+      "type": "official-route-confirmation",
+      "motorway": "A61",
+      "refs": [
+        "U 3",
+        "U 4"
+      ],
+      "from": "Koblenz-Waldesch",
+      "to": "Emmelshausen",
+      "roads": [
+        "L214",
+        "B327"
+      ],
+      "published": "2026-08-10",
+      "publisher": "Autobahn GmbH des Bundes",
+      "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a61-temporaere-vollsperrung-zwischen-der-as-koblenz-waldesch-und-der-as-emmelshausen-wegen-abbruch-von-bahnbruecke",
+      "notes": "Confirms corridor in both directions, not individual relation endpoints; do not overwrite Boppard boundaries."
+    }
+  ],
+  "relations": {
+    "398709": {
+      "motorway": "A3",
+      "ref": "U 8",
+      "from": "AS 37 Dierdorf",
+      "to": "AS 38 Ransbach-Baumbach",
+      "direction": "Frankfurt (südwärts)",
+      "publisher": "Autobahn GmbH des Bundes",
+      "published": "2026-11-03",
+      "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a3-gehoelzpflegearbeiten-fuehren-zu-temporaeren-verkehrseinschraenkungen-im-bereich-der-as-dierdorf",
+      "additionalSource": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a3-temporaere-verkehrseinschraenkungen-zwischen-der-as-dierdorf-und-der-as-ransbach-baumbach-durch-transport-von-windkraftanlagen-update",
+      "exitEdge": "extra-heumar-24492798",
+      "entryEdge": "extra-heumar-807709863",
+      "notes": "Official start/end and direction confirmed. Exact missing street itinerary not yet confirmed."
+    }
+  }
+}
