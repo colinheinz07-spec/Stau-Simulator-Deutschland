@@ -291,8 +291,26 @@ function createLegacyTrafficScenario(data){
   const NO_LANES=new Set(); // read-only shared empty set for unrestricted cells
   const traffic=global.StauTrafficReference;
   if(!traffic)throw Error("traffic-reference.js fehlt vor offline-traffic.js");
+  // Identical directed OSM ramps must not each get a separate capacity,
+  // turn weight and stock. Keep explicit interchange transfers as the
+  // canonical record; preserve legacy IDs when restoring saved incidents.
+  const rampCopies=new Map(),rampAliases=new Map();
+  for(const row of data.roads){
+    if(row[1]!=="ramp"||!Number.isFinite(Number(row[6]))||Number(row[6])<=0||!row[4]?.length)continue;
+    const key=JSON.stringify([Number(row[6]),row[3],row[4]]);
+    const group=rampCopies.get(key)||[];
+    group.push(row);rampCopies.set(key,group);
+  }
+  for(const group of rampCopies.values()){
+    if(group.length<2)continue;
+    const canonical=group.find(row=>row[0].startsWith("extra-turn-"))||group[0];
+    for(const row of group)if(row!==canonical)rampAliases.set(row[0],canonical[0]);
+  }
+  const canonicalEvent=raw=>raw&&rampAliases.has(raw.edgeId)?
+    {...raw,edgeId:rampAliases.get(raw.edgeId)}:raw;
   let excludedRest=0;
   for(const row of data.roads){
+    if(rampAliases.has(row[0]))continue;
     if(!Array.isArray(row[4])||row[4].length<2)continue;
     if(isLegacyService(row)){excludedRest++;continue;}
     // The old import also synthesized an A3 U-turn at Rösrath by cutting
@@ -1040,6 +1058,7 @@ function createLegacyTrafficScenario(data){
   }
   function clockMs(){return simStart+elapsed*1000;}
   function migrateLegacyEvent(raw){
+    raw=canonicalEvent(raw);
     if(!raw||!reversedWays.includes(raw.edgeId)||!finite(Number(raw.offsetM)))
       return raw;
     const edge=byId.get(raw.edgeId);
@@ -1054,6 +1073,7 @@ function createLegacyTrafficScenario(data){
     return {...raw,offsetM:newOffset};
   }
   function restoreEvent(raw){
+    raw=canonicalEvent(raw);
     let edge=raw&&byId.get(raw.edgeId);
     // The old snapshot sometimes combined several consecutive ramp Ways
     // of different widths under one ID. Restore old offsets on their actual
@@ -1408,6 +1428,7 @@ function createLegacyTrafficScenario(data){
       fromRealJunction:true}:null;
   }
   function checkedEvent(raw){
+    raw=canonicalEvent(raw);
     if(!raw||typeof raw!=="object")throw Error("Ereignisdaten fehlen");
     const edge=byId.get(raw.edgeId),kind=raw.kind;
     if(!edge)throw Error("Unbekannter OSM-Fahrweg");
