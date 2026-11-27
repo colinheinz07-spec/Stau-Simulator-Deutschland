@@ -66,6 +66,11 @@ async function startLegacyCanvas(existingMap=null){
     }
     workerFailure=message;pauseSimulation();
     $("map-status").textContent="Berechnung angehalten: "+message+" · Seite neu laden";
+  },(stats,clock)=>{
+    if(!simRunning||document.hidden)return;
+    const sec=Math.floor(stats.simSeconds);
+    $("sim-clock").textContent=Math.floor(sec/60)+":"+String(sec%60).padStart(2,"0");
+    if(window.StauEventSchedule)window.StauDashboard?.setClock(window.StauEventSchedule.localDateTime(clock));
   })||localScenario;
   document.body.classList.add("traffic-ready");
   const canvas=document.createElement("canvas");
@@ -951,6 +956,9 @@ async function startLegacyCanvas(existingMap=null){
       else $("sim-model-date").textContent="Modell-Datum: "+local.replace("T"," ")+" Uhr";
     }
     window.StauDashboard?.setRunning(simRunning);
+    const runState=$("sim-run-state");
+    if(runState&&simRunning&&(scenario.workerMode||mobileView))
+      runState.textContent=scenario.workerMode?(scenario.workerReady?"Läuft · Worker":"Worker startet"):"Läuft · Kompatibel";
     if(selected){
       const flow=scenario.edgeActivity?.(selected.id,selectedOffsetM);
       updateCapacityDetails(flow);
