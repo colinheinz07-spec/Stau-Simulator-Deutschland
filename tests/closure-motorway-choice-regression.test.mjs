@@ -65,11 +65,11 @@ test('unavoidable motorway closure still mandates the last lawful AS',async()=>{
  }
  assert.ok(s.edgeActivity('closed').enteredVph<1);
 });
-test('ordinary voluntary thresholds start at 60 minutes',async()=>{
+test('ordinary voluntary thresholds start at 45 minutes',async()=>{
  const s=await create([
   ['main','mainline','A3',3,[[50,7],[50,7.02]],'',1],
   ['out','ramp','A3',1,[[50,7.02],[50.005,7.02]],'AS 1 · Abfahrt',2]
  ]);
- for(const [delay,share] of [[0,0],[10,0],[44.99,0],[45,0],[59.99,0],[60,.10],[90,.30],[120,.75],[240,.95],[480,1]])
+ for(const [delay,share] of [[0,0],[10,0],[44.99,0],[45,.20],[60,.25],[90,.35],[120,.45],[240,.85],[285,1],[480,1]])
   assert.ok(Math.abs(s.diversionShare(delay)-share)<1e-9);
 });
