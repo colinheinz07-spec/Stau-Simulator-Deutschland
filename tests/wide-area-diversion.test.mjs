@@ -23,7 +23,7 @@ test("Dernbach–Montabaur full closure in both directions offers distinct A61 a
   assert.equal(s.wideDetourRoutes("north")[0]?.id,"a61-nord");
   assert.notEqual(s.wideDetourRoutes("south")[0].targetEdgeId,s.wideDetourRoutes("north")[0].targetEdgeId);
   assert.equal(s.wideDiversionShare(44.99),0);
-  assert.equal(s.wideDiversionShare(59.99),0);
+  assert.ok(s.wideDiversionShare(45)>0);
   assert.ok(s.wideDiversionShare(60)>0);
   assert.ok(s.wideDiversionShare(120)>0&&s.wideDiversionShare(120)<.1);
   assert.ok(s.wideDiversionShare(360)>s.wideDiversionShare(240));
