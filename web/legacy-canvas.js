@@ -941,17 +941,18 @@ async function startLegacyCanvas(existingMap=null){
   backdrop.addEventListener("click",close);
   document.addEventListener("keydown",e=>{if(e.key==="Escape")close();});
   function displayStats(){
-    const stats=scenario.totals(),sec=Math.floor(stats.simSeconds);
+    const stats=scenario.totals(),progress=scenario.workerMode?scenario.displayProgress?.():null,
+      sec=Math.floor(progress?.stats.simSeconds??stats.simSeconds);
     $("sim-clock").textContent=Math.floor(sec/60)+":"+String(sec%60).padStart(2,"0");
     $("sim-vehicles").textContent=format(Math.round(stats.vehiclesOnNetwork));
     $("sim-outside").textContent=format(Math.round(stats.waitingOutsideSources));
     $("sim-detours").textContent=format(Math.round(stats.vehiclesOnDetours||0));
     $("map-status").textContent=workerFailure?"Berechnung angehalten: "+workerFailure+" · Seite neu laden":
-      "Modell "+Math.floor(sec/60)+" min · "+format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz";
+      "Modell "+Math.floor(stats.simSeconds/60)+" min · "+format(Math.round(stats.vehiclesOnNetwork))+" Fz im Netz";
     $("sim-toggle").title=scenario.workerMode?(scenario.workerReady?"Berechnung im Web Worker":"Web Worker startet"):"Kompatibilitätsmodus · Berechnung im Browser";
     if(eventEditor)eventEditor.updateStatus();
     if(window.StauEventSchedule){
-      const local=window.StauEventSchedule.localDateTime(scenario.clockMs());
+      const local=window.StauEventSchedule.localDateTime(progress?.clock??scenario.clockMs());
       if(window.StauDashboard)window.StauDashboard.setClock(local);
       else $("sim-model-date").textContent="Modell-Datum: "+local.replace("T"," ")+" Uhr";
     }
