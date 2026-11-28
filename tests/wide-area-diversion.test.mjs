@@ -25,9 +25,10 @@ test("Dernbach–Montabaur full closure in both directions offers distinct A61 a
   assert.equal(s.wideDiversionShare(44.99),0);
   assert.ok(s.wideDiversionShare(45)>0);
   assert.ok(s.wideDiversionShare(60)>0);
-  assert.ok(s.wideDiversionShare(120)>0&&s.wideDiversionShare(120)<.1);
+  assert.equal(s.wideDiversionShare(120),s.diversionShare(120));
+  assert.equal(s.wideDiversionShare(285),1);
   assert.ok(s.wideDiversionShare(360)>s.wideDiversionShare(240));
-  assert.equal(s.wideDiversionShare(600),.9);
+  assert.equal(s.wideDiversionShare(600),1);
 });
 
 test("24-hour closure: covered exits keep draining and a wide detour conserves vehicles",async()=>{
