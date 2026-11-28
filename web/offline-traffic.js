@@ -342,6 +342,7 @@ function createLegacyTrafficScenario(data){
       // for a full exit do not get a new random destination every tick.
       turnStock:Array(count).fill(null),
       voluntaryWaiting:Array(count).fill(null),
+      turnWillingness:new Float64Array(count),
       bypassStock:new Float64Array(count),
       // User-defined unrestricted motorway service, not a speed threshold.
        capacityPerLane:1800,
@@ -2250,7 +2251,7 @@ function createLegacyTrafficScenario(data){
     returnWaitCache.clear();returnWaitMinute=-1;
     entryReachEpoch=-1;
     for(const edge of edges){
-      edge.stock.fill(0);edge.entryStock.fill(0);edge.divertStock.fill(0);edge.bypassStock.fill(0);edge.routeStock.fill(null);edge.turnStock.fill(null);edge.voluntaryWaiting.fill(null);
+      edge.stock.fill(0);edge.entryStock.fill(0);edge.divertStock.fill(0);edge.bypassStock.fill(0);edge.routeStock.fill(null);edge.turnStock.fill(null);edge.voluntaryWaiting.fill(null);edge.turnWillingness.fill(0);
       edge.backlog=0;edge.speed=edge.freeKmh;
       edge.cellFlowSpeeds.fill(edge.freeKmh);edge.brakeMemory.fill(0);edge.platoonProgress.fill(0);
       edge.cellSpeedMovement.fill(0);edge.cellSpeedExposure.fill(0);
@@ -2541,15 +2542,7 @@ function createLegacyTrafficScenario(data){
   // Long-distance navigation is a separate decision from a local AS exit.
   // Four hours do NOT force every car off; with 10 hours of delay most
   // through traffic prefers a genuinely available regional alternative.
-  function wideDiversionShare(delay){
-    if(!(delay>=VOLUNTARY_START_MIN))return 0;
-    const anchors=[[45,.02],[120,.05],[180,.08],[240,.25],[360,.55],[480,.78],[600,.90]];
-    for(let i=1;i<anchors.length;i++){
-      const [lo,a]=anchors[i-1],[hi,b]=anchors[i];
-      if(delay<=hi)return a+(b-a)*(delay-lo)/(hi-lo);
-    }
-    return .90;
-  }
+  function wideDiversionShare(delay){return diversionShare(delay);}
   const delayCache=new Map();
   let delayCacheMinute=-1;
   // Project excess travel time over physically consecutive same-direction OSM
@@ -2901,25 +2894,17 @@ function createLegacyTrafficScenario(data){
   }
   const exitChoiceCache=new Map();let exitChoiceStamp="";
   function exitChoiceShare(road,link,plan){
-    if(!plan)return closureFingerprint&&Number.isFinite(closureDistanceAhead(road,link.fromM,Infinity))?
-      localDiversionShare(road,link.fromM,measuredDelayAhead(road,link.fromM,Infinity),null):
-      unplannedExitShare(road,link.fromM);
+    if(!plan)return unplannedExitShare(road,link.fromM);
     const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
     if(exitChoiceStamp!==stamp){exitChoiceCache.clear();exitChoiceStamp=stamp;}
     const key=road.id+":"+link.fromM+":"+link.to+":"+plan.closureId;
     if(exitChoiceCache.has(key))return exitChoiceCache.get(key);
     const delay=observedPlanDelay(road,link.fromM,plan);
-    // The same-carriageway queue is an independent local navigation signal.
-    // Do not cap its willingness at the delay to the next junction or at
-    // estimated detour/reentry waiting time.
-    const sameRoadShare=ownCarriagewayShare(road,link.fromM,plan);
-    let share=localDiversionShare(road,link.fromM,delay,plan);
-    if(share>0&&plan.kind!=="closure"){
-      const directFree=Math.min(...rampMainlineArrivals(edges[plan.reentry]).map(a=>
-        directedDelayToCause(road,link.fromM,a.road.id,a.metre,false,false,true)));
-      if(exitTravelMinutes(link,plan)+5>=delay+(Number.isFinite(directFree)?directFree:0))share=0;
-    }
-    share=Math.max(share,sameRoadShare);
+    const cause=byId.get(plan.causeEdgeId);
+    const same=cause?.kind==="mainline"&&cause.ref===road.ref&&
+      directedCorridorIds.get(cause.index)===directedCorridorIds.get(road.index);
+    const share=same&&plan.kind!=="closure"?unplannedExitShare(road,link.fromM):
+      Math.max(localDiversionShare(road,link.fromM,delay,plan),ownCarriagewayShare(road,link.fromM,plan));
     exitChoiceCache.set(key,share);
     return share;
   }
@@ -3097,7 +3082,7 @@ function createLegacyTrafficScenario(data){
       if(cost+30>=delay||mappedBypassMinutes(source,route)<=cost+5)continue;
       // Not every arrival is a long-distance trip. Existing local trips
       // and drivers preferring the original road remain represented.
-      const fraction=willing*(source.kind==="mainline"?.70:.45);
+      const fraction=willing;
       if(best&&best.saving>=delay-cost)continue;
       best={fraction,saving:delay-cost,plan:{terminal:source.index,
         reentry:route.reentry.index,durationS,kind:"wide",closureId:route.closureId,
@@ -3422,6 +3407,12 @@ function createLegacyTrafficScenario(data){
   // measure the entire connected wave, not just the short leg to the next AS.
   // This deliberately does not depend on a detour plan or a unique map-label
   // head: the latter can disappear when the queue joins another congested AS.
+  // Count a spillback on motorway cells, not the off-ramp itself.
+  function mainlineNavigationLoss(road,k,metres){
+    const through=routingCellLoss(road,k,metres),v=visualCellState(road,k);
+    if(v.vehicles<.15||v.fraction<.12||v.speed>65)return through;
+    return Math.max(through,metres*.06*Math.max(0,1/Math.max(1,v.speed)-1/road.freeKmh));
+  }
   function physicalApproachQueueDelay(road,offset,later){
     let current=road,from=offset,delay=0,best=0,gap=0,passedLater=false;
     const seen=new Set();
@@ -3430,22 +3421,22 @@ function createLegacyTrafficScenario(data){
       for(let k=Math.max(0,Math.floor(from/current.cellLength));k<current.n;k++){
         const lo=Math.max(from,k*current.cellLength),hi=Math.min(current.lengthM,(k+1)*current.cellLength);
         if(hi<=lo+.001)continue;
-        if(current===later?.road&&lo>=later.metre-.05)passedLater=true;
-        if(passedLater&&delay===0)return best;
-        const loss=routingCellLoss(current,k,hi-lo);
-        if(loss>0){
-          delay+=loss;best=Math.max(best,delay);gap=0;
-        }else if(delay>0){
-          gap+=hi-lo;
-          if(gap>600){
-            if(passedLater)return best;
-            delay=0;gap=0;
+        const boundary=current===later?.road?later.metre:Infinity;
+        const pieces=boundary>lo+.001&&boundary<hi-.001?[[lo,boundary],[boundary,hi]]:[[lo,hi]];
+        for(const [a,b] of pieces){
+          if(a>=boundary-.001)passedLater=true;
+          if(passedLater&&!delay)return best;
+          const loss=mainlineNavigationLoss(current,k,b-a);
+          if(loss>0){delay+=loss;best=Math.max(best,delay);gap=0;}
+          else if(delay>0){
+            gap+=b-a;
+            if(gap>600){if(passedLater)return best;delay=0;gap=0;}
           }
+          if(best>=285)return best;
         }
-        if(best>=285)return best; // willingness is already 100%
       }
       if(current===later?.road)passedLater=true;
-      if(passedLater&&delay===0)break;
+      if(passedLater&&!delay)break;
       const next=current.next.filter(t=>edges[t.to].kind==="mainline"&&
         edges[t.to].ref===road.ref&&directedCorridorIds.get(t.to)===directedCorridorIds.get(road.index)&&
         !blockedMovement(current,t));
@@ -3466,31 +3457,7 @@ function createLegacyTrafficScenario(data){
     if(unplannedExitStamp!==stamp){unplannedExitMemo.clear();unplannedExitStamp=stamp;}
     const key=road.id+":"+Math.round(offset*100);
     if(unplannedExitMemo.has(key))return unplannedExitMemo.get(key);
-    const later=firstLocalExit(road,offset+.06),groups=new Set(),seen=new Set();
-    let current=road,from=offset,share=0;
-    while(current&&!seen.has(current.id)){
-      seen.add(current.id);
-      const end=current===later?.road?later.metre:current.lengthM;
-      for(const {segment,group} of severeQueueSegments.get(current.id)||[])
-        if(segment.toM>from+.05&&segment.fromM<end-.05)groups.add(group);
-      if(current===later?.road)break;
-      const next=current.next.filter(t=>edges[t.to].kind==="mainline"&&edges[t.to].ref===road.ref&&!blockedMovement(current,t));
-      if(next.length!==1)break;
-      current=edges[next[0].to];from=next[0].toM;
-    }
-    // A connected through queue can span several closely spaced AS.
-    const connected=remainingConnectedQueueDelay(road,offset);
-    if(later&&hasClearLaterExit(road,offset,true)){
-      unplannedExitMemo.set(key,0);return 0;
-    }
-    share=diversionShare(connected);
-    for(const group of groups){
-      const head=byId.get(group.endEdgeId);
-      const remaining=corridorDelayBetween(road,offset,head,group.endOffsetM);
-      if(Number.isFinite(remaining))share=Math.max(share,
-        diversionShare(Math.min(remaining,group.routingDelayMin),group.worstKmh<=1));
-    }
-    if(share<1)share=Math.max(share,diversionShare(physicalApproachQueueDelay(road,offset,later)));
+    const share=diversionShare(physicalApproachQueueDelay(road,offset,firstLocalExit(road,offset+.06)));
     unplannedExitMemo.set(key,share);return share;
   }
   function nextClosureDecisionDelay(road,offset){
@@ -3739,7 +3706,7 @@ function createLegacyTrafficScenario(data){
     return Math.max(ownCarriagewayShare(edge,link.fromM,plan),
       fraction*(plan?.causeEdgeId?bottleneckExposureAhead(edge,link.fromM,plan.causeEdgeId):1));
   }
-  function clearTurnWaiting(edge,k){edge.turnStock[k]=null;edge.voluntaryWaiting[k]=null;}
+  function clearTurnWaiting(edge,k){edge.turnStock[k]=null;edge.voluntaryWaiting[k]=null;edge.turnWillingness[k]=0;}
   // Only the extra voluntary turn demand still physically ON the mainline
   // can reconsider. Normal local destinations and vehicles already ON the
   // exit ramp are not removed, respawned or sent through a closure.
@@ -3765,7 +3732,7 @@ function createLegacyTrafficScenario(data){
   function eligibleQueueHeads(){
     if(queueHeadSnapshot===jamGroups)return eligibleHeads;
     queueHeadSnapshot=jamGroups;eligibleHeads=new Set();
-    const candidates=jamGroups.filter(g=>g.lengthM>=500&&g.routingDelayMin>=5&&g.startEdgeId&&g.endEdgeId&&
+    const candidates=jamGroups.filter(g=>g.routingDelayMin>0&&g.startEdgeId&&g.endEdgeId&&
       navigationQueueBands.has(g.endEdgeId)&&
       !exitBacklogAtHead(byId.get(g.endEdgeId),g.endOffsetM));
     if(candidates.reduce((sum,g)=>sum+g.routingDelayMin,0)<VOLUNTARY_START_MIN)return eligibleHeads;
@@ -4615,7 +4582,7 @@ function createLegacyTrafficScenario(data){
       // but leave the other motorway's original destinations untouched.
       const observed=observedPlanDelay(edge,bad.fromM,plan);
       const fraction=plan.kind==="closure"?1:
-        .75*diversionShare(Number.isFinite(observed)?observed:0);
+        diversionShare(Number.isFinite(observed)?observed:0);
       if(saving>0&&fraction>0&&(!best||fraction>best.fraction))
         best={...option,fraction,saving};
     }
@@ -4630,7 +4597,7 @@ function createLegacyTrafficScenario(data){
       if(blockedMovement(edge,c.turn))continue;
       // Don't build a costly alternate-route tree before drivers have a
       // measurable reason to leave this corridor in the first place.
-      const voluntary=c.kind==="closure"?0:.65*diversionShare(observedPlanDelay(edge,c.turn.fromM,c));
+      const voluntary=c.kind==="closure"?0:diversionShare(observedPlanDelay(edge,c.turn.fromM,c));
       if(c.kind!=="closure"&&voluntary<=0)continue;
       const target=edges[c.target];
       if((activeEffects.get(target.id)||NO_EFFECTS).some(x=>x.event.kind==="closure"&&x.toM>=target.lengthM-.01))continue;
@@ -4687,7 +4654,7 @@ function createLegacyTrafficScenario(data){
       // route. When traffic can still move, drivers retain different tastes.
       const mandatory=c.kind==="closure"&&original===Infinity&&!laterUsableExitBeforeClosure(edge,c.turn.fromM);
       const share=mandatory?1:
-        c.kind==="closure"?.65*diversionShare(observedPlanDelay(edge,c.turn.fromM,c)):voluntary;
+        c.kind==="closure"?diversionShare(observedPlanDelay(edge,c.turn.fromM,c)):voluntary;
       const saving=original-alternative;
       if(share<=0||original<=alternative)continue;
       // Infinity is a valid mandatory saving but does not distinguish two
@@ -5088,8 +5055,8 @@ function createLegacyTrafficScenario(data){
           localDelayChoice(link)>0):[];
         const localDelayShare=localDelayTurns.length?Math.max(...localDelayTurns.map(link=>
           localDelayChoice(link))):0;
-        const dynamic=!localDelayShare&&edge.kind==="mainline"?interchangeTransferChoice(edge,k,options):null;
-        const motorway=!localDelayShare&&!dynamic&&edge.kind==="mainline"?motorwayChoice(edge,k,options):null;
+        const motorway=edge.kind==="mainline"?motorwayChoice(edge,k,options):null;
+        const dynamic=!motorway&&!localDelayShare&&edge.kind==="mainline"?interchangeTransferChoice(edge,k,options):null;
         if(dynamic){
           const {bad,good,plan,fraction}=dynamic;
           const blocked=options.find(o=>o.to===bad.to&&o.toCell===bad.toCell);
@@ -5111,6 +5078,7 @@ function createLegacyTrafficScenario(data){
           let alternate=options.find(o=>o.to===motorway.turn.to&&o.toCell===motorway.turn.toCell);
           if(!alternate){alternate={...motorway.turn};options.push(alternate);}
           for(const turn of motorway.through)turn.weight*=1-motorway.share;
+          if(motorway.share>=1)options=options.filter(o=>o===alternate||o.weight>1e-9);
           alternate.weight+=moved;
           alternate.markFraction=moved/alternate.weight;
           alternate.newRouteTerminal=motorway.target;
@@ -5275,37 +5243,34 @@ function createLegacyTrafficScenario(data){
             if(!legalKeys.has(key))edge.voluntaryWaiting[k].delete(key);
           const through=options.find(o=>edges[o.to].kind==="mainline"&&edges[o.to].ref===edge.ref&&!o.diversionEligible);
           const throughKey=through?cellKey(through.to,through.toCell):undefined;
+          // Reconsider OLD waiting demand only when willingness increases.
+          const willingness=motorway?.share??dynamic?.fraction??diversionIntent;
+          const previous=edge.turnWillingness[k];
+          const increment=willingness>previous&&previous<1?(willingness-previous)/(1-previous):0;
+          if(increment>0&&edge.kind==="mainline"){
+            const donors=options.filter(o=>dynamic?
+              o.to===dynamic.bad.to&&o.toCell===dynamic.bad.toCell:
+              edges[o.to].kind==="mainline"&&edges[o.to].ref===edge.ref&&!o.diversionEligible);
+            const recipients=options.filter(o=>(o.diversionEligible||o.newRouteTerminal!==undefined)&&!donors.includes(o));
+            const totalWeight=recipients.reduce((n,o)=>n+o.weight,0);
+            if(totalWeight>0)for(const donor of donors){
+              const from=cellKey(donor.to,donor.toCell),queued=pending.get(from)||0,shifted=queued*increment;
+              if(shifted<=0)continue;
+              pending.set(from,queued-shifted);
+              for(const opt of recipients){
+                const key=cellKey(opt.to,opt.toCell),amount=shifted*opt.weight/totalWeight;
+                pending.set(key,(pending.get(key)||0)+amount);
+                if(voluntaryLocalDecision&&opt.diversionEligible&&localTerminal(edges[opt.to]))
+                  rememberVoluntaryWaiting(edge,k,key,from,amount);
+              }
+            }
+          }
+          edge.turnWillingness[k]=willingness;
           const committed=[...pending.values()].reduce((n,x)=>n+x,0);
           const fresh=Math.max(0,ordinaryStock-committed);
           for(const choice of choices)pending.set(choice.key,(pending.get(choice.key)||0)+fresh*choice.weight/sum);
           if(voluntaryLocalDecision)for(const opt of options)if(opt.diversionEligible&&localTerminal(edges[opt.to]))
             rememberVoluntaryWaiting(edge,k,cellKey(opt.to,opt.toCell),throughKey,fresh*opt.weight/sum*(opt.diversionFraction||0));
-          // Drivers waiting on the through lanes at THIS fork can still
-          // decide to leave when the queue reaches the junction. The old
-          // permanent ordinary turn commitment trapped every waiting car
-          // in the through queue and starved the open exit of new arrivals.
-          // Reconsider gradually, only when the through movement is actually
-          // constrained and the chosen exit has real receiving capacity.
-          const willingness=motorway?.share??dynamic?.fraction??diversionIntent;
-          if(willingness>0&&edge.kind==="mainline"){
-            const donors=options.filter(o=>dynamic?
-              o.to===dynamic.bad.to&&o.toCell===dynamic.bad.toCell:
-              edges[o.to].kind==="mainline"&&edges[o.to].ref===edge.ref&&!o.diversionEligible);
-            for(const opt of options){
-              if(!(opt.diversionEligible||opt.newRouteTerminal!==undefined)||donors.includes(opt))continue;
-              const key=cellKey(opt.to,opt.toCell),motion=Math.max(.001,edge.cellMotion[k]);
-              let room=Math.max(0,receive[opt.to][opt.toCell]/motion-(pending.get(key)||0));
-              for(const donor of donors){
-                const from=cellKey(donor.to,donor.toCell),queued=pending.get(from)||0;
-                const waiting=Math.max(0,queued-receive[donor.to][donor.toCell]/motion);
-                const shifted=Math.min(room,waiting*Math.min(1,willingness*dt/60));
-                if(shifted<=0)continue;
-                pending.set(from,queued-shifted);pending.set(key,(pending.get(key)||0)+shifted);room-=shifted;
-                if(voluntaryLocalDecision&&opt.diversionEligible&&localTerminal(edges[opt.to]))
-                  rememberVoluntaryWaiting(edge,k,key,from,shifted);
-              }
-            }
-          }
           edge.turnStock[k]=pending;
           ordinaryTurns=new Map(choices.map(o=>[o.key,Math.min((pending.get(o.key)||0)*edge.cellMotion[k],o.receiving)]));
           const demand=[...ordinaryTurns.values()].reduce((n,x)=>n+x,0);
