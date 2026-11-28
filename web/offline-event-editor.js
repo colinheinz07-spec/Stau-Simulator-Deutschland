@@ -281,10 +281,20 @@ function createOfflineEventEditor(options){
         for(const route of scenario.designatedDetourRoutes?.(ev.id)||[]){
           const via=document.createElement("small");via.textContent="Vorgegebene Modellumleitung: "+route;box.append(via);
         }
-        for(const route of scenario.wideDetourRoutes?.(ev.id)||[]){
+        const motorwayRoutes=new Set((scenario.validatedMotorwayBypasses?.(ev.id)||[])
+          .map(route=>route.motorways.join(" → ")));
+        for(const route of motorwayRoutes){
           const via=document.createElement("small");
-          via.textContent="Großraumumleitung (außerhalb Kartennetz, Modell): "+route.label+
-            (route.assigned>0?" · "+Math.round(route.assigned)+" Kfz umgeleitet":" · bei sehr hoher Verzögerung");
+          via.textContent="Befahrbare Autobahnumfahrung: "+route;
+          box.append(via);
+        }
+        // A configured remote option is not a recommendation. Display it
+        // only when vehicles have actually booked that off-map journey.
+        for(const route of scenario.wideDetourRoutes?.(ev.id)||[]){
+          if(!(route.assigned>0))continue;
+          const via=document.createElement("small");
+          via.textContent="Genutzte Großraumumleitung (Modell): "+route.label+
+            " · "+Math.round(route.assigned)+" Kfz umgeleitet";
           box.append(via);
         }
       }else box.append(name,info);
