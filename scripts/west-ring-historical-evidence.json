@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "scope": "Köln-West – Erfttal – Bliesheim – Meckenheim",
+  "rules": [
+    "Historical source records must be compared with current road geometry and directional access before use.",
+    "Distinguish permanent signed U-routes from temporary red-dot or construction diversions.",
+    "Never reactivate historical temporary ramps as permanent local entrances."
+  ],
+  "events": [
+    {
+      "date": "2021-11-21",
+      "kind": "historical-signed-local-diversion",
+      "event": {
+        "road": "A1",
+        "from": "Weilerswist-West",
+        "to": "AK Bliesheim",
+        "direction": "Köln"
+      },
+      "route": {
+        "label": "Roter Punkt (temporär)",
+        "roads": [
+          "L33"
+        ],
+        "via": [
+          "AS Weilerswist (A61)"
+        ]
+      },
+      "publisher": "Autobahn GmbH / Gemeinde Weilerswist",
+      "url": "https://www.weilerswist.de/verschiedenes/Vollsperrung-Weilerswist.pdf",
+      "status": "historical",
+      "notes": "Use only as evidence for real diversion behavior, not a permanent U-number."
+    },
+    {
+      "date": "2021-12-09",
+      "kind": "historical-network-disruption",
+      "event": {
+        "road": "A61",
+        "from": "AK Meckenheim",
+        "to": "AK Kerpen",
+        "direction": "Venlo"
+      },
+      "route": {
+        "motorways": [
+          "A565",
+          "A555"
+        ],
+        "via": [
+          "AK Meckenheim",
+          "Bonn",
+          "Köln"
+        ]
+      },
+      "publisher": "Autobahn GmbH / Stadt Hürth",
+      "url": "https://www.huerth.de/pressearchiv-21/2021-12-09-a61.php",
+      "additionalSource": "https://www.ksta.de/region/rhein-sieg-bonn/a61-ab-kreuz-meckenheim-bald-auch-nach-norden-wieder-befahrbar-178721",
+      "status": "historical",
+      "notes": "Flood recovery. The permanent shared A1/A61 section between Erfttal and Bliesheim has three lanes according to the restoration notice; temporary two-lane arrangements are not baseline."
+    },
+    {
+      "date": "2024-10-02",
+      "kind": "historical-signed-regional-diversion",
+      "event": {
+        "road": "A553",
+        "from": "AK Bliesheim",
+        "to": "AS Brühl-Süd",
+        "direction": "Köln",
+        "start": "2024-10-11",
+        "end": "2024-10-14"
+      },
+      "route": {
+        "motorways": [
+          "A565",
+          "A555"
+        ],
+        "via": [
+          "AK Meckenheim"
+        ],
+        "localRoads": [
+          "L33",
+          "L163",
+          "Kölner Straße"
+        ],
+        "localVia": [
+          "AS Weilerswist-West",
+          "AS Brühl-Süd"
+        ]
+      },
+      "publisher": "Autobahn GmbH / bonnbewegt",
+      "url": "https://bonnbewegt.de/de/node/137",
+      "status": "historical",
+      "notes": "Old AS Weilerswist was only opened provisionally during works. Never import as a permanent public ramp."
+    },
+    {
+      "date": "2026-11",
+      "kind": "historical-signed-interchange-diversion",
+      "event": {
+        "road": "A61/A565",
+        "from": "A61 aus Venlo",
+        "to": "A565 Richtung Bonn/Siegburg",
+        "junction": "AK Meckenheim"
+      },
+      "route": {
+        "label": "Roter Punkt",
+        "via": [
+          "AD Bad Neuenahr-Ahrweiler"
+        ]
+      },
+      "publisher": "Autobahn GmbH",
+      "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/a61-a565-verbindungssperrung-im-autobahnkreuz-meckenheim-in-richtung-bonn-siegburg-1",
+      "status": "historical",
+      "notes": "For simulation routing validation, not permanent U-number evidence."
+    },
+    {
+      "date": "2026-11",
+      "kind": "historical-signed-interchange-diversion",
+      "event": {
+        "road": "A1/A61/A553",
+        "from": "A1/A61 aus Kerpen",
+        "to": "A553 Richtung Brühl",
+        "junction": "AK Bliesheim"
+      },
+      "route": {
+        "label": "Roter Punkt",
+        "via": [
+          "AS Weilerswist-West"
+        ]
+      },
+      "publisher": "Autobahn GmbH",
+      "url": "https://www.autobahn.de/betrieb-verkehr/verkehrsmeldung/update-a1-a61-a553-naechtliche-verbindungssperrung-im-kreuz-bliesheim-in-richtung-bruehl",
+      "status": "historical",
+      "notes": "Verified event-specific signed diversion; not automatically applied to every closure."
+    }
+  ]
+}
