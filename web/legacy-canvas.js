@@ -689,7 +689,7 @@ async function startLegacyCanvas(existingMap=null){
   let signedTraffic=new Map();
   function signedStatus(){
     const el=$("signed-detour-status");
-    if(el)el.textContent=signedDetours?.status==="ready"?format(signedDetours.count)+" OSM-U-Routen · ab Zoom 9 sichtbar":signedDetours?.status==="unavailable"?"U-Routen-Datensatz noch nicht veröffentlicht":"U-Routen werden geladen …";
+    if(el)el.textContent=signedDetours?.status==="ready"?format(signedDetours.count)+" U-Routen · "+(signedDetours.coverage==="national-complete"?"Deutschland":signedDetours.coverage==="regional-fallback"?"regionaler Ersatzabruf":"Teilbestand Deutschland")+" · ab Zoom 9":signedDetours?.status==="unavailable"?"U-Routen-Datensatz noch nicht veröffentlicht":"U-Routen werden geladen …";
     requestDraw();
   }
   signedToggle?.addEventListener("change",requestDraw);
