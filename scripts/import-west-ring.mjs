@@ -120,8 +120,12 @@ export function extendWesternRing(data,elements,options={}){
    if(!raw||!roadRefs.length)continue;
    for(const ref of roadRefs){
      if(!["A1","A61"].includes(ref))continue;
-     let number=nums.find(x=>ref==="A1"?/^\d{3}[a-z]?$/.test(x):/^\d{2}[a-z]?$/.test(x))||nums[0];
-     let name=t.name||t["junction:name"]||JUNCTIONS[ref]?.[number];
+     const signedName=String(t.name||t["junction:name"]||"");
+     let number=nums.find(x=>ref==="A1"?/^\d{3}[a-z]?$/.test(x):/^\d{2}[a-z]?$/.test(x));
+     if(!number&&/erfttal/i.test(signedName))number=ref==="A1"?"107":"23";
+     if(!number&&/bliesheim/i.test(signedName))number=ref==="A1"?"109":"24";
+     if(!number)continue;
+     let name=signedName||JUNCTIONS[ref]?.[number];
      if(!name)continue;
      // The OSM node's signed number/name is authoritative. Never attach a
      // guessed coordinate to an interchange.
@@ -135,7 +139,7 @@ export function extendWesternRing(data,elements,options={}){
  // (non-motorway OSM ways sharing exact nodes), or an actual motorway merge.
  const publicNodes=new Set(elements.filter(e=>e.type==="node"&&e.tags?.highway&&["traffic_signals","give_way","stop","mini_roundabout"].includes(e.tags.highway)).map(e=>e.id));
  for(const w of elements)if(w.type==="way"&&w.tags?.highway&&!["motorway","motorway_link","service","construction","proposed","footway","cycleway","path","track"].includes(w.tags.highway)&&!["private","no"].includes(w.tags.access)&&!["private","no"].includes(w.tags.motor_vehicle))for(const n of w.nodes||[])publicNodes.add(n);
- const rampWays=new Set(),rampLabels=new Map(),visited=new Set(),rampByNode=new Map();
+ const rampWays=new Set(),rampLabels=new Map(),visited=new Set(),rampByNode=new Map(),unclassifiedRamps=[];
  for(const w of g.ways.values())if(w.tags.highway==="motorway_link")for(const n of w.nodes)push(rampByNode,n,w);
  for(const n of pathNodes)for(const seed of rampByNode.get(n)||[]){
    if(visited.has(seed.id))continue;
@@ -148,13 +152,24 @@ export function extendWesternRing(data,elements,options={}){
        for(const next of rampByNode.get(node)||[])if(!visited.has(next.id))queue.push(next);
      }
    }
-   const labels=[...touch].flatMap(n=>junctionAt.get(n)||[]);
-   if(!labels.length)continue; // no verified signed junction, no fake access
+   let labels=[...touch].flatMap(n=>junctionAt.get(n)||[]);
+   if(!labels.length){
+     // An entrance can merge at an unlabelled node on the actual carriageway.
+     // Use a nearby signed junction only to name the already-connected
+     // component, never to create any connection or link geometry.
+     const near=newJunctions.map(j=>({j,d:Math.min(...[...touch].map(n=>metres(g.nodes.get(n).p,g.nodes.get(j.node).p)))}))
+       .filter(x=>x.d<=900).sort((a,b)=>a.d-b.d);
+     if(near.length)labels=[near[0].j];
+     else {
+       unclassifiedRamps.push(...component.map(w=>w.id));
+       labels=[{ref:"",number:"",name:"Ungeprüfte Verbindung",kind:"AK",node:[...touch][0]}];
+     }
+   }
    for(const w of component){
      if(service(w.tags))continue;
      rampWays.add(w.id);
      const nearest=labels.map(j=>({j,d:Math.min(...w.nodes.map(n=>metres(g.nodes.get(n).p,g.nodes.get(j.node).p)))})).sort((a,b)=>a.d-b.d)[0].j;
-     rampLabels.set(w.id,{...nearest,local:local.size>0});
+     rampLabels.set(w.id,{...nearest,local:local.size>0&&nearest.kind==="AS"});
    }
  }
  const roads=[],sourceAudit={};
@@ -208,7 +223,7 @@ export function extendWesternRing(data,elements,options={}){
    }
  }
  const result={...data,roads:[...data.roads,...roads],junctions:[...catalog.values()],localRampBoundaryNodes:[...boundary.values()],
-   westRingAudit:{source:"OpenStreetMap contributors ODbL",routes,sharedWays:[...sharedWays],addedMainlines:roads.filter(r=>r[1]==="mainline").length,addedRamps:roads.filter(r=>r[1]==="ramp").length,lanesEstimated:laneEstimates,sourceWays:sourceAudit}};
+   westRingAudit:{source:"OpenStreetMap contributors ODbL",routes,sharedWays:[...sharedWays],addedMainlines:roads.filter(r=>r[1]==="mainline").length,addedRamps:roads.filter(r=>r[1]==="ramp").length,lanesEstimated:laneEstimates,unclassifiedRamps,sourceWays:sourceAudit}};
  return result;
 }
 async function getOSM(){
