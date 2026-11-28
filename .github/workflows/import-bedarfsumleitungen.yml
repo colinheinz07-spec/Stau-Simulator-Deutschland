@@ -30,6 +30,7 @@ jobs:
         run: |
           python -m py_compile scripts/import_bedarfsumleitungen.py scripts/repair_detour_geometry.py
           python scripts/repair_detour_geometry.py
+          python scripts/import-bedarfsumleitungen.py --self-test
       - run: python scripts/import_bedarfsumleitungen.py
       - name: Publish data atomically
         run: |
