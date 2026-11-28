@@ -745,6 +745,12 @@ function createLegacyTrafficScenario(data){
   const isLocalEntrance=edge=>/\b(?:auffahrt|zufahrt)\b/i.test(edge.name)&&
     !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(junctionLabel(edge));
   const isLocalOrigin=edge=>isLocalEntrance(edge)||edge.localOrigin===true;
+  // A public reentry must have an actual AS interface. A bare motorway
+  // interchange, transfer ramp, or unnamed cropped motorway end is not
+  // accessible from the local road network.
+  const publicReturn=edge=>edge?.kind==="ramp"&&
+    !/\b(?:AK|AD|Autobahnkreuz|Autobahndreieck)\b/i.test(junctionLabel(edge))&&
+    !!originLabel(edge)&&isLocalOrigin(edge);
   // A coordinate-only extract frequently starts an on-ramp at a small
   // unnamed branch of the public road, not at the signed motorway merge.
   // Recognize roots by exact directed connectivity to that AS's motorway;
@@ -3036,6 +3042,38 @@ function createLegacyTrafficScenario(data){
     }
     route.validStamp=stamp;route.valid=valid;return valid;
   }
+  // Before booking an off-map long-distance corridor, compare the real
+  // mapped directed path from the same origin to the same downstream anchor.
+  // This automatically allows A59/A560 instead of A4/A61 when connected.
+  function mappedBypassMinutes(source,route){
+    const path=cohortPath(route.target.index),costs=routePathCosts.get(route.target.index);
+    const cost=costs?.get(cellKey(source.index,0));
+    if(!Number.isFinite(cost))return Infinity;
+    let at=source.index,k=0,rejoined=false,departed=false;
+    const original=directedCorridorIds.get(route.target.index),seen=new Set(),used=new Map();
+    while(true){
+      const road=edges[at],key=cellKey(at,k);
+      if(seen.has(key))return Infinity;seen.add(key);
+      if(road.kind==="mainline"){
+        const corridor=directedCorridorIds.get(at);
+        if(used.has(road.ref)&&used.get(road.ref)!==corridor)return Infinity;
+        used.set(road.ref,corridor);
+        if(road.ref===route.ref){
+          if(corridor!==original)return Infinity;
+          if(departed){
+            if(!route.downstream.has(road.id)||road.id===route.endEdgeId&&k*road.cellLength<route.endOffset-.05)return Infinity;
+            rejoined=true;
+          }
+        }else{
+          if(rejoined)return Infinity;
+          departed=true;
+        }
+      }
+      const next=path.get(key);
+      if(!next)return departed&&rejoined&&at===route.target.index&&k===route.target.n-1?cost:Infinity;
+      at=next.to;k=next.toCell;
+    }
+  }
   function wideSourceChoice(source){
     const options=wideSourceOptions.get(source.index);
     if(!options?.length)return null;
@@ -3049,7 +3087,7 @@ function createLegacyTrafficScenario(data){
       const durationS=wideTravelSeconds(source,route,true);
       const waiting=Math.max(0,(wideBookings.get(route.id)||0)-elapsed)/60;
       const cost=durationS/60+waiting+returnWaitMinutes(route.reentry.index);
-      if(cost+30>=delay)continue;
+      if(cost+30>=delay||mappedBypassMinutes(source,route)<=cost+5)continue;
       // Not every arrival is a long-distance trip. Existing local trips
       // and drivers preferring the original road remain represented.
       const fraction=willing*(source.kind==="mainline"?.70:.45);
@@ -3810,7 +3848,7 @@ function createLegacyTrafficScenario(data){
       }
       const optionsByJunction=new Map();
       for(const ramp of edges){
-        if(ramp.kind!=="ramp"||!(isLocalEntrance(ramp)||ramp.source&&isLocalOrigin(ramp))||
+        if(!publicReturn(ramp)||
           (activeEffects.get(ramp.id)||NO_EFFECTS).some(e=>
             e.event.kind==="closure"))continue;
         // If the apparent entrance is itself fed by motorway mainlines,
@@ -3893,7 +3931,7 @@ function createLegacyTrafficScenario(data){
         }
         const alternate=new Map();
         for(const ramp of edges){
-          if(ramp.kind!=="ramp"||ramp.ref===endEdge.ref||!isLocalEntrance(ramp)||
+          if(!publicReturn(ramp)||ramp.ref===endEdge.ref||
             !returns.has(ramp.index)||closedEdge(ramp))continue;
           const junction=junctionLabel(ramp),distance=returns.get(ramp.index);
           if(!alternate.has(junction)||distance<alternate.get(junction).distance)
@@ -4639,6 +4677,8 @@ function createLegacyTrafficScenario(data){
       let entry=isOpen(primary)?primary:choices.find(isOpen)||primary;
       for(const option of choices){
         if(!isOpen(option))continue;
+        // Preserve an official route unless its load makes an alternative
+        // materially better; all choices must remain legal physical returns.
         if(cost(option)+10<cost(entry))entry=option;
       }
       const vehicles=amount*primary.weight/weightSum;
@@ -5711,6 +5751,7 @@ function createLegacyTrafficScenario(data){
     routingDelayToNextExit:(id,offsetM=0)=>byId.has(id)?nextDecisionDelay(byId.get(id),offsetM):null,
     routingDelayToPreferredTransferExit:(id,offsetM=0)=>byId.has(id)?preferredTransferDelay(byId.get(id),offsetM,null):null,
     signedDetourTraffic:()=>signedFlow?.snapshot(detourTrips,elapsed)??[],
+    publicReturnIds:()=>edges.filter(publicReturn).map(e=>e.id),
     detourPlans:()=>[...exitDetours.values(),...fallbackExits.values()].map(plan=>({
       terminalEdgeId:edges[plan.terminal].id,
       reentryEdgeId:edges[plan.reentry].id,
