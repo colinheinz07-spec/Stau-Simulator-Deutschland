@@ -1245,6 +1245,8 @@ function createLegacyTrafficScenario(data){
     landmarkCache.set(edge.id,found);
     return found;
   }
+  // Köln-West and Frechen are two distinct junctions sharing exit number 104.
+  const signedJunctionKey=j=>j[0]+":"+(j[1]||j[2])+(j[0]==="A1"&&String(j[1])==="104"?(/frechen/i.test(j[2])?":frechen":":koeln-west"):"");
   function motorwayCorridor(edge,clickedM){
     if(edge.kind!=="mainline"||!edge.ref||!(data.junctions||[]).length)
       return null;
@@ -1281,7 +1283,7 @@ function createLegacyTrafficScenario(data){
     // choosing the best geometrical projection (lowest perpendicular error).
     const unique=new Map();
     for(const mark of marks){
-      const key=mark.junction[0]+":"+(mark.junction[1]||mark.junction[2]);
+      const key=signedJunctionKey(mark.junction);
       const old=unique.get(key);
       if(!old||mark.best<old.best-.01||
         (Math.abs(mark.best-old.best)<.01&&
@@ -1339,7 +1341,7 @@ function createLegacyTrafficScenario(data){
     const ix=selectionPositions.findIndex(position=>position>=point);
     if(ix<=0)return null;
     const left=ordered[ix-1],right=ordered[ix];
-    if(!right||(left.junction[1]||left.junction[2])===(right.junction[1]||right.junction[2])||
+    if(!right||signedJunctionKey(left.junction)===signedJunctionKey(right.junction)||
       right.position<=left.position+.001)return null;
     const startExits=offSplits.filter(({position,target})=>
       position<point+.05&&(nearestJunctionIndex(position)===ix-1||
