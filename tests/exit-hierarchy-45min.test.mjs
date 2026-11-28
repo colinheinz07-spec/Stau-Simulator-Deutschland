@@ -29,7 +29,7 @@ test('nationwide voluntary routing starts at 45 minutes and grows progressively'
     [120,.45],[180,.65],[240,.85],[285,1],[300,1]])
     assert.ok(Math.abs(s.diversionShare(delay)-expected)<1e-9, String(delay));
   assert.equal(s.wideDiversionShare(44.99),0);
-  assert.ok(s.wideDiversionShare(60)>0&&s.wideDiversionShare(60)<s.diversionShare(60));
+  assert.equal(s.wideDiversionShare(60),s.diversionShare(60));
 });
 
 test('closure queue grows and releases upstream exit choices in order',()=>{
