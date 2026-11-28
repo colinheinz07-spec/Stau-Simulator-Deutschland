@@ -1,0 +1,38 @@
+name: Import western motorway ring A1-A61
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/import-west-ring.mjs'
+      - 'tests/west-ring-import.test.mjs'
+      - '.github/workflows/import-west-ring.yml'
+permissions:
+  contents: write
+concurrency:
+  group: west-ring-import
+  cancel-in-progress: false
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/west-ring-import.test.mjs
+      - run: node scripts/import-west-ring.mjs
+      - name: Verify both directions in real simulator graph
+        run: REQUIRE_WEST_RING=1 node --test tests/west-ring-import.test.mjs
+      - name: Publish validated geometry
+        run: |
+          git config user.name "stau-osm-import[bot]"
+          git config user.email "stau-osm-import[bot]@users.noreply.github.com"
+          git add web/legacy-geometry.js web/data/west-ring-audit.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Import verified A1/A61 Köln-West–Meckenheim directed motorway ring"
+          git pull --rebase origin main
+          git push origin HEAD:main
