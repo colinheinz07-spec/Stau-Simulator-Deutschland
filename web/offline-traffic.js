@@ -2909,12 +2909,17 @@ function createLegacyTrafficScenario(data){
     const key=road.id+":"+link.fromM+":"+link.to+":"+plan.closureId;
     if(exitChoiceCache.has(key))return exitChoiceCache.get(key);
     const delay=observedPlanDelay(road,link.fromM,plan);
+    // The same-carriageway queue is an independent local navigation signal.
+    // Do not cap its willingness at the delay to the next junction or at
+    // estimated detour/reentry waiting time.
+    const sameRoadShare=ownCarriagewayShare(road,link.fromM,plan);
     let share=localDiversionShare(road,link.fromM,delay,plan);
     if(share>0&&plan.kind!=="closure"){
       const directFree=Math.min(...rampMainlineArrivals(edges[plan.reentry]).map(a=>
         directedDelayToCause(road,link.fromM,a.road.id,a.metre,false,false,true)));
       if(exitTravelMinutes(link,plan)+5>=delay+(Number.isFinite(directFree)?directFree:0))share=0;
     }
+    share=Math.max(share,sameRoadShare);
     exitChoiceCache.set(key,share);
     return share;
   }
@@ -3411,8 +3416,52 @@ function createLegacyTrafficScenario(data){
   // public-road exit. Do not fabricate a reentry or another motorway path.
   // Use ONLY the directly encountered severe mainline queue, never a remote
   // event, exit-ramp delay, or a queue behind the current fork.
+  // Measure the first physically encountered through queue from a real AS.
+  // A moving gap of up to 600 m remains part of the same stop-and-go wave.
+  // A later exit before the queue is still preferred; after the queue starts,
+  // measure the entire connected wave, not just the short leg to the next AS.
+  // This deliberately does not depend on a detour plan or a unique map-label
+  // head: the latter can disappear when the queue joins another congested AS.
+  function physicalApproachQueueDelay(road,offset,later){
+    let current=road,from=offset,delay=0,best=0,gap=0,passedLater=false;
+    const seen=new Set();
+    while(current&&!seen.has(current.id)&&seen.size<1200){
+      seen.add(current.id);
+      for(let k=Math.max(0,Math.floor(from/current.cellLength));k<current.n;k++){
+        const lo=Math.max(from,k*current.cellLength),hi=Math.min(current.lengthM,(k+1)*current.cellLength);
+        if(hi<=lo+.001)continue;
+        if(current===later?.road&&lo>=later.metre-.05)passedLater=true;
+        if(passedLater&&delay===0)return best;
+        const loss=routingCellLoss(current,k,hi-lo);
+        if(loss>0){
+          delay+=loss;best=Math.max(best,delay);gap=0;
+        }else if(delay>0){
+          gap+=hi-lo;
+          if(gap>600){
+            if(passedLater)return best;
+            delay=0;gap=0;
+          }
+        }
+        if(best>=285)return best; // willingness is already 100%
+      }
+      if(current===later?.road)passedLater=true;
+      if(passedLater&&delay===0)break;
+      const next=current.next.filter(t=>edges[t.to].kind==="mainline"&&
+        edges[t.to].ref===road.ref&&directedCorridorIds.get(t.to)===directedCorridorIds.get(road.index)&&
+        !blockedMovement(current,t));
+      if(next.length!==1)break;
+      current=edges[next[0].to];from=next[0].toM;
+    }
+    return best;
+  }
+  function ownCarriagewayShare(road,offset,plan){
+    const cause=plan?.causeEdgeId&&byId.get(plan.causeEdgeId);
+    if(!cause||cause.kind!=="mainline"||cause.ref!==road.ref||
+      directedCorridorIds.get(cause.index)!==directedCorridorIds.get(road.index))return 0;
+    return unplannedExitShare(road,offset);
+  }
   function unplannedExitShare(road,offset){
-    if(!severeQueueSegments.size||road.kind!=="mainline")return 0;
+    if(!jamGroups.length||road.kind!=="mainline")return 0;
     const stamp=exposureEpoch+":"+Math.floor(elapsed/60);
     if(unplannedExitStamp!==stamp){unplannedExitMemo.clear();unplannedExitStamp=stamp;}
     const key=road.id+":"+Math.round(offset*100);
@@ -3431,7 +3480,6 @@ function createLegacyTrafficScenario(data){
     }
     // A connected through queue can span several closely spaced AS.
     const connected=remainingConnectedQueueDelay(road,offset);
-    const legDelay=nextDecisionDelay(road,offset);
     if(later&&hasClearLaterExit(road,offset,true)){
       unplannedExitMemo.set(key,0);return 0;
     }
@@ -3442,6 +3490,7 @@ function createLegacyTrafficScenario(data){
       if(Number.isFinite(remaining))share=Math.max(share,
         diversionShare(Math.min(remaining,group.routingDelayMin),group.worstKmh<=1));
     }
+    if(share<1)share=Math.max(share,diversionShare(physicalApproachQueueDelay(road,offset,later)));
     unplannedExitMemo.set(key,share);return share;
   }
   function nextClosureDecisionDelay(road,offset){
@@ -3670,10 +3719,9 @@ function createLegacyTrafficScenario(data){
     // retain its destination cohort instead of disappearing at the boundary.
     if(plan&&exitChoiceShare(edge,link,plan)>0)return 0;
     if(!localTerminal(edges[link.to])||!isUsableEscape(edge,link))return 0;
-    const connected=remainingConnectedQueueDelay(edge,link.fromM);
-    if(connected>=VOLUNTARY_START_MIN&&!hasClearLaterExit(edge,link.fromM,true))return diversionShare(connected);
-    if(plan?.kind==="closure"||plan?.sameCorridor||closureFingerprint&&
-      Number.isFinite(closureDistanceAhead(edge,link.fromM,Infinity)))return 0;
+    // A real local exit is not disabled merely because a mapped reentry
+    // or an unrelated closure plan could not be selected. Count departures
+    // as external trips when there is no usable planned return.
     return unplannedExitShare(edge,link.fromM);
   }
   function localChoiceAtExit(edge,link){
@@ -3688,7 +3736,8 @@ function createLegacyTrafficScenario(data){
     if(preferred)return fraction*closureExposureAhead(edge,link.fromM,Infinity,preferred.plan.closureId);
     if(plan?.kind==="closure")return fraction*(Number.isFinite(closureDistanceAhead(edge,link.fromM,Infinity,plan.closureId))?1:
       closureExposureAhead(edge,link.fromM,Infinity,plan.closureId));
-    return fraction*(plan?.causeEdgeId?bottleneckExposureAhead(edge,link.fromM,plan.causeEdgeId):1);
+    return Math.max(ownCarriagewayShare(edge,link.fromM,plan),
+      fraction*(plan?.causeEdgeId?bottleneckExposureAhead(edge,link.fromM,plan.causeEdgeId):1));
   }
   function clearTurnWaiting(edge,k){edge.turnStock[k]=null;edge.voluntaryWaiting[k]=null;}
   // Only the extra voluntary turn demand still physically ON the mainline
