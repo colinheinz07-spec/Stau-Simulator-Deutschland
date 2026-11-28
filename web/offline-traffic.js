@@ -4637,8 +4637,12 @@ function createLegacyTrafficScenario(data){
       const mandatory=c.kind==="closure"&&original===Infinity&&!laterUsableExitBeforeClosure(edge,c.turn.fromM);
       const share=mandatory?1:
         c.kind==="closure"?.65*diversionShare(observedPlanDelay(edge,c.turn.fromM,c)):voluntary;
-      if(share<=0||original<=alternative||best&&best.saving>=original-alternative)continue;
-      best={...c,share,saving:original-alternative,through};
+      const saving=original-alternative;
+      if(share<=0||original<=alternative)continue;
+      // Infinity is a valid mandatory saving but does not distinguish two
+      // bypasses of a full closure. Select the cheaper connected route.
+      if(best&&(best.saving>saving||best.saving===saving&&best.alternative<=alternative))continue;
+      best={...c,share,saving,alternative,through};
     }
     return best;
   }
@@ -5752,6 +5756,23 @@ function createLegacyTrafficScenario(data){
     routingDelayToPreferredTransferExit:(id,offsetM=0)=>byId.has(id)?preferredTransferDelay(byId.get(id),offsetM,null):null,
     signedDetourTraffic:()=>signedFlow?.snapshot(detourTrips,elapsed)??[],
     publicReturnIds:()=>edges.filter(publicReturn).map(e=>e.id),
+    // Diagnostic: actual legal directed path through the model, not an
+    // inferred straight-line route. Used by network regression tests.
+    directedPathInfo:(originId,targetId)=>{
+      const origin=byId.get(originId),target=byId.get(targetId);
+      if(!origin||!target)return null;
+      const path=cohortPath(target.index),minutes=routePathCosts.get(target.index)?.get(cellKey(origin.index,0));
+      if(!Number.isFinite(minutes))return null;
+      let j=origin.index,k=0;const refs=[],seen=new Set();
+      while(!seen.has(cellKey(j,k))){
+        seen.add(cellKey(j,k));
+        if(edges[j].kind==="mainline"&&refs.at(-1)!==edges[j].ref)refs.push(edges[j].ref);
+        const next=path.get(cellKey(j,k));
+        if(!next)return j===target.index&&k===target.n-1?{minutes,motorways:refs}:null;
+        j=next.to;k=next.toCell;
+      }
+      return null;
+    },
     detourPlans:()=>[...exitDetours.values(),...fallbackExits.values()].map(plan=>({
       terminalEdgeId:edges[plan.terminal].id,
       reentryEdgeId:edges[plan.reentry].id,
