@@ -7,6 +7,7 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
   let worker;
   try{worker=new global.Worker("./traffic-worker.js");}catch(error){return null;}
   let ready=false,failed=false,revision=0,snapshot=null,detail=null,selected=null,queue=[];
+  let unsubscribeSigned;
   let running=false,progress=null;
   const send=m=>{if(failed)return;if(ready)worker.postMessage(m);else queue.push(m);};
   const empty={stats:local.totals(),clock:local.clockMs(),groups:[],infos:[],traffic:[],closures:[],active:[],statuses:{},detours:{},gates:[],access:[],signed:[]};
@@ -21,7 +22,7 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
     onUpdate();
   }
   function fail(message){
-    if(failed)return;failed=true;running=false;worker.terminate();clearTimeout(startup);
+    if(failed)return;failed=true;running=false;unsubscribeSigned?.();worker.terminate();clearTimeout(startup);
     if(!ready)Object.assign(api,local,{workerMode:false});
     onFailure(message,ready);
   }
@@ -72,7 +73,7 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
     workerMode:true,workerReady:false,
     startWorker(){if(!running&&!failed){running=true;send({type:"start"});}},
     pauseWorker(){if(running){running=false;send({type:"pause"});}},
-    disposeWorker(){failed=true;clearTimeout(startup);worker.terminate();},
+    disposeWorker(){failed=true;unsubscribeSigned?.();clearTimeout(startup);worker.terminate();},
     selectRoad(id,offset=0){
       selected=id?{id,offset}:null;detail=null;send({type:"select",selection:selected});
     },
@@ -87,6 +88,7 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
     detourDestinations:id=>snapshot?.revision===revision?state.detours[id]?.destinations||[]:[],
     designatedDetourRoutes:id=>snapshot?.revision===revision?state.detours[id]?.designated||[]:[],
     wideDetourRoutes:id=>snapshot?.revision===revision?state.detours[id]?.wide||[]:[],
+    validatedMotorwayBypasses:id=>snapshot?.revision===revision?state.detours[id]?.motorway||[]:[],
     get workerSnapshotRevision(){return snapshot?.revision??-1;},
     edgeActivity(id,offset=0){
       if(detail?.id===id&&detail.offset===offset)return detail.activity;
@@ -98,6 +100,10 @@ function createWorkerTrafficScenario(local,onUpdate,onFailure,onProgress){
   };
   for(const method of ["setEvent","restoreEvent","removeEvent","setMode","reset","setSimulationStart","setDemandPercent"])
     api[method]=(...args)=>mutate(method,args);
+  const signed=global.StauBedarfsumleitungen;
+  let signedRevision=-1;
+  const syncSigned=()=>{if(signed?.dataset&&signed.revision!==signedRevision){signedRevision=signed.revision;send({type:"signed-dataset",dataset:signed.dataset});}};
+  unsubscribeSigned=signed?.subscribe(syncSigned);syncSigned();
   return api;
 }
 global.createWorkerTrafficScenario=createWorkerTrafficScenario;
