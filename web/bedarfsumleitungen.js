@@ -5,7 +5,7 @@
 "use strict";
 const grid=new Map(),wide=[],matching=new Map(),cache=new Map(),listeners=new Set();
 const CELL=.25;
-let routes=[],status="loading",revision=0;
+let routes=[],status="loading",revision=0,dataset=null;
 const normalize=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/ß/g,"ss").replace(/[^a-z0-9]/g,"");
 const autobahn=s=>String(s||"").match(/\bA\s*(\d+)\b/i)?.[1];
 function endpointMotorways(r){
@@ -17,11 +17,16 @@ function endpointMotorways(r){
   return [from||fallback,to||fallback];
 }
 function junction(s){
-  return normalize(String(s||"").split(" · ")[0].replace(/^(?:AS|AK|AD|Anschlussstelle|Autobahnkreuz|Autobahndreieck)\s*(?:\d+[a-z]?\s*)?/i,""));
+  const label=String(s||"").split(" · ")[0].replace(/^A\s*\d+\s*/i,"").trim();
+  const number=label.match(/^(?:AS|AK|AD|Anschlussstelle|Autobahnkreuz|Autobahndreieck)\s*(\d+[a-z]?)\b/i)?.[1]?.toLowerCase();
+  const name=normalize(label.replace(/^(?:AS|AK|AD|Anschlussstelle|Autobahnkreuz|Autobahndreieck)\s*(?:\d+[a-z]?\s*)?/i,""));
+  return {number,name};
 }
 function nameMatches(a,b){
   a=junction(a);b=junction(b);
-  return a.length>=4&&b.length>=4&&(a===b||a.includes(b)||b.includes(a));
+  if(a.number&&b.number&&a.number!==b.number)return false;
+  // Lohmar and Lohmar-Nord, Köln-West and Frechen etc. are not aliases.
+  return a.name.length>=3&&a.name===b.name;
 }
 function metres(a,b){
   const dx=(a[1]-b[1])*111320*Math.cos((a[0]+b[0])*Math.PI/360);
@@ -31,7 +36,7 @@ function key(y,x){return y+","+x;}
 function notify(){for(const fn of listeners)try{fn();}catch(e){console.warn(e);}}
 function install(data){
   if(data?.schema!==1||!Array.isArray(data.routes)||!data.routes.length)throw Error("Invalid signed detour dataset");
-  grid.clear();wide.length=0;matching.clear();cache.clear();
+  dataset=data;grid.clear();wide.length=0;matching.clear();cache.clear();
   routes=[];
   for(const r of data.routes){
     if(!Array.isArray(r.parts)||!r.parts.length)continue;
@@ -52,7 +57,7 @@ function install(data){
       for(const a of source?[source]:[]){
         // Spatially index both possible geometry orientations; route metadata
         // determines the direction, never the U-number parity.
-        for(const point of [p[0],p.at(-1)]){
+        for(const point of r.directedGeometry?[p[0]]:[p[0],p.at(-1)]){
           const k=a+":"+key(Math.floor(point[0]/CELL),Math.floor(point[1]/CELL));
           if(!matching.has(k))matching.set(k,new Set());matching.get(k).add(r);
         }
@@ -84,7 +89,7 @@ function match(exit,entry,start,end){
     if(source!==a||target!==b||!nameMatches(exit.name,route.from)||!nameMatches(entry.name,route.to))continue;
     const p=route.parts[0],first=p[0],last=p.at(-1);
     const f=[metres(start,first),metres(end,last)],r=[metres(start,last),metres(end,first)];
-    const gaps=f[0]+f[1]<=r[0]+r[1]?f:r;
+    const gaps=route.directedGeometry||f[0]+f[1]<=r[0]+r[1]?f:r;
     // Route and actual directed ramps must meet at the same junctions.
     // Do not silently connect incomplete routes or distant endpoints.
     if(Math.max(...gaps)>700||!Number.isFinite(route.lengthM)||route.lengthM<100)continue;
@@ -103,7 +108,7 @@ function match(exit,entry,start,end){
     for(const route of candidates){
       if(endpointMotorways(route)[0]!==a||!nameMatches(exit.name,route.from))continue;
       const p=route.parts[0],ends=[p[0],p.at(-1)];
-      for(let i=0;i<2;i++){
+      for(let i=0;i<(route.directedGeometry?1:2);i++){
         const gap=metres(start,ends[i]);if(gap>700)continue;
         enqueue(route,ends[1-i],route.lengthM+gap,[route]);
       }
@@ -129,7 +134,7 @@ function match(exit,entry,start,end){
         if(endpointMotorways(r)[0]!==nextRef)continue;
         if(d1&&d2&&d1!==d2&&endpointMotorways(item.route)[0]===nextRef&&endpointMotorways(r)[1]===nextRef)continue;
         const p=r.parts[0],ends=[p[0],p.at(-1)];
-        for(let i=0;i<2;i++){
+        for(let i=0;i<(r.directedGeometry?1:2);i++){
           const d=metres(item.at,ends[i]);if(d>50)continue;
           enqueue(r,ends[1-i],item.length+r.lengthM+d,[...item.chain,r]);
         }
@@ -192,7 +197,7 @@ function createFlow(){
   return {book,estimate,snapshot,reset:()=>bookings.clear()};
 }
 global.StauBedarfsumleitungen={install,visible,match,createFlow,get status(){return status;},get revision(){return revision;},
-  get count(){return routes.length;},subscribe(fn){listeners.add(fn);return ()=>listeners.delete(fn);}};
+  get count(){return routes.length;},get dataset(){return dataset;},get coverage(){return dataset?.complete?"national-complete":dataset?.scope||"national-partial";},subscribe(fn){listeners.add(fn);return ()=>listeners.delete(fn);}};
 const script=document.createElement("script");
 script.async=true;
 script.src="./data/bedarfsumleitungen-data.js";
