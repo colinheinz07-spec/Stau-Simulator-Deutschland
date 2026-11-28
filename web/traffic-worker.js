@@ -24,7 +24,7 @@ function publish(){
   for(const e of events){
     statuses[e.id]=model.eventStatus(e.id);
     if(e.kind==="closure"&&statuses[e.id]==="active")detours[e.id]={
-      destinations:model.detourDestinations(e.id),designated:model.designatedDetourRoutes(e.id),wide:model.wideDetourRoutes(e.id)
+      destinations:model.detourDestinations(e.id),designated:model.designatedDetourRoutes(e.id),wide:model.wideDetourRoutes(e.id),motorway:model.validatedMotorwayBypasses(e.id)
     };
   }
   const traffic=[],closures=[];
@@ -70,6 +70,9 @@ function applyMutation(m){
 }
 self.onmessage=({data:m})=>{
   try{
+    if(m.type==="signed-dataset"){
+      if(m.dataset?.schema===1&&m.dataset.routes?.length){self.StauBedarfsumleitungen.install(m.dataset);publish();}return;
+    }
     if(m.type==="select"){
       selection=m.selection;postMessage({type:"detail",revision,detail:detail()});return;
     }
