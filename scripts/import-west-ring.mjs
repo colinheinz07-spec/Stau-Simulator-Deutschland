@@ -2,7 +2,7 @@
  * No synthetic road links. Original source: OSM contributors, ODbL 1.0.
  * Node 20+: node scripts/import-west-ring.mjs [--snapshot=FILE]
  */
-import {readFile,writeFile,rename} from "node:fs/promises";
+import {readFile,writeFile,rename,mkdir} from "node:fs/promises";
 import {pathToFileURL} from "node:url";
 
 const FILE="web/legacy-geometry.js";
@@ -11,11 +11,10 @@ const ANCHORS=[
  {from:"A61-55751508",fromEnd:true,to:"extra-a1-dortmund",toEnd:false,direction:"north"}
 ];
 const JUNCTIONS={
- A1:{"104":"AK Köln-West","105":"Frechen","106":"Gleuel","107":"AD Erfttal","108":"Erftstadt","109":"AK Bliesheim"},
+ A1:{"105":"Gleuel","106":"Hürth","107":"AD Erfttal","108":"Erftstadt","109":"AK Bliesheim"},
  A61:{"23":"AD Erfttal","24":"AK Bliesheim","25":"Weilerswist","26":"Swisttal-Heimerzheim","27":"Swisttal-Miel","28":"Rheinbach","29":"AK Meckenheim"}
 };
-// AS 105/106 are checked against their actual OSM names rather than the
-// fallback table; the public catalogue numbers are 104a/105/106.
+// Both Köln-West and Frechen are signed 104: require their actual OSM names.
 const key=p=>p.map(x=>Number(x).toFixed(7)).join(",");
 const metres=(a,b)=>Math.hypot((a[0]-b[0])*111195,(a[1]-b[1])*111195*Math.cos((a[0]+b[0])*Math.PI/360));
 const refs=t=>[...new Set((String(t?.ref||"").match(/A\s*\d+/g)||[]).map(x=>x.replace(/\s/g,"")))];
@@ -79,7 +78,7 @@ function runs(path){
 }
 function primary(e){return e.refs.includes("A1")?"A1":e.refs.includes("A61")?"A61":e.refs[0];}
 function classifyJunction(name){
- if(/bliesheim|meckenheim|köln[- ]west/i.test(name)&&/kreuz|^AK\b/i.test(name))return "AK";
+ if(/bliesheim|köln[- ]west/i.test(name)||/meckenheim/i.test(name)&&!/nord/i.test(name))return "AK";
  if(/erfttal/i.test(name))return "AD";
  if(/autobahnkreuz|^AK\b|\bkreuz\b/i.test(name))return "AK";
  if(/autobahndreieck|^AD\b|\bdreieck\b/i.test(name))return "AD";
@@ -111,6 +110,9 @@ export function extendWesternRing(data,elements,options={}){
  // Keep only junctions/ramp components actually touching a selected or
  // existing motorway node. This is a topological test, not distance snapping.
  const pathNodes=new Set(usedNodes),junctionAt=new Map();
+ // Frechen may lie just inside the older Köln-West carriageway snapshot.
+ // Include exact existing motorway vertices near either seam for the ramp audit.
+ for(const [n,item] of g.nodes){const p=item.p;if(!(p[0]>=50.88&&p[0]<=50.95||p[0]>=50.58&&p[0]<=50.61))continue;if((existingRefs.get(key(p))||[]).some(r=>r==="A1"||r==="A61"))pathNodes.add(n);}
  for(const n of pathNodes){
    const item=g.nodes.get(n),t=item.tags;if(t.highway!=="motorway_junction")continue;
    const roadRefs=[...new Set([...(g.adjacency.get(n)||[]),...(g.incoming.get(n)||[])].filter(isRing).flatMap(e=>e.refs))];
@@ -188,10 +190,11 @@ export function extendWesternRing(data,elements,options={}){
      append({w,sign,segments:path},j.ref,"ramp",label,{publicInterface:j.kind==="AS"&&j.local&&(publicNodes.has(start)||publicNodes.has(end))});
    }
  }
- const catalog=new Map(data.junctions.map(j=>[j[0]+":"+j[1],j]));
+ const junctionKey=(ref,num,name)=>ref+":"+num+(ref==="A1"&&num==="104"?":"+(/frechen/i.test(name)?"frechen":"koeln-west"):"");
+ const catalog=new Map(data.junctions.map(j=>[junctionKey(j[0],j[1],j[2]),j]));
  // Group direction-specific exact OSM nodes under the same signed AS.
  for(const j of newJunctions){
-   const k=j.ref+":"+j.number,p=g.nodes.get(j.node).p,old=catalog.get(k);
+   const k=junctionKey(j.ref,j.number,j.name),p=g.nodes.get(j.node).p,old=catalog.get(k);
    if(old&&metres(old[3],p)>4000)fail("Conflicting junction "+k+" "+j.name);
    if(!old)catalog.set(k,[j.ref,j.number,j.name,p,[p]]);
    else if(!old[4]?.some(x=>key(x)===key(p)))catalog.set(k,[...old.slice(0,4),[...(old[4]||[old[3]]),p]]);
@@ -238,6 +241,7 @@ async function main(){
  const tmp=FILE+".tmp";
  await writeFile(tmp,"/* OSM contributors, ODbL. Directed western ring appended by import-west-ring.mjs. */\nwindow.STAU_LEGACY_GEOMETRY="+JSON.stringify(result)+";\n");
  await rename(tmp,FILE);
+ await mkdir("web/data",{recursive:true});
  await writeFile("web/data/west-ring-audit.json",JSON.stringify(result.westRingAudit,null,2)+"\n");
  console.log("WESTERN RING VERIFIED",JSON.stringify({...result.westRingAudit,sourceWays:undefined}));
 }
